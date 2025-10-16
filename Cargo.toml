@@ -1,0 +1,10 @@
+[workspace]
+    members = [
+        "run",
+        "core",
+        "utils",
+        "observers",
+        "meta",
+        ]
+
+    resolver = "3"
