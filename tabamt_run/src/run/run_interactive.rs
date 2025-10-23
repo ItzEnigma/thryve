@@ -1,4 +1,4 @@
-use utils::{any_naming_input::ANNamingInput, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, task::Task};
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
 // @param obs_init_tasks: a vector of Tasks that initialize observers.

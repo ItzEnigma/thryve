@@ -1,18 +1,15 @@
 [package]
-    name = "run"
+    name = "tabamt_run"
     version = "0.1.0"
     edition = "2024"
 
 [dependencies]
-    core = { path = "../core" , version = "0.1.0" , features = ["bin-only"]}
-    utils = { path = "../utils" , version = "0.1.0"}
-    observers = { path = "../observers" , version = "0.1.0"}
+    tabamt_core = { path = "../tabamt_core" , version = "0.1.0" , features = ["bin-only"]}
+    tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
+    tabamt_observers = { path = "../tabamt_observers" , version = "0.1.0"}
 
     # External Dependencies.
     windows = { version = "0.62.2", features = ["Win32_System_Services", "Win32_Foundation"] }
     windows-services = "0.25.0"
     strum = { version = "0.27.2" , features = ["derive"] }
     strum_macros = "0.27.2"
-
-[lib]
-    crate-type = ["rlib" , "staticlib"]

@@ -1,4 +1,4 @@
-use utils::{any_naming_input::ANNamingInput, notification::Notification, packet_handle::PacketHandle, plugin::Plugin};
+use tabamt_utils::{any_naming_input::ANNamingInput, notification::Notification, packet_handle::PacketHandle, plugin::Plugin};
 
 use std::{collections::HashMap};
 

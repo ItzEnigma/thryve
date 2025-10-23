@@ -1,9 +1,9 @@
 [workspace]
     members = [
-        "run",
-        "core",
-        "utils",
-        "observers",
+        "tabamt_run",
+        "tabamt_core",
+        "tabamt_utils",
+        "tabamt_observers",
         "tabamt",
         ]
 

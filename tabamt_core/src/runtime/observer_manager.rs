@@ -1,4 +1,4 @@
-use utils::{notification::Notification, observer::Observer, any_naming_input::ANNamingInput};
+use tabamt_utils::{notification::Notification, observer::Observer, any_naming_input::ANNamingInput};
 
 use std::{collections::HashMap};
 

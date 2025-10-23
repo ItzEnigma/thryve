@@ -2,10 +2,10 @@
 // It serves as the ground basis that will instanciate the service, initialize it, manage it, and finalize it.
 
 use windows_services::{ Command, Service};
-use core::runtime::engine::Engine;
+use tabamt_core::runtime::engine::Engine;
 use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}, Arc, Mutex}, thread, time::Duration};
 
-use utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::Task};
 use crate::service::init;
 
 // The main struct holding the service instance and service information.

@@ -5,7 +5,7 @@
 use std::{collections::HashMap, env::current_exe, fs::{create_dir_all, File, OpenOptions}, time::SystemTime};
 
 use chrono::{ DateTime , Local };
-use utils::{notification::{NotifEvent, Notification}, observer::Observer, res, any_naming_input::ANNamingInput};
+use tabamt_utils::{notification::{NotifEvent, Notification}, observer::Observer, res, any_naming_input::ANNamingInput};
 
 // The type of logging to perform.
 //// Enum to be implemented in the future.

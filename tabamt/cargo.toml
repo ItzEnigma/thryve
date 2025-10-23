@@ -5,5 +5,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-utils = { path = "../utils" }
-run = { path = "../run" }
+tabamt_utils = { path = "../tabamt_utils" }
+tabamt_run = { path = "../tabamt_run" }
+
+[lib]
+    crate-type = ["rlib" , "dylib"]

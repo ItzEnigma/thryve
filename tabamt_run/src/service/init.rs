@@ -1,5 +1,5 @@
-use utils::{res::{self}, task::{Job, Task, TaskName}, packet_handle::PacketHandle, any_naming_input::ANNamingInput};
-use observers::logger::LoggerObserver;
+use tabamt_utils::{res::{self}, task::{Job, Task, TaskName}, packet_handle::PacketHandle, any_naming_input::ANNamingInput};
+use tabamt_observers::logger::LoggerObserver;
 
 // This function initializes observers, except for the logger, and plugins.
 // @param vector_init_tasks: a vector of Tasks that initialize observers/plugins.

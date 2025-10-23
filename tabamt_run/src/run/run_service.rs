@@ -1,5 +1,5 @@
 use crate::service::service::TaBaMT;
-use utils::{any_naming_input::ANNamingInput, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, task::Task};
 
 // The main function if the app will be running as a service: the main service entrypoint to the program.
 // @param can_pause: an optional boolean indicating if the service can be paused.

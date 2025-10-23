@@ -1,11 +1,11 @@
 [package]
-    name = "observers"
+    name = "tabamt_observers"
     version = "0.1.0"
     edition = "2024"
 
 [dependencies]
     # Internal Dependencies
-    utils = { path = "../utils" , version = "0.1.0"}
+    tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
 
     # External Dependencies
     chrono = { version = "0.4.9" }
