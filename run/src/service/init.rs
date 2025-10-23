@@ -2,12 +2,11 @@ use utils::{res::{self}, task::{Job, Task, TaskName}, packet_handle::PacketHandl
 use observers::logger::LoggerObserver;
 
 // This function initializes observers, except for the logger, and plugins.
-// @param vector_init_functions: a vector of functions that initialize observers/plugins.
+// @param vector_init_tasks: a vector of Tasks that initialize observers/plugins.
 // @param packet_handle: the PacketHandle to send the initialization tasks to the engine.
-pub fn init(vector_init_functions: Vec<Job> , packet_handle: PacketHandle){
+pub fn init(vector_init_tasks: Vec<Task> , packet_handle: PacketHandle){
     // For each initialization function in the vector, create a task and send it to the engine via the PacketHandle.
-    for module_type in vector_init_functions{
-        let task = Task::new(TaskName::Init, 1, module_type);
+    for task in vector_init_tasks{
         packet_handle.send_task(task);
     }
     

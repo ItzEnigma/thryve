@@ -5,7 +5,7 @@ use windows_services::{ Command, Service};
 use core::runtime::engine::Engine;
 use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}, Arc, Mutex}, thread, time::Duration};
 
-use utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::{Job, Task}};
+use utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::Task};
 use crate::service::init;
 
 // The main struct holding the service instance and service information.
@@ -47,7 +47,7 @@ impl <'a> TaBaMT <'a> {
     // @param svc_name: &str - the name of the service.
     // @param can_pause: Option<bool> - flag to allow the service to be paused, default: false.
     // @param can_stop: Option<bool> - flag to allow the service to be stopped, default: false.
-    // @return: (Self, Receiver<Task>) - a tuple containing the service instance and the receiver part of the channel.
+    // @return: (Self, Receiver<Task>, Receiver<Notification>) - a tuple containing the service instance and the receiver parts of both channels.
     pub fn new(can_pause: Option<bool> , can_stop: Option<bool>) -> (Self , Receiver<Task> , Receiver<Notification>){
 
         // Creating the channel that will be used to send tasks to the engine.
@@ -82,11 +82,11 @@ impl <'a> TaBaMT <'a> {
     // This function will take ownership of the receiver part of the channel, the observers vector, and the plugins vector.
     // It checks for the start command and runs the engine in a separate thread.
     // It also checks for the stop command and stops the engine.
-    // @param rx: Receiver<Task> - the receiver part of the channel
-    // @param obs_init_functions: Vec<Job> - the vector of observer initialization functions
-    // @param plugin_init_functions: Vec<Job> - the vector of plugin initialization functions
+    // @param rx: Receiver<Task> The receiver part of the channel to be handed to the engine.
+    // @param obs_init_tasks: Vec<Task> A vector of tasks to initialize observers
+    // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
     // return: -
-    pub fn run_service(&mut self , task_rx: Receiver<Task> , notif_rx: Receiver<Notification>, obs_init_functions: Vec<Job> , plugin_init_functions: Vec<Job> , logging_file_names: Vec<ANNamingInput>) -> Result<(), bool>{
+    pub fn run_service(&mut self , task_rx: Receiver<Task> , notif_rx: Receiver<Notification>, obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>){
         // Cloning the is_running flag and the receiver to be used in the thread.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
         let pause_flag: Arc<AtomicBool> = self.is_paused.clone();
@@ -96,12 +96,12 @@ impl <'a> TaBaMT <'a> {
         let packet_handle = self.packet_handle.clone();
 
         // Storing the lengths of the observers and plugins vectors.
-        let len_obs_funcs = obs_init_functions.len();
-        let len_plugin_funcs = plugin_init_functions.len();
+        let len_obs_tasks = obs_init_tasks.len();
+        let len_plugin_tasks = plugin_init_tasks.len();
 
         // Wrapping the observers, plugins, and log-file-name vectors in Options to allow for taking ownership in the thread.
-        let mut obs_init_functions: Option<Vec<Job>> = Some(obs_init_functions);
-        let mut plugin_init_functions: Option<Vec<Job>> = Some(plugin_init_functions);
+        let mut obs_init_tasks: Option<Vec<Task>> = Some(obs_init_tasks);
+        let mut plugin_init_tasks: Option<Vec<Task>> = Some(plugin_init_tasks);
         let mut logging_file_names: Option<Vec<ANNamingInput>> = Some(logging_file_names);
 
         let engine_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
@@ -113,17 +113,17 @@ impl <'a> TaBaMT <'a> {
         // The engine will run in a separate thread.
         // The engine will run until the is_running flag is set to false.
         // The engine will finalize itself when the is_running flag is set to false.
-        let result  = self.service_instance.run(move |_service, command| match command {
+        let _ = self.service_instance.run(move |_service, command| match command {
             Command::Start => {
                 // Cloning the observers, plugins and log-file-name vectors to be used in the thread.
-                let mut obs_init_functions_clone: Vec<Job> = Vec::new();
-                if let Some(obs_clone) = obs_init_functions.take() {
-                    obs_init_functions_clone = Vec::from(obs_clone);
+                let mut obs_init_tasks_clone: Vec<Task> = Vec::new();
+                if let Some(obs_clone) = obs_init_tasks.take() {
+                    obs_init_tasks_clone = Vec::from(obs_clone);
                 }
 
-                let mut plugin_init_functions_clone: Vec<Job> = Vec::new();
-                if let Some(plugins_clone) = plugin_init_functions.take() {
-                    plugin_init_functions_clone = Vec::from(plugins_clone);
+                let mut plugin_init_tasks_clone: Vec<Task> = Vec::new();
+                if let Some(plugins_clone) = plugin_init_tasks.take() {
+                    plugin_init_tasks_clone = Vec::from(plugins_clone);
                 }
 
                 let mut logging_file_names_clone: Vec<ANNamingInput> = Vec::new();
@@ -146,8 +146,8 @@ impl <'a> TaBaMT <'a> {
                     // Spawning the thread that will run the engine.
                     let handle = thread::spawn(move || {
                         // Taking ownership of the observers and plugins vectors.
-                        let mut obs_init_functions_clone = Some(obs_init_functions_clone);
-                        let mut plugin_init_functions_clone = Some(plugin_init_functions_clone);
+                        let mut obs_init_tasks_clone = Some(obs_init_tasks_clone);
+                        let mut plugin_init_tasks_clone = Some(plugin_init_tasks_clone);
                         let mut logging_file_names_clone = Some(logging_file_names_clone);
                         
                         // Creating the engine instance.
@@ -199,9 +199,9 @@ impl <'a> TaBaMT <'a> {
                                 
                                 // Initializing the observers if there are any.
                                 // This needs to be done after the logger is initialized.
-                                if len_obs_funcs > 0{
+                                if len_obs_tasks > 0{
                                     // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                                    if let Some(obs) = obs_init_functions_clone.take() {
+                                    if let Some(obs) = obs_init_tasks_clone.take() {
                                         // The initialization function takes ownership of the vector.
                                         init::init(obs, t_handle_clone.clone());
                                     }
@@ -218,9 +218,9 @@ impl <'a> TaBaMT <'a> {
                                 
                                 // Initializing the plugins if there are any.
                                 // This needs to be done after the observers are initialized.
-                                if len_plugin_funcs > 0 {
+                                if len_plugin_tasks > 0 {
                                     // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                                    if let Some(plugins) = plugin_init_functions_clone.take() {
+                                    if let Some(plugins) = plugin_init_tasks_clone.take() {
                                         // The initialization function takes ownership of the vector.
                                         init::init(plugins, t_handle_clone.clone());
                                     }
@@ -265,10 +265,5 @@ impl <'a> TaBaMT <'a> {
             }
             _ => {}
         });
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(_) => Err(false), // Return Err(false) if the service is not run under SCM
-        }
     }
 }
