@@ -7,11 +7,9 @@ use crate::init::init;
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
 // @param logging_file_names: a vector of ANNamingInput representing the names of the log files to be created.
-pub fn run_interactive(obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
+pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Notification> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
-
-    let (packet_handle , task_rx , notif_rx) = setup_environment();
 
     // Creating the engine instance.
     let mut eng = Engine::new(task_rx , notif_rx , packet_handle.clone());
@@ -79,7 +77,7 @@ pub fn run_interactive(obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> 
     }
 }
 
-fn setup_environment() -> (PacketHandle , Receiver<Task> , Receiver<Notification>) {
+pub fn summon_requirements() -> (PacketHandle , Receiver<Task> , Receiver<Notification>) {
     // Creating the channel that will be used to send tasks to the engine.
     let (task_tx , task_rx) = mpsc::channel();
     let (notif_tx , notif_rx) = mpsc::channel();
