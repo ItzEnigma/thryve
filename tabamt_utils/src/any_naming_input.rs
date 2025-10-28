@@ -19,7 +19,7 @@ impl ANNamingInput {
 
     // Returns a reference to the inner string.
     // @return &str
-    pub fn get_module_type(&self) -> &str {
+    pub fn get_inner(&self) -> &str {
         &self.0
     }
 }

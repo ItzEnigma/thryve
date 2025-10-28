@@ -1,5 +1,8 @@
 .vscode
+.gitignore
 
 plugins
 target
 Cargo.lock
+
+tabamt_dll_loading

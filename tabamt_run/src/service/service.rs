@@ -6,7 +6,7 @@ use tabamt_core::runtime::engine::Engine;
 use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}, Arc, Mutex}, thread, time::Duration};
 
 use tabamt_utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::Task};
-use crate::service::init;
+use crate::init::init;
 
 // The main struct holding the service instance and service information.
 pub struct TaBaMT <'a>{

@@ -82,7 +82,7 @@ impl ObserverManager {
     pub fn get_observer_names(&self) -> Vec<&str>{
         let mut vector: Vec<&str> = Vec::new();
         for obs in self.observers.keys(){
-            vector.push(obs.get_module_type());
+            vector.push(obs.get_inner());
         }
     
         vector

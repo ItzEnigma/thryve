@@ -50,6 +50,10 @@ impl Engine {
         &self.threadpool
     }
 
+    pub fn get_exit_flag(&self) -> bool {
+        self.exit_flag
+    }
+
 }
 
 impl Engine {

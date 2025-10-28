@@ -9,4 +9,4 @@ tabamt_utils = { path = "../tabamt_utils" }
 tabamt_run = { path = "../tabamt_run" }
 
 [lib]
-    crate-type = ["rlib" , "dylib"]
+    crate-type = ["dylib"]
