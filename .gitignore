@@ -6,3 +6,4 @@ target
 Cargo.lock
 
 tabamt_dll_loading
+.\tabamt_utils\src\debug_logging.rs
