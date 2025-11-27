@@ -12,14 +12,14 @@
 // It is important to note that any module (plugin or observer) holding the PacketHandle struct will have no read or right access to the senders part.
 // All the modules can do is use the send functions to send packets to the engine.
 
-use crate::{notification::Notification, task::Task};
+use crate::{notif::Notif, task::Task};
 use std::sync::mpsc;
 
 // The struct that will handle the packets between modules and engine.
 #[derive(Clone)]
 pub struct PacketHandle {
     task_tx: mpsc::Sender<Task>,                // Channel to send tasks to the thread pool.        | no permissions.
-    notif_tx: mpsc::Sender<Notification>,       // Channel to send notifications to the engine.     | no permissions.
+    notif_tx: mpsc::Sender<Box<dyn Notif>>,       // Channel to send notifications to the engine.     | no permissions.
 }
 
 impl PacketHandle {
@@ -29,7 +29,7 @@ impl PacketHandle {
     // @param task_tx: The channel to send tasks to the thread pool.
     // @param notif_tx: The channel to send notifications to the engine.
     // @return A new PacketHandle with the given channels. 
-    pub fn new(task_tx: mpsc::Sender<Task> , notif_tx: mpsc::Sender<Notification>) -> Self {
+    pub fn new(task_tx: mpsc::Sender<Task> , notif_tx: mpsc::Sender<Box<dyn Notif>>) -> Self {
         Self {
             task_tx: task_tx,
             notif_tx: notif_tx,
@@ -44,7 +44,7 @@ impl PacketHandle {
 
     // Send a notification to the engine.
     // @param notif: The notification to send.
-    pub fn send_notification(&self, notif: Notification){
+    pub fn send_notification(&self, notif: Box<dyn Notif>){
         let _ = self.notif_tx.send(notif);
     }
 }

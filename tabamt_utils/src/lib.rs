@@ -1,5 +1,6 @@
 pub mod threadpool;
-pub mod notification;
+pub mod notif;
+pub mod notif_log;
 pub mod task;
 pub mod packet_handle;
 pub mod task_queue;

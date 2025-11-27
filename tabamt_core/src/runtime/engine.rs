@@ -1,5 +1,5 @@
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
-use tabamt_utils::{any_naming_input::ANNamingInput, notification::Notification, packet_handle::PacketHandle, res, res_bullitin::ResBullitin, task::Task, threadpool::ThreadPool};
+use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog , notif::Notif , packet_handle::PacketHandle, res, res_bullitin::ResBullitin, task::Task, threadpool::ThreadPool};
 use std::{sync::{mpsc , Arc , Mutex}, thread, time::Duration};
 
 // The Engine struct is responsible for managing the overall runtime of the application.
@@ -10,7 +10,7 @@ pub struct Engine {
     threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
 
     task_rx: mpsc::Receiver<Task>,              // Receives tasks to be executed.                           | No Permissions.
-    notif_rx: mpsc::Receiver<Notification>,     // Receives notifications to be processed.                  | No Permissions.
+    notif_rx: mpsc::Receiver<Box<dyn Notif>>,     // Receives notifications to be processed.                  | No Permissions.
 
     exit_flag: bool,                            // Flag to indicate if the engine should exit.              | No Permissions.
     pause_flag: bool,                           // Flag to indicate if the engine should pause.             | No Permissions.
@@ -22,7 +22,7 @@ impl Engine {
     // @param notif_rx: Receiver for incoming notifications.
     // @param packet_handle: Packet handle for sending tasks and notifications.
     // @return: A new Engine instance.
-    pub fn new(task_rx: mpsc::Receiver<Task> , notif_rx: mpsc::Receiver<Notification> , packet_handle: PacketHandle) -> Self {
+    pub fn new(task_rx: mpsc::Receiver<Task> , notif_rx: mpsc::Receiver<Box<dyn Notif>> , packet_handle: PacketHandle) -> Self {
         Self {
             plugin_manager: PluginManager::new(packet_handle.clone()),
             obs_manager: ObserverManager::new(),
@@ -154,11 +154,11 @@ impl Engine {
         // The observer manager is finalized last to ensure all notifications are logged before shutdown.
         let mut logger = self.obs_manager.finalize();
         
-        let notif = Notification::log("Engine Finalized".to_string() , ANNamingInput::new("Main"));
-        logger.consume(notif);
+        let notif = NotifLog::log("Engine Finalized".to_string() , ANNamingInput::new("Main"));
+        logger.consume(Box::new(notif));
         
-        let notif = Notification::log("Service Finalized Successfully".to_string() , ANNamingInput::new("Main"));
-        logger.consume(notif);
+        let notif = NotifLog::log("Service Finalized Successfully".to_string() , ANNamingInput::new("Main"));
+        logger.consume(Box::new(notif));
     }
 
     pub fn pause(&mut self) {
@@ -167,8 +167,8 @@ impl Engine {
         self.pause_flag = true;
         
         // Forward a notification to the observer_manager that the engine is paused.
-        let notif = Notification::log("Engine Paused".to_string() , ANNamingInput::new("Main"));
-        self.obs_manager.forward_notif(notif);
+        let notif = NotifLog::log("Engine Paused".to_string() , ANNamingInput::new("Main"));
+        self.obs_manager.forward_notif(Box::new(notif));
         
         self.run_once();
         
@@ -179,8 +179,8 @@ impl Engine {
         self.threadpool.cont();
 
         // Forward a notification to the observer_manager that the engine is continued.
-        let notif = Notification::log("Engine continued".to_string() , ANNamingInput::new("Main"));
-        self.obs_manager.forward_notif(notif);
+        let notif = NotifLog::log("Engine continued".to_string() , ANNamingInput::new("Main"));
+        self.obs_manager.forward_notif(Box::new(notif));
     }
 }
 
@@ -217,16 +217,16 @@ impl Engine {
             }
 
             // Forward a notification indicating that the task has finished.
-            let finished_notif = Notification::log(format!("Finished Task ID: {}." , task_tuple.0) , ANNamingInput::new("Main"));
-            self.obs_manager.forward_notif(finished_notif);
+            let finished_notif = NotifLog::log(format!("Finished Task ID: {}." , task_tuple.0) , ANNamingInput::new("Main"));
+            self.obs_manager.forward_notif(Box::new(finished_notif));
 
             // If the task result includes a message to be logged, forward it to the appropriate observer.
             // The message will be logged to the file specified in the task result.
             let task_res_message = task_result.get_message();
             let log_file = task_result.get_log_to_file();
             if task_res_message != "".to_string(){
-                let finished_notif = Notification::log(task_res_message , log_file);
-                self.obs_manager.forward_notif(finished_notif);
+                let finished_notif = NotifLog::log(task_res_message , log_file);
+                self.obs_manager.forward_notif(Box::new(finished_notif));
             }
 
         }

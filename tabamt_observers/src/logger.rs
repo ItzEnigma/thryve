@@ -5,7 +5,7 @@
 use std::{collections::HashMap, env::current_exe, fs::{create_dir_all, File, OpenOptions}, time::SystemTime};
 
 use chrono::{ DateTime , Local };
-use tabamt_utils::{notification::{NotifEvent, Notification}, observer::Observer, res, any_naming_input::ANNamingInput};
+use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog, notif::Notif , observer::Observer, res};
 
 // The type of logging to perform.
 //// Enum to be implemented in the future.
@@ -30,7 +30,7 @@ pub struct LoggerObserver{
 impl Observer for LoggerObserver {
     // Consume a notification and log it to the appropriate file.
     // @param notif - The notification to consume.
-    fn consume(&mut self , notif: Notification) {
+    fn consume(&mut self , notif: Box<dyn Notif>) {
         self.log(notif);
     }
 
@@ -98,23 +98,24 @@ impl LoggerObserver {
 
     // Log a notification to the appropriate file.
     // @param notif - The notification to log.
-    fn log(&mut self , notif: Notification){
-        // Get the event from the notification.
-        let event = notif.get_event();
+    fn log(&mut self , notif: Box<dyn Notif>) {
+        let notif_as_any = notif.get_as_any();
+        let notif_casted = notif_as_any.downcast_ref::<NotifLog>();
 
-        // Make sure the event is a log event.
-        match event {
-            NotifEvent::Log { logfile, .. } => {
-                // Get the file from the hashmap based on the module type.
-                let file = self.files.get_mut(logfile);
+        if let Some(notif) = notif_casted {
+            let logfile = notif.get_logfile();
+            // Get the file from the hashmap based on the module type.
+            let file = self.files.get_mut(logfile);
 
-                // If the file does not exist, PANIC because the file chosen should always exist.
-                if file.is_none() {
-                    assert!(false, "Logger Observer Cannot Find Requested Log File. Got {}" , logfile);
-                }
-                // If the file exists, log the notification to the file.
-                notif.display(file.unwrap());
+            // If the file does not exist, PANIC because the file chosen should always exist.
+            if file.is_none() {
+                assert!(false, "Logger Observer Cannot Find Requested Log File. Got {}" , logfile);
             }
+            // If the file exists, log the notification to the file.
+            notif.display(file.unwrap());
+        } else {
+            // If the notification cannot be casted, PANIC because the logger only supports NotifLog notifications.
+            assert!(false, "Logger Observer Received Unsupported Notification Type.");
         }
     }
 }

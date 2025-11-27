@@ -5,10 +5,10 @@ use std::collections::BinaryHeap;
 use std::sync::{ Condvar , Mutex };
 
 use crate::any_naming_input::ANNamingInput;
-use crate::notification::Notification;
+use crate::notif_log::NotifLog;
 use crate::packet_handle::PacketHandle;
 use crate::res::Result;
-use crate::task::{Task, TaskName};
+use crate::task::Task;
 
 // The task queue struct that will hold the tasks and notify the threads when a task is available.
 pub struct TaskQueue{
@@ -78,7 +78,7 @@ impl TaskQueue {
 
         // If the queue is being finalized, return a special task that will indicate to the thread that it should exit.
         // The task will have the name "Fin" and a priority of 0.
-        Task::new(TaskName::Fin, 0, Box::new(|| {Result::new(ANNamingInput::fin(), "".to_string() , ANNamingInput::new("Main")) }))
+        Task::new(ANNamingInput::fin(), 0, Box::new(|| {Result::new(ANNamingInput::fin(), "".to_string() , ANNamingInput::new("Main")) }))
     }
 
     // Finalize the task queue.
@@ -91,8 +91,8 @@ impl TaskQueue {
             self.condition_var.notify_all();
 
             // Send a notification to the engine that the queue is finalized.
-            let notif = Notification::log("Task Queue Finalized".to_string() , ANNamingInput::new("Main"));
-            self.packet_handle.send_notification(notif);
+            let notif = NotifLog::log("Task Queue Finalized".to_string() , ANNamingInput::new("Main"));
+            self.packet_handle.send_notification(Box::new(notif));
         }
     }
 
@@ -102,8 +102,8 @@ impl TaskQueue {
         *pause = true;
 
         // Send a notification to the engine that the queue is paused.
-        let notif = Notification::log("Task Queue Paused".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(notif);
+        let notif = NotifLog::log("Task Queue Paused".to_string() , ANNamingInput::new("Main"));
+        self.packet_handle.send_notification(Box::new(notif));
     }
 
     // Continue the task queue.
@@ -112,7 +112,7 @@ impl TaskQueue {
         *pause = false;
 
         // Send a notification to the engine that the queue is continuing.
-        let notif = Notification::log("Task Queue continuing".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(notif);
+        let notif = NotifLog::log("Task Queue continuing".to_string() , ANNamingInput::new("Main"));
+        self.packet_handle.send_notification(Box::new(notif));
     }
 }

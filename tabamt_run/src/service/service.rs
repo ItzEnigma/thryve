@@ -5,7 +5,7 @@ use windows_services::{ Command, Service};
 use tabamt_core::runtime::engine::Engine;
 use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}, Arc, Mutex}, thread, time::Duration};
 
-use tabamt_utils::{any_naming_input::ANNamingInput, debug_logging::log, notification::Notification, packet_handle::PacketHandle, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, debug_logging::log, notif::Notif, packet_handle::PacketHandle, task::Task};
 use crate::init::init;
 
 // The main struct holding the service instance and service information.
@@ -48,7 +48,7 @@ impl <'a> TaBaMT <'a> {
     // @param can_pause: Option<bool> - flag to allow the service to be paused, default: false.
     // @param can_stop: Option<bool> - flag to allow the service to be stopped, default: false.
     // @return: (Self, Receiver<Task>, Receiver<Notification>) - a tuple containing the service instance and the receiver parts of both channels.
-    pub fn new(can_pause: Option<bool> , can_stop: Option<bool>) -> (Self , Receiver<Task> , Receiver<Notification>){
+    pub fn new(can_pause: Option<bool> , can_stop: Option<bool>) -> (Self , Receiver<Task> , Receiver<Box<dyn Notif>>) {
 
         // Creating the channel that will be used to send tasks to the engine.
         let (task_tx , task_rx) = mpsc::channel();
@@ -86,7 +86,7 @@ impl <'a> TaBaMT <'a> {
     // @param obs_init_tasks: Vec<Task> A vector of tasks to initialize observers
     // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
     // return: -
-    pub fn run_service(&mut self , task_rx: Receiver<Task> , notif_rx: Receiver<Notification>, obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>){
+    pub fn run_service(&mut self , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>>, obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>){
         // Cloning the is_running flag and the receiver to be used in the thread.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
         let pause_flag: Arc<AtomicBool> = self.is_paused.clone();

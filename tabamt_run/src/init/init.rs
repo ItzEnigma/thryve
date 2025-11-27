@@ -1,4 +1,4 @@
-use tabamt_utils::{res::{self}, task::{Job, Task, TaskName}, packet_handle::PacketHandle, any_naming_input::ANNamingInput};
+use tabamt_utils::{res::{self}, task::{Job, Task}, packet_handle::PacketHandle, any_naming_input::ANNamingInput};
 use tabamt_observers::logger::LoggerObserver;
 
 // This function initializes observers, except for the logger, and plugins.
@@ -41,6 +41,6 @@ fn load_logger(packet_handle: PacketHandle , obs_type: ANNamingInput , file_name
     });
 
     // Create a task with the job to load the logger observer and send it to the engine via the PacketHandle.
-    let task = Task::new(TaskName::Init, 1, job_obs_load);
+    let task = Task::new(ANNamingInput::new("Init"), 1, job_obs_load);
     packet_handle.send_task(task);
 }

@@ -1,4 +1,4 @@
-use tabamt_utils::{notification::Notification, observer::Observer, any_naming_input::ANNamingInput};
+use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog , notif::Notif , observer::Observer};
 
 use std::{collections::HashMap};
 
@@ -34,7 +34,7 @@ impl ObserverManager {
     // Forwards a notification to the appropriate observer based on its type.
     // Asserts that the observer exists before attempting to send the notification.
     // @param notif: The notification to be forwarded.
-    pub fn forward_notif(&mut self , notif: Notification) {
+    pub fn forward_notif(&mut self , notif: Box<dyn Notif>) {
         assert!(self.check_observer(notif.get_send_to()), "Observer Manager Cannot Find Requested Observer. Got {}" , notif.get_send_to());
 
         self.observers
@@ -50,7 +50,7 @@ impl ObserverManager {
         self.observers
             .get_mut(&ANNamingInput::new("Logging"))
             .unwrap()
-            .consume(Notification::err(message.to_string()));
+            .consume(Box::new(NotifLog::err(message.to_string())));
     }
 
     // Loads a new observer into the manager.
@@ -63,8 +63,8 @@ impl ObserverManager {
     // Finalizes the observer manager by clearing all observers and sending a final notification.
     // This is typically called during system shutdown to ensure that resources are cleaned up properly.
     pub fn finalize(&mut self) -> Box<dyn Observer>{
-        let notif = Notification::log("Observer manager Finalized".to_string() , ANNamingInput::new("Main"));
-        self.forward_notif(notif);
+        let notif = NotifLog::log("Observer manager Finalized".to_string() , ANNamingInput::new("Main"));
+        self.forward_notif(Box::new(notif));
 
         
         let logger = self.observers.remove(&ANNamingInput::new("Logging")).unwrap();

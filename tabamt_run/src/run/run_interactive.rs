@@ -1,13 +1,13 @@
 use std::{sync::mpsc::{self, Receiver}, thread, time::Duration};
 use tabamt_core::runtime::engine::Engine;
-use tabamt_utils::{any_naming_input::ANNamingInput, notification::Notification, packet_handle::PacketHandle, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, notif::Notif, packet_handle::PacketHandle, task::Task};
 use crate::init::init;
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
 // @param logging_file_names: a vector of ANNamingInput representing the names of the log files to be created.
-pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Notification> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
+pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
 
@@ -77,7 +77,7 @@ pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , n
     }
 }
 
-pub fn summon_requirements() -> (PacketHandle , Receiver<Task> , Receiver<Notification>) {
+pub fn summon_requirements() -> (PacketHandle , Receiver<Task> , Receiver<Box<dyn Notif>>) {
     // Creating the channel that will be used to send tasks to the engine.
     let (task_tx , task_rx) = mpsc::channel();
     let (notif_tx , notif_rx) = mpsc::channel();

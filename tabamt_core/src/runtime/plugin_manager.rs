@@ -1,4 +1,4 @@
-use tabamt_utils::{any_naming_input::ANNamingInput, notification::Notification, packet_handle::PacketHandle, plugin::Plugin};
+use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog, packet_handle::PacketHandle, plugin::Plugin};
 
 use std::{collections::HashMap};
 
@@ -57,8 +57,8 @@ impl PluginManager{
     pub fn finalize(&mut self) {
         self.plugins.clear();
 
-        let notif = Notification::log("Plugin Manager Finalized".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(notif);
+        let notif = NotifLog::log("Plugin Manager Finalized".to_string() , ANNamingInput::new("Main"));
+        self.packet_handle.send_notification(Box::new(notif));
     }
 }
 

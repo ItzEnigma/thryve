@@ -6,7 +6,7 @@ use rayon;
 use std::sync::{Arc , Mutex};
 
 use crate::any_naming_input::ANNamingInput;
-use crate::notification::Notification;
+use crate::notif_log::NotifLog;
 use crate::packet_handle::PacketHandle;
 use crate::task_queue::TaskQueue;
 use crate::task::Task;
@@ -89,8 +89,8 @@ impl ThreadPool {
 
         // Send a notification to the engine that the threadpool has been finalized.
         // This is mainly for logging purposes.
-        let notif = Notification::log("ThreadPool Finalized".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(notif);
+        let notif = NotifLog::log("ThreadPool Finalized".to_string() , ANNamingInput::new("Main"));
+        self.packet_handle.send_notification(Box::new(notif));
     }
 
     pub fn pause(&mut self){

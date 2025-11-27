@@ -1,22 +1,11 @@
 use std::sync::atomic::{AtomicU64 , Ordering};
 
-use crate::{res::{self, Result}, res_bullitin_container::ResultBullitinContainer};
+use crate::{any_naming_input::ANNamingInput, res::{self, Result}, res_bullitin_container::ResultBullitinContainer};
 
 // Atomic counter to generate unique ids for tasks.
 // This is a global static variable that is safe to use across threads.
 // It starts at 1 and increments by 1 for each new task.
 static COUNTER: AtomicU64 = AtomicU64::new(1);
-
-// The different types of tasks that can be created.
-// They are used to identify the task and to prioritize them.
-// This will only be used internally.
-#[derive(Eq, PartialEq)]
-pub enum TaskName {
-    Init,
-    Fin,
-    Notif,
-    Consume,
-}
 
 // A Job is a function that takes no parameters and returns a Result.
 // Instead of having to type the entire type every time, a type alias is defined.
@@ -28,7 +17,7 @@ pub type Job = Box<dyn FnOnce() -> Result + Send + Sync>;
 //// To be implemented is making the TaskName more dynamic and developer friendly, so that plugins can define their own task names.
 pub struct Task{
     id: u64,                // Unique identifier for the task.                                          | read only.
-    task_name: TaskName,    // The name of the task.                                                    | read only.
+    task_name: ANNamingInput,    // The name of the task.                                                    | read only.
     priority: u8,           // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | no permissions.
     job: Job                // The function that will be executed by the thread pool.                   | no permissions.
 }
@@ -40,7 +29,7 @@ impl Task {
     // @param task_priority: The priority of the task.
     // @param function_to_exec: The function that will be executed by the thread pool.
     // @return A new Task with the given parameters.
-    pub fn new(task_name: TaskName , task_priority: u8 , function_to_exec: Job) -> Self {
+    pub fn new(task_name: ANNamingInput , task_priority: u8 , function_to_exec: Job) -> Self {
         let mut priority = task_priority;
         if priority > 4 {
             priority = 4;
@@ -74,7 +63,7 @@ impl Task {
 
     // Get the name of the task.
     // @return The name of the task.
-    pub fn get_task_name(&self) -> &TaskName {
+    pub fn get_task_name(&self) -> &ANNamingInput {
         &self.task_name
     }
 }
