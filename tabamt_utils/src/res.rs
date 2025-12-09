@@ -106,6 +106,16 @@ impl Result {
 }
 
 impl Result {
+    // Take ownership of the message inside the struct and return it.
+    // This will ensure that the data is not used after it has been taken.
+    // @return The ANNamingInput that will be used to get the type of result.
+    pub fn get_res_type(&mut self) -> ANNamingInput {
+        let result_type = std::mem::replace(&mut self.result_type , ANNamingInput::new("")); 
+        
+        result_type
+    }
+
+
     // The functions below will take the ownership of the data inside the struct and return it.
     // This is done to ensure that the data is not used after it has been taken.
     // @return The Task if it exists, None otherwise.

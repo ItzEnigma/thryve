@@ -229,6 +229,10 @@ impl Engine {
                 self.obs_manager.forward_notif(Box::new(finished_notif));
             }
 
+            // If the result type is "Fin", finalize the engine.
+            if task_result.get_res_type().get_inner() == "Fin"{
+                self.finalize();
+            }
         }
         return ret
     }
