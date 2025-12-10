@@ -232,6 +232,7 @@ impl Engine {
             // If the result type is "Fin", finalize the engine.
             if task_result.get_res_type().get_inner() == "Fin"{
                 self.finalize();
+                return ret
             }
         }
         return ret
