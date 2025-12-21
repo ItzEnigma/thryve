@@ -14,12 +14,11 @@ pub type Job = Box<dyn FnOnce() -> Result + Send + Sync>;
 // A Task is a unit of work that can be executed by the thread pool.
 // This will be the object that will be sent to the thread pool.
 // No other object should be sent to the thread pool.
-//// To be implemented is making the TaskName more dynamic and developer friendly, so that plugins can define their own task names.
 pub struct Task{
-    id: u64,                // Unique identifier for the task.                                          | read only.
-    task_name: ANNamingInput,    // The name of the task.                                                    | read only.
-    priority: u8,           // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | no permissions.
-    job: Job                // The function that will be executed by the thread pool.                   | no permissions.
+    id: u64,                    // Unique identifier for the task.                                          | read only.
+    task_name: ANNamingInput,   // The name of the task.                                                    | read only.
+    priority: u8,               // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | no permissions.
+    job: Job                    // The function that will be executed by the thread pool.                   | no permissions.
 }
 
 impl Task {

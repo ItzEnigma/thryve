@@ -10,9 +10,9 @@ pub struct Engine {
     threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
 
     task_rx: mpsc::Receiver<Task>,              // Receives tasks to be executed.                           | No Permissions.
-    notif_rx: mpsc::Receiver<Box<dyn Notif>>,     // Receives notifications to be processed.                  | No Permissions.
+    notif_rx: mpsc::Receiver<Box<dyn Notif>>,   // Receives notifications to be processed.                  | No Permissions.
 
-    exit_flag: bool,                            // Flag to indicate if the engine should exit.              | No Permissions.
+    exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.
     pause_flag: bool,                           // Flag to indicate if the engine should pause.             | No Permissions.
 }
 
@@ -161,22 +161,30 @@ impl Engine {
         logger.consume(Box::new(notif));
     }
 
+    // Pauses the engine, stopping task processing and notifying observers.
     pub fn pause(&mut self) {
+        // Pause the thread pool to stop processing tasks.
         self.threadpool.pause();
         
+        // Set the pause flag to true to indicate that the engine is paused.
         self.pause_flag = true;
         
         // Forward a notification to the observer_manager that the engine is paused.
         let notif = NotifLog::log("Engine Paused".to_string() , ANNamingInput::new("Main"));
         self.obs_manager.forward_notif(Box::new(notif));
         
+        // Run the engine once more to process any remaining notifications before pausing.
         self.run_once();
         
     }
 
-    pub fn cont(&mut self) {
+    // Continues the engine, resuming task processing and notifying observers.
+    pub fn resume(&mut self) {
+        // Continue the thread pool to resume processing tasks.
+        self.threadpool.resume();
+        
+        // Set the pause flag to false to indicate that the engine is running.
         self.pause_flag = false;
-        self.threadpool.cont();
 
         // Forward a notification to the observer_manager that the engine is continued.
         let notif = NotifLog::log("Engine continued".to_string() , ANNamingInput::new("Main"));

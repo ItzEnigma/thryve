@@ -9,7 +9,7 @@ use crate::{any_naming_input::ANNamingInput, observer::Observer, plugin::Plugin,
 // The struct that will hold the results returned by tasks.
 // It can hold different types of data depending on the type of result.
 pub struct Result {
-    result_type: ANNamingInput,             // The type of result.                                                          | No Permissions.
+    result_type: ANNamingInput,             // The type of result.                                                          | Take Ownership.
     message: String,                        // A message associated with the result.                                        | Take Ownership.
     log_msg_to_file: ANNamingInput,         // The module type that will be used to name the log file.                      | Take Ownership.
     next_task: Option<Task>,                // An optional task that can be executed after the result is handled.           | Take Ownership.

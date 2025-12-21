@@ -4,7 +4,6 @@
         "tabamt_core",
         "tabamt_utils",
         "tabamt_observers",
-        "tabamt_dll_loading",
         "tabamt",
         ]
 

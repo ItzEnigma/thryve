@@ -13,7 +13,7 @@ impl ANNamingInput {
     // @param s: &str
     // @return ANNamingInput
     pub fn new(s: &str) -> Self {
-        assert!(s.chars().all(|c| c.is_alphanumeric()), "ANNamingInput must be alphanumeric.");
+        assert!(s.chars().all(|c| c.is_alphanumeric()), "ANNamingInput must be alphanumeric. Got '{}'", s);
         ANNamingInput(s.to_owned())
     }
 
@@ -25,12 +25,17 @@ impl ANNamingInput {
 }
 
 impl ANNamingInput {
+    // A special naming input representing "fin".
+    // This is used in various places to indicate the end of a process or sequence.
     pub (crate) fn fin() -> Self {
         ANNamingInput("fin".to_string())
     }
 }
 
 impl Display for ANNamingInput {
+    // Formats the ANNamingInput for display.
+    // @param f: the formatter
+    // @return std::fmt::Result
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }

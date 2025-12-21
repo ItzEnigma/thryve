@@ -1,5 +1,5 @@
-// This is the notification system for logging and other events.
-// It will be used by all modules to send notifications to any observers created.
+// This is the notification system for logging.
+// It will be used by any module to send log notifications to the logging observer.
 
 use std::{time::SystemTime};
 use chrono::{DateTime , Local};
@@ -12,24 +12,26 @@ use crate::any_naming_input::ANNamingInput;
 
 // This struct will be used to send notifications to any observers created.
 pub struct NotifLog {
-    event_type: ANNamingInput,         // The type of event                        | Read Only
-    timestamp: SystemTime,      // The time the event was created           | Read Only
-    send_to: ANNamingInput,        // The module to send the notification to   | Read Only
-    message: String,
-    logfile: ANNamingInput,
-    task: Option<Task>,
-    notification: Option<Box<NotifLog>>,
+    event_type: ANNamingInput,              // The type of event                        | Read Only
+    timestamp: SystemTime,                  // The time the event was created           | Read Only
+    send_to: ANNamingInput,                 // The module to send the notification to   | Read Only
+    message: String,                        // The log message                          | Read Only
+    logfile: ANNamingInput,                 // The module to log the message to         | Read Only
+    task: Option<Task>,                     // The task associated with the log         | Read Only
+    notification: Option<Box<NotifLog>>,    // An optional nested notification          | Read Only
 }
 
 impl Notif for NotifLog{
     // Functions to get the values of the struct.
     
+    // Function to get the struct as Any.
+    // @return a reference to dyn Any.
     fn get_as_any(&self) -> &dyn std::any::Any{
         self
     }
 
     // Function to get the event type.
-    // @return a reference to a string.
+    // @return a reference to a ANNamingInput.
     fn get_event_type(&self) -> &ANNamingInput{
         &self.event_type
     }
@@ -48,18 +50,28 @@ impl Notif for NotifLog{
 }
 
 impl NotifLog {
+    // Functions to get the values of the struct.
+
+    // Function to get the message.
+    // @return a reference to the message string.
     pub fn get_message(&self) -> &String{
         &self.message
     }
 
+    // Function to get the logfile.
+    // @return a reference to ANNamingInput.
     pub fn get_logfile(&self) -> &ANNamingInput{
         &self.logfile
     }
 
+    // Function to get the task.
+    // @return a reference to an Option<Task>.
     pub fn get_task(&self) -> &Option<Task>{
         &self.task
     }
 
+    // Function to get the notification.
+    // @return a reference to an Option<Box<NotifLog>>.
     pub fn get_notification(&self) -> &Option<Box<NotifLog>>{
         &self.notification
     }
@@ -116,7 +128,7 @@ impl NotifLog {
         }
     }
 
-    // Function to display the notification to a file.
+    // Function to write the notification to a file.
     // @param file: A mutable reference to a file.
     pub fn display(&self, file: &mut File) {
         let datetime: DateTime<Local> = self.timestamp.clone().into();

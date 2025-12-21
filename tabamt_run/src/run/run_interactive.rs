@@ -42,7 +42,7 @@ pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , n
             state += 1;
             
             // Initializing the observers if there are any.
-            // This needs to be done after the logger is initialized.\
+            // This needs to be done after the logger is initialized.
             if len_obs_tasks > 0 {
                 // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
                 if let Some(obs) = obs_init_tasks_clone.take() {
@@ -72,7 +72,7 @@ pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , n
             // The engine is now fully initialized.
             // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
             // It can and should be removed in production.
-            thread::sleep(Duration::from_secs(10));
+            // thread::sleep(Duration::from_secs(10));
         }
     }
 }

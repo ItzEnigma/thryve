@@ -93,14 +93,18 @@ impl ThreadPool {
         self.packet_handle.send_notification(Box::new(notif));
     }
 
+    // A function to pause the threadpool.
+    // This will set the pause flag to true and pause the queue.
     pub fn pause(&mut self){
         self.pool_pause_flag = true.into();
         self.main_queue.pause();
     }
 
-    pub fn cont(&mut self){
+    // A function to continue the threadpool.
+    // This will set the pause flag to false and continue the queue.
+    pub fn resume(&mut self){
         self.pool_pause_flag = false.into();
-        self.main_queue.cont();
+        self.main_queue.resume();
     }
 }
 

@@ -8,8 +8,8 @@ use std::{collections::HashMap};
 // It stores Plugins in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the Plugins if needed.
 pub struct PluginManager {
-    plugins: HashMap<ANNamingInput , Box<dyn Plugin>>,     // Key: Plugin type specified by the developer, Value: Plugin   | read only
-    packet_handle: PacketHandle,                        // Used to send notifications to the ObserverManager            | read only
+    plugins: HashMap<ANNamingInput , Box<dyn Plugin>>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
+    packet_handle: PacketHandle,                            // Used to send notifications to the ObserverManager            | read only
 }
 
 impl PluginManager{

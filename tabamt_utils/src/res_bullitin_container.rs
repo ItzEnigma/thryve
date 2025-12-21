@@ -4,8 +4,8 @@ use crate::res::Result;
 
 // A wrapper struct to hold the result of a task along with its ID.
 pub struct ResultBullitinContainer {
-    task_result: Result,
-    task_id: u64,
+    task_result: Result,    // The result of the task.  | Read Only.
+    task_id: u64,           // The ID of the task.      | Read Only.
 }
 
 // 

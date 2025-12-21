@@ -182,7 +182,7 @@ impl <'a> TaBaMT <'a> {
 
                             // When the service resumes, turn the paused flag off.
                             else if eng_paused {
-                                eng.cont();
+                                eng.resume();
                                 eng_paused = false;
                             } 
                             

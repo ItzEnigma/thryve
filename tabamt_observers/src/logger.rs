@@ -7,23 +7,15 @@ use std::{collections::HashMap, env::current_exe, fs::{create_dir_all, File, Ope
 use chrono::{ DateTime , Local };
 use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog, notif::Notif , observer::Observer, res};
 
-// The type of logging to perform.
-//// Enum to be implemented in the future.
-pub enum LoggingType {
-    RLog,       // Release Log
-    DLog,       // Debug Log
-    Log         // Release and Debug Log
-}
-
 // The logger observer struct.
 // Holds the log files and the logging type.
 pub struct LoggerObserver{
     observer_name: String,                  // Name of the observer.                        | read only
-    observer_type: ANNamingInput,              // Type of the observer.                        | read only
+    observer_type: ANNamingInput,           // Type of the observer.                        | read only
 
     _currentdir: String,                    // Current directory of the executable.         | read only
 
-    files: HashMap<ANNamingInput , File>,      // HashMap of log files based on module type.   | no permission
+    files: HashMap<ANNamingInput , File>,   // HashMap of log files based on module type.   | no permission
 }
 
 // Implement the Observer trait for the LoggerObserver.
@@ -68,8 +60,12 @@ impl LoggerObserver {
         // Create a hashmap to hold the log files.
         let mut temp_hash_map: HashMap<ANNamingInput, File> = HashMap::new();
         // create the main log file and insert it into the hashmap. This file will always be created.
-        let log_file_path = log_dir_path.join("Main.log");
-        temp_hash_map.insert(ANNamingInput::new("Main"), OpenOptions::new().create(true).append(true).open(log_file_path).unwrap());
+        let log_file_path_main = log_dir_path.join("Main.log");
+        temp_hash_map.insert(ANNamingInput::new("Main"), OpenOptions::new().create(true).append(true).open(log_file_path_main).unwrap());
+
+        // create the main log file and insert it into the hashmap. This file will always be created.
+        let log_file_path_err = log_dir_path.join("Error.log");
+        temp_hash_map.insert(ANNamingInput::new("Error"), OpenOptions::new().create(true).append(true).open(log_file_path_err).unwrap());
         
         // insert the other log files.
         for name in file_names {
@@ -99,6 +95,7 @@ impl LoggerObserver {
     // Log a notification to the appropriate file.
     // @param notif - The notification to log.
     fn log(&mut self , notif: Box<dyn Notif>) {
+        // Attempt to downcast the notification to a NotifLog.
         let notif_as_any = notif.get_as_any();
         let notif_casted = notif_as_any.downcast_ref::<NotifLog>();
 

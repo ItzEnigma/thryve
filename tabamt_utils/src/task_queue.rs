@@ -96,8 +96,10 @@ impl TaskQueue {
         }
     }
 
-    // Pause the task queue.
+    // A function to pause the task queue.
+    // This will set the pause flag to true and stop notifying threads of new tasks.
     pub fn pause(&self) {
+        // Set the pause flag to true to stop processing tasks.
         let mut pause = self.pause_flag.lock().unwrap();
         *pause = true;
 
@@ -106,8 +108,10 @@ impl TaskQueue {
         self.packet_handle.send_notification(Box::new(notif));
     }
 
-    // Continue the task queue.
-    pub fn cont(&self) {
+    // A function to continue the task queue.
+    // This will set the pause flag to false and notify all threads waiting on the condition variable.
+    pub fn resume(&self) {
+        // Set the pause flag to false to continue processing tasks.
         let mut pause = self.pause_flag.lock().unwrap();
         *pause = false;
 
