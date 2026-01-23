@@ -35,10 +35,10 @@ impl ObserverManager {
     // Asserts that the observer exists before attempting to send the notification.
     // @param notif: The notification to be forwarded.
     pub fn forward_notif(&mut self , notif: Box<dyn Notif>) {
-        assert!(self.check_observer(notif.get_send_to()), "Observer Manager Cannot Find Requested Observer. Got {}" , notif.get_send_to());
+        assert!(self.check_observer(notif.obs_receiver()), "Observer Manager Cannot Find Requested Observer. Got {}" , notif.obs_receiver());
 
         self.observers
-        .get_mut(notif.get_send_to())
+        .get_mut(notif.obs_receiver())
         .unwrap()
         .consume(notif);
     }
@@ -57,7 +57,7 @@ impl ObserverManager {
     // This allows the system to dynamically add observers at runtime.
     // @param observer: The observer to be loaded.
     pub fn load_observer(&mut self , observer: Box<dyn Observer>){
-        self.observers.insert(observer.get_observer_type().clone() , observer);
+        self.observers.insert(observer.observer_type().clone() , observer);
     }
     
     // Finalizes the observer manager by clearing all observers and sending a final notification.
@@ -79,10 +79,10 @@ impl ObserverManager {
     // A function to get the names of all loaded observers.
     // This can be useful for debugging or monitoring purposes.
     // @return: A vector of observer names.
-    pub fn get_observer_names(&self) -> Vec<&str>{
+    pub fn observer_names(&self) -> Vec<&str>{
         let mut vector: Vec<&str> = Vec::new();
         for obs in self.observers.keys(){
-            vector.push(obs.get_inner());
+            vector.push(obs.inner());
         }
     
         vector
@@ -91,7 +91,7 @@ impl ObserverManager {
     // A function to retrieve a specific observer by its type.
     // @param obs_type: The type of the observer to retrieve.
     // @return: An Option containing a reference to the observer if found, or None if not found.
-    fn get_observer(&mut self , obs_type: &ANNamingInput) -> Option<&Box<dyn Observer>>{
+    fn observer(&mut self , obs_type: &ANNamingInput) -> Option<&Box<dyn Observer>>{
         // Assert that the observer exists before attempting to retrieve it.
         assert!(self.check_observer(obs_type), "Observer Manager Cannot Find Requested Observer. Got {}" , obs_type);
         self.observers.get(obs_type)

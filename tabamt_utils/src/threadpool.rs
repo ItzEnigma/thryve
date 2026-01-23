@@ -6,6 +6,7 @@ use rayon;
 use std::sync::{Arc , Mutex};
 
 use crate::any_naming_input::ANNamingInput;
+use crate::config::Config;
 use crate::notif_log::NotifLog;
 use crate::packet_handle::PacketHandle;
 use crate::task_queue::TaskQueue;
@@ -27,15 +28,15 @@ impl ThreadPool {
     // @param size: The number of threads in the pool.
     // @param packet_handle: The packet handle that will be used to send notifications to the engine.
     // @return: A new threadpool.
-    pub fn new(size: usize , packet_handle: PacketHandle) -> Self {
+    pub fn new(config: &Config , packet_handle: PacketHandle) -> Self {
         Self {
             main_pool: rayon::ThreadPoolBuilder::new()
-                .num_threads(size)
+                .num_threads(config.threads.worker_count)
                 .build()
                 .unwrap(),
             pool_exit_flag: Arc::new(false),
             pool_pause_flag: Arc::new(false),
-            main_queue: Arc::new(TaskQueue::new(packet_handle.clone())),
+            main_queue: Arc::new(TaskQueue::new(config , packet_handle.clone())),
             res_bullitin: Arc::new(Mutex::new(ResBullitin::new())),
             packet_handle: packet_handle,
 
@@ -112,7 +113,7 @@ impl ThreadPool {
     // Get a clone of the shared reference to the result bullitin.
     // This allows the engine to access the results of the tasks executed in the pool.
     // @return: A clone of the shared reference to the result bullitin.
-    pub fn get_res_bullitin(&self) -> Arc<Mutex<ResBullitin>>{
+    pub fn res_bullitin(&self) -> Arc<Mutex<ResBullitin>>{
         self.res_bullitin.clone()
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use crate::service::service::TaBaMT;
-use tabamt_utils::{any_naming_input::ANNamingInput, notif::Notif, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, config::Config, notif::Notif, task::Task};
 
 // The main function if the app will be running as a service: the main service entrypoint to the program.
 // @param can_pause: an optional boolean indicating if the service can be paused.
@@ -15,9 +15,14 @@ pub fn try_run_as_service(mut svc: TaBaMT, task_rx: Receiver<Task> , notif_rx: R
     svc.run_service(task_rx , notif_rx , obs_init_tasks , plugin_init_tasks , logging_file_names);
 }
 
-pub fn create_service<'a> (can_pause: Option<bool> , can_stop: Option<bool>) -> (TaBaMT<'a> , Receiver<Task> , Receiver<Box<dyn Notif>>) {
+// Function to create a new service instance.
+// @param max_threads: an optional usize indicating the maximum number of threads the service can handle at once.
+// @param can_pause: an optional boolean indicating if the service can be paused.
+// @param can_stop: an optional boolean indicating if the service can be stopped.
+// @return: a tuple containing the service instance, the task receiver, and the notification receiver.
+pub fn create_service<'a> (config: Config) -> (TaBaMT<'a> , Receiver<Task> , Receiver<Box<dyn Notif>>) {
     // This is an instance of the service that will be running.
     // The "svc" is the struct holding the instance.
     // The "rx" is an "mpsc::Receiver<Task>" part of a channel which will be passed to the engine when it is created.
-    TaBaMT::new(can_pause, can_stop)
+    TaBaMT::new(config)
 }

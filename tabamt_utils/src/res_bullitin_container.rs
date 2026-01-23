@@ -20,13 +20,13 @@ impl  ResultBullitinContainer {
 
     // Get the result of the task.
     // @return The result of the task.
-    pub fn get_task_result(self) -> Result{
+    pub fn task_result(self) -> Result{
         self.task_result
     }
 
     // Get the ID of the task.
     // @return The ID of the task.
-    pub fn get_task_id(&self) -> u64{
+    pub fn task_id(&self) -> u64{
         self.task_id
     }
 }

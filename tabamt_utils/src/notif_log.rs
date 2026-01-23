@@ -14,7 +14,7 @@ use crate::any_naming_input::ANNamingInput;
 pub struct NotifLog {
     event_type: ANNamingInput,              // The type of event                        | Read Only
     timestamp: SystemTime,                  // The time the event was created           | Read Only
-    send_to: ANNamingInput,                 // The module to send the notification to   | Read Only
+    obs_receiver: ANNamingInput,                 // The module to send the notification to   | Read Only
     message: String,                        // The log message                          | Read Only
     logfile: ANNamingInput,                 // The module to log the message to         | Read Only
     task: Option<Task>,                     // The task associated with the log         | Read Only
@@ -26,26 +26,26 @@ impl Notif for NotifLog{
     
     // Function to get the struct as Any.
     // @return a reference to dyn Any.
-    fn get_as_any(&self) -> &dyn std::any::Any{
+    fn as_any(&self) -> &dyn std::any::Any{
         self
     }
 
     // Function to get the event type.
     // @return a reference to a ANNamingInput.
-    fn get_event_type(&self) -> &ANNamingInput{
+    fn event_type(&self) -> &ANNamingInput{
         &self.event_type
     }
 
     // Function to get the timestamp.
     // @return a reference to the system time.
-    fn get_time_stamp(&self) -> &SystemTime{
+    fn time_stamp(&self) -> &SystemTime{
         &self.timestamp
     }
 
     // Function to get the module to send the notification to.
     // @return a reference to ANNamingInput.
-    fn get_send_to(&self) -> &ANNamingInput{
-        &self.send_to
+    fn obs_receiver(&self) -> &ANNamingInput{
+        &self.obs_receiver
     }
 }
 
@@ -54,25 +54,25 @@ impl NotifLog {
 
     // Function to get the message.
     // @return a reference to the message string.
-    pub fn get_message(&self) -> &String{
+    pub fn message(&self) -> &String{
         &self.message
     }
 
     // Function to get the logfile.
     // @return a reference to ANNamingInput.
-    pub fn get_logfile(&self) -> &ANNamingInput{
+    pub fn logfile(&self) -> &ANNamingInput{
         &self.logfile
     }
 
     // Function to get the task.
     // @return a reference to an Option<Task>.
-    pub fn get_task(&self) -> &Option<Task>{
+    pub fn task(&self) -> &Option<Task>{
         &self.task
     }
 
     // Function to get the notification.
     // @return a reference to an Option<Box<NotifLog>>.
-    pub fn get_notification(&self) -> &Option<Box<NotifLog>>{
+    pub fn notification(&self) -> &Option<Box<NotifLog>>{
         &self.notification
     }
 }
@@ -87,7 +87,7 @@ impl NotifLog {
         NotifLog {
             event_type: evt_type,
             timestamp: SystemTime::now(),
-            send_to: send_notif_to,
+            obs_receiver: send_notif_to,
             message: message,
             logfile: logfile,
             task: task,
@@ -104,7 +104,7 @@ impl NotifLog {
         NotifLog {
             event_type: ANNamingInput::new("Log"),
             timestamp: SystemTime::now(),
-            send_to: ANNamingInput::new("Logging"),
+            obs_receiver: ANNamingInput::new("Logging"),
             message: message,
             logfile: logfile,
             task: None,
@@ -120,7 +120,7 @@ impl NotifLog {
         NotifLog {
             event_type: ANNamingInput::new("Error"),
             timestamp: SystemTime::now(),
-            send_to: ANNamingInput::new("Logging"),
+            obs_receiver: ANNamingInput::new("Logging"),
             message: message,
             logfile: ANNamingInput::new("Error"),
             task: None,

@@ -17,7 +17,7 @@ pub type Job = Box<dyn FnOnce() -> Result + Send + Sync>;
 pub struct Task{
     id: u64,                    // Unique identifier for the task.                                          | read only.
     task_name: ANNamingInput,   // The name of the task.                                                    | read only.
-    priority: u8,               // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | no permissions.
+    base_priority: u8,          // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | read write.
     job: Job                    // The function that will be executed by the thread pool.                   | no permissions.
 }
 
@@ -29,15 +29,10 @@ impl Task {
     // @param function_to_exec: The function that will be executed by the thread pool.
     // @return A new Task with the given parameters.
     pub fn new(task_name: ANNamingInput , task_priority: u8 , function_to_exec: Job) -> Self {
-        let mut priority = task_priority;
-        if priority > 4 {
-            priority = 4;
-        }
-
         Task{ 
             id: next_id(),
             task_name: task_name,
-            priority: priority,
+            base_priority: task_priority,
             job: function_to_exec,
         }
     }
@@ -47,7 +42,7 @@ impl Task {
     // It will also create a ResultBullitinContainer with the result of the function and the id of the task.
     // @return A ResultBullitinContainer with the result of the function and the id of the task.
     pub (crate) fn run(self) -> ResultBullitinContainer{
-        let id = *self.get_id();
+        let id = *self.id();
         let task_result: res::Result = (self.job)();
         ResultBullitinContainer::new(id, task_result)
     }
@@ -56,50 +51,26 @@ impl Task {
 impl Task {
     // Get the id of the task.
     // @return The id of the task.
-    pub fn get_id(&self) -> &u64 {
+    pub fn id(&self) -> &u64 {
         &self.id
     }
 
     // Get the name of the task.
     // @return The name of the task.
-    pub fn get_task_name(&self) -> &ANNamingInput {
+    pub fn task_name(&self) -> &ANNamingInput {
         &self.task_name
     }
-}
 
-impl PartialEq for Task {
-    // Two tasks are equal if they have the same priority.
-    // This is used to prioritize tasks in the thread pool.
-    // @param other: The other task to compare to.
-    // @return true if the tasks have the same priority, false otherwise.
-    fn eq(&self, other: &Self) -> bool {
-        self.priority == other.priority
+    // Get the base priority of the task.
+    // @return The base priority of the task.
+    pub fn base_priority(&self) -> &u8 {
+        &self.base_priority
     }
-}
-impl Eq for Task {}
 
-impl Ord for Task {
-    // Imagine task A has priority 4 and task B has priority 2.
-    // When comparing A to B, it will actually compare B's priority to A's priority (2 compared to 4).
-    // This results in A being considered "greater" than B.
-    // Higher priority tasks (closer to 4) will be considered "greater".
-    // Lower priority tasks (closer to 0) will be considered "less".
-    // This creates a max-heap behavior in the priority queue.
-    // @param other: The other task to compare to.
-    // @return An Ordering indicating the relative priority of the tasks.
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.priority.cmp(&self.priority)
-    }
-    
-}
-
-impl PartialOrd for Task {
-    // This is needed to implement Ord.
-    // It simply calls the cmp function.
-    // @param other: The other task to compare to.
-    // @return An Option containing the Ordering indicating the relative priority of the tasks.
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
+    pub fn check_task_priority(&mut self , max_task_priority: u8){
+        if self.base_priority > max_task_priority {
+            self.base_priority = max_task_priority;
+        }
     }
 }
 

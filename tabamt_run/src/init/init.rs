@@ -30,7 +30,7 @@ fn load_logger(packet_handle: PacketHandle , obs_type: ANNamingInput , file_name
     // The job to load the logger observer.
     let job_obs_load: Job = Box::new(move || {
         // If the observer type is "Logging", create a new LoggerObserver with the provided file names.
-        if obs_type.get_inner() == "Logging" {
+        if obs_type.inner() == "Logging" {
             LoggerObserver::new(file_names)
         }
 

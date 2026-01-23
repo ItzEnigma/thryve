@@ -28,13 +28,13 @@ impl Observer for LoggerObserver {
 
     // Get the name of the observer.
     // @return - The name of the observer.
-    fn get_observer_name(&self) -> &str {
+    fn observer_name(&self) -> &str {
         &self.observer_name
     }
 
     // Get the type of the observer.
     // @return - The type of the observer.
-    fn get_observer_type(&self) -> &ANNamingInput {
+    fn observer_type(&self) -> &ANNamingInput {
         &self.observer_type
     }
 }
@@ -96,11 +96,11 @@ impl LoggerObserver {
     // @param notif - The notification to log.
     fn log(&mut self , notif: Box<dyn Notif>) {
         // Attempt to downcast the notification to a NotifLog.
-        let notif_as_any = notif.get_as_any();
+        let notif_as_any = notif.as_any();
         let notif_casted = notif_as_any.downcast_ref::<NotifLog>();
 
         if let Some(notif) = notif_casted {
-            let logfile = notif.get_logfile();
+            let logfile = notif.logfile();
             // Get the file from the hashmap based on the module type.
             let file = self.files.get_mut(logfile);
 

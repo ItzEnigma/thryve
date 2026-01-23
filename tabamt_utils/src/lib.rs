@@ -11,3 +11,4 @@ pub mod res_bullitin_container;
 pub mod any_naming_input;
 pub mod observer;
 pub mod debug_logging;
+pub mod config;

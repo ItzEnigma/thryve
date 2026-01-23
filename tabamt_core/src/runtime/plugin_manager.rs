@@ -26,7 +26,7 @@ impl PluginManager{
     // Retrieves a list of all plugin types currently loaded in the manager.
     // This is useful for managing and interacting with the available plugins.
     // @return: A vector containing references to the types of all loaded plugins.
-    pub fn get_plugin_names(&self) -> Vec<&ANNamingInput>{
+    pub fn plugin_names(&self) -> Vec<&ANNamingInput>{
         let mut vector: Vec<&ANNamingInput> = Vec::new();
         for plugin in self.plugins.keys(){
             vector.push(plugin);
@@ -49,7 +49,7 @@ impl PluginManager{
     // This allows the system to dynamically add plugins at runtime.
     // @param plugin: The plugin to be loaded.
     pub fn load_plugin(&mut self , plugin: Box<dyn Plugin>){
-        self.plugins.insert(plugin.get_plugin_type().clone() , plugin);
+        self.plugins.insert(plugin.plugin_type().clone() , plugin);
     }
 
     // Finalizes the plugin manager by clearing all plugins and sending a final notification.
@@ -67,7 +67,7 @@ impl PluginManager{
     // A function to retrieve a specific plugin by its type.
     // @param plugin_type: The type of the plugin to retrieve.
     // @return: An Option containing a reference to the plugin if found, or None if not found.
-    fn get_plugin(&mut self , plugin_type: &ANNamingInput) -> Option<&Box<dyn Plugin>>{
+    fn plugin(&mut self , plugin_type: &ANNamingInput) -> Option<&Box<dyn Plugin>>{
         assert!(self.check_plugin(plugin_type), "Plugin Manager Cannot Find Requested Plugin. Got {}" , plugin_type);
         self.plugins.get(plugin_type)
     }

@@ -1,23 +1,27 @@
 use std::{sync::mpsc::{self, Receiver}, thread, time::Duration};
 use tabamt_core::runtime::engine::Engine;
-use tabamt_utils::{any_naming_input::ANNamingInput, notif::Notif, packet_handle::PacketHandle, task::Task};
+use tabamt_utils::{any_naming_input::ANNamingInput, config::Config, notif::Notif, packet_handle::PacketHandle, task::Task};
 use crate::init::init;
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
+// @param max_threads: an optional usize indicating the maximum number of threads the service can handle at once.
+// @param packet_handle: PacketHandle - the packet handle to be used by the engine.
+// @param task_rx: Receiver<Task> - the receiver part of the channel to be handed to the engine.
+// @param notif_rx: Receiver<Box<dyn Notif>> - the receiver part of the notification channel to be handed to the engine.
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
 // @param logging_file_names: a vector of ANNamingInput representing the names of the log files to be created.
-pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
+pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
 
     // Creating the engine instance.
-    let mut eng = Engine::new(task_rx , notif_rx , packet_handle.clone());
+    let mut eng = Engine::new(&config , task_rx , notif_rx , packet_handle.clone());
     let len_obs_tasks = obs_init_tasks.len();
     let len_plugin_tasks = plugin_init_tasks.len(); 
 
     // This spawns the threads in the thread pool and makes them wait for tasks.
-    eng.get_thread_pool().run_threads();
+    eng.thread_pool().run_threads();
 
     // Initializing the logger first.
     // The initialization function takes ownership of the vector.
@@ -29,7 +33,7 @@ pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , n
     let mut obs_init_tasks_clone = Some(obs_init_tasks);
     let mut plugin_init_tasks_clone = Some(plugin_init_tasks);
 
-    while eng.get_exit_flag() == false {
+    while eng.exit_flag() == false {
         // is_Running the engine once to process any tasks in the queue.
         // The first time this is called, it will also initialize the logger.
         // This is important as the logger needs to be initialized before any other module.
@@ -71,8 +75,9 @@ pub fn run_interactive(packet_handle: PacketHandle , task_rx: Receiver<Task> , n
             
             // The engine is now fully initialized.
             // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
-            // It can and should be removed in production.
-            // thread::sleep(Duration::from_secs(10));
+            if config.debugging.is_debugging{
+                thread::sleep(Duration::from_secs(config.debugging.wait_before_execution));
+            }
         }
     }
 }

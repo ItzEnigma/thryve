@@ -14,15 +14,15 @@ pub trait Plugin: Send + Sync {
 
     // Get the type of the plugin
     // @return The type of the plugin as an ANNamingInput
-    fn get_plugin_type(&self) -> &ANNamingInput;
+    fn plugin_type(&self) -> &ANNamingInput;
 
     // Get the name of the plugin
     // @return The name of the plugin as a &str
-    fn get_plugin_name(&self) -> &str;
+    fn plugin_name(&self) -> &str;
 
     // Get the version of the plugin
     // @return The version of the plugin as a &str
-    fn get_packet_handle(&self) -> PacketHandle;
+    fn packet_handle(&self) -> PacketHandle;
 
     // Core plugin functionality
 
