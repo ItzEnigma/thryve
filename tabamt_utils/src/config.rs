@@ -131,6 +131,8 @@ pub fn load_config_from_file(path: &str) -> Config{
         Err(_) => load_def_config(),
     };
 
+    assert!(config.tasks.max_priority < 15 , "Maximum Task Priority cannot exceed 15");
+
     config
 }
 

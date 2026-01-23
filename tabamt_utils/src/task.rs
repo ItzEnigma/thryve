@@ -63,8 +63,12 @@ impl Task {
 
     // Get the base priority of the task.
     // @return The base priority of the task.
-    pub fn base_priority(&self) -> &u8 {
-        &self.base_priority
+    pub fn base_priority(&self) -> u8 {
+        self.base_priority
+    }
+
+    pub fn set_base_priority(&mut self, priority: u8) {
+        self.base_priority += priority;
     }
 
     pub fn check_task_priority(&mut self , max_task_priority: u8){
