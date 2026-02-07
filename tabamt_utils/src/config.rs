@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::fs;
 
 #[derive(Debug, Deserialize , Clone , Copy)]
+#[serde(default)]
 pub struct Config {
     pub service: SerivceConfig,
     pub engine: EngineConfig,
