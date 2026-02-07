@@ -40,7 +40,7 @@ impl ResBullitin {
     // It decomposes the ResultBullitinContainer into its components and stores them in the HashMap.
     // @param result_container: The result container to insert.
     pub fn insert(&mut self, result_container: ResultBullitinContainer) {
-        self.results.insert(result_container.task_id(), result_container.task_result());
+        self.results.insert(result_container.task_id, result_container.task_result);
     }
 
     // Try to get all the results from the bulletin board.

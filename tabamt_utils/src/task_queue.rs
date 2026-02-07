@@ -145,7 +145,7 @@ impl EnqueuedTask {
         let waited = self.enqueued_at.elapsed();
         let aging_boost = (waited.as_secs_f64() / Duration::from_secs(self.task_config.aging_interval).as_secs_f64()) as u8;
 
-        (self.task.base_priority() + aging_boost).min(self.task_config.max_priority)
+        (self.task.base_priority + aging_boost).min(self.task_config.max_priority)
     }
 }
 
@@ -155,7 +155,7 @@ impl PartialEq for EnqueuedTask {
     // @param other: The other task to compare to.
     // @return true if the tasks have the same priority, false otherwise.
     fn eq(&self, other: &Self) -> bool {
-        self.task.base_priority() == other.task.base_priority()
+        self.task.base_priority == other.task.base_priority
     }
 }
 impl Eq for EnqueuedTask {}
@@ -171,7 +171,7 @@ impl Ord for EnqueuedTask {
         self.effective_priority()
             .cmp(&other.effective_priority())
             .then_with(|| other.enqueued_at.cmp(&self.enqueued_at))
-            .then_with(|| other.task.id().cmp(&self.task.id()))
+            .then_with(|| other.task.id.cmp(&self.task.id))
     }
     
 }

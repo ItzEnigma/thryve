@@ -21,7 +21,7 @@ pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Re
     let len_plugin_tasks = plugin_init_tasks.len(); 
 
     // This spawns the threads in the thread pool and makes them wait for tasks.
-    eng.thread_pool().run_threads();
+    eng.threadpool.run_threads();
 
     // Initializing the logger first.
     // The initialization function takes ownership of the vector.
@@ -33,7 +33,7 @@ pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Re
     let mut obs_init_tasks_clone = Some(obs_init_tasks);
     let mut plugin_init_tasks_clone = Some(plugin_init_tasks);
 
-    while eng.exit_flag() == false {
+    while eng.exit_flag == false {
         // is_Running the engine once to process any tasks in the queue.
         // The first time this is called, it will also initialize the logger.
         // This is important as the logger needs to be initialized before any other module.

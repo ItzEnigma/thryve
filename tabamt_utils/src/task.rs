@@ -15,10 +15,10 @@ pub type Job = Box<dyn FnOnce() -> Result + Send + Sync>;
 // This will be the object that will be sent to the thread pool.
 // No other object should be sent to the thread pool.
 pub struct Task{
-    id: u64,                    // Unique identifier for the task.                                          | read only.
-    task_name: ANNamingInput,   // The name of the task.                                                    | read only.
-    base_priority: u8,          // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | read write.
-    job: Job                    // The function that will be executed by the thread pool.                   | no permissions.
+    pub id: u64,                    // Unique identifier for the task.                                          | read only.
+    pub task_name: ANNamingInput,   // The name of the task.                                                    | read only.
+    pub base_priority: u8,          // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | read write.
+    job: Job                        // The function that will be executed by the thread pool.                   | no permissions.
 }
 
 impl Task {
@@ -42,31 +42,13 @@ impl Task {
     // It will also create a ResultBullitinContainer with the result of the function and the id of the task.
     // @return A ResultBullitinContainer with the result of the function and the id of the task.
     pub (crate) fn run(self) -> ResultBullitinContainer{
-        let id = *self.id();
+        let id = self.id;
         let task_result: res::Result = (self.job)();
         ResultBullitinContainer::new(id, task_result)
     }
 }
 
 impl Task {
-    // Get the id of the task.
-    // @return The id of the task.
-    pub fn id(&self) -> &u64 {
-        &self.id
-    }
-
-    // Get the name of the task.
-    // @return The name of the task.
-    pub fn task_name(&self) -> &ANNamingInput {
-        &self.task_name
-    }
-
-    // Get the base priority of the task.
-    // @return The base priority of the task.
-    pub fn base_priority(&self) -> u8 {
-        self.base_priority
-    }
-
     pub fn set_base_priority(&mut self, priority: u8) {
         self.base_priority += priority;
     }

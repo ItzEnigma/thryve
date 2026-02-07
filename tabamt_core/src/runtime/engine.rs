@@ -9,14 +9,14 @@ pub struct Engine {
     sleep_tick_rate: u64,
     // ----CONFIG END
 
-    obs_manager: ObserverManager,               // Manages observers and forwards notifications to them.    | Read Only.
-    plugin_manager: PluginManager,              // Manages plugins and their tasks.                         | Read Only.
-    threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
+    pub obs_manager: ObserverManager,               // Manages observers and forwards notifications to them.    | Read Only.
+    pub plugin_manager: PluginManager,              // Manages plugins and their tasks.                         | Read Only.
+    pub threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
 
     task_rx: mpsc::Receiver<Task>,              // Receives tasks to be executed.                           | No Permissions.
     notif_rx: mpsc::Receiver<Box<dyn Notif>>,   // Receives notifications to be processed.                  | No Permissions.
 
-    exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.
+    pub exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.
     pause_flag: bool,                           // Flag to indicate if the engine should pause.             | No Permissions.
 
 }
@@ -40,27 +40,6 @@ impl Engine {
             pause_flag: false,
         }
     }
-
-    // Getters for accessing the internal components of the Engine.
-    // @return: References to the ObserverManager, PluginManager, and ThreadPool.
-    pub fn obs_manager(&self) -> &ObserverManager{
-        &self.obs_manager
-    }
-
-    // @return: References to the ObserverManager, PluginManager, and ThreadPool.
-    pub fn plugin_manager(&self) -> &PluginManager{
-        &self.plugin_manager
-    }
-
-    // @return: References to the ObserverManager, PluginManager, and ThreadPool.
-    pub fn thread_pool(&self) -> &ThreadPool {
-        &self.threadpool
-    }
-
-    pub fn exit_flag(&self) -> bool {
-        self.exit_flag
-    }
-
 }
 
 impl Engine {
@@ -208,11 +187,11 @@ impl Engine {
 
         // Iterate over each task result and process it.
         for task_tuple in task_results{
-            let mut task_result = task_tuple.1;
+            let task_result = task_tuple.1;
             
             // If the task result includes a new observer, load it into the observer manager.
             // If the observer is of type "Logging", set ret to Some(true) to indicate that the logger is loaded.
-            if let Some(obs) = task_result.obs(){
+            if let Some(obs) = task_result.observer{
                 let observer_type = obs.observer_type().clone();
                 if observer_type == ANNamingInput::new("Logging") {
                     ret = Some(true);
@@ -222,12 +201,12 @@ impl Engine {
             }
 
             // If the task result includes a new plugin, load it into the plugin manager.
-            else if let Some(plugin) = task_result.plugin(){
+            else if let Some(plugin) = task_result.plugin{
                 self.plugin_manager.load_plugin(plugin);
             }
 
             // If the task result includes a next task to be executed, submit it to the thread pool.
-            if let Some(next_task) = task_result.next_task(){
+            if let Some(next_task) = task_result.next_task{
                 self.threadpool.submit_task(next_task);
             }
 
@@ -237,15 +216,15 @@ impl Engine {
 
             // If the task result includes a message to be logged, forward it to the appropriate observer.
             // The message will be logged to the file specified in the task result.
-            let task_res_message = task_result.message();
-            let log_file = task_result.logging_file();
+            let task_res_message = task_result.message;
+            let log_file = task_result.log_msg_to_file;
             if task_res_message != "".to_string(){
                 let finished_notif = NotifLog::log(task_res_message , log_file);
                 self.obs_manager.forward_notif(Box::new(finished_notif));
             }
 
             // If the result type is "Fin", finalize the engine.
-            if task_result.res_type().inner() == "Fin"{
+            if task_result.result_type.inner() == "Fin"{
                 self.finalize();
                 return ret
             }

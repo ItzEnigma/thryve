@@ -149,7 +149,7 @@ impl <'a> TaBaMT <'a> {
                         let mut eng = Engine::new(&config_clone , rec.0 , rec.1 , t_handle_clone.clone());
 
                         // This spawns the threads in the thread pool and makes them wait for tasks.
-                        eng.thread_pool().run_threads();
+                        eng.threadpool.run_threads();
 
                         // Initializing the logger first.
                         if let Some(file_names) = logging_file_names_clone.take() {
