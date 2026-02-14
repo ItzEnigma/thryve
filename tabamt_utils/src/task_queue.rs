@@ -19,7 +19,7 @@ pub struct TaskQueue{
     task_config: Arc<TaskConfig>,
     // ---- CONFIG END
 
-    priority_queue: SkipMap<u8 , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
+    priority_queue: SkipMap<(u8, Instant, u64) , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
     gate: Mutex<()>,
     condition_var: Condvar,                             // The condition variable that will notify the threads when a task is available.    | no permissions.
     exit_flag: Mutex<bool>,                             // The flag that will indicate when the queue is being finalized.                   | no permissions.
@@ -53,10 +53,10 @@ impl TaskQueue {
     // Push a task to the priority queue and notify one thread that a task is available.
     // @param task: The task to push to the priority queue.
     pub fn push(&self , task: Task) {
-        let mut enqueued_task = EnqueuedTask{ task_config: self.task_config.clone() , task, enqueued_at: Instant::now() };
-        enqueued_task.task.check_task_priority(self.task_config.max_priority);
+        let mut enq_task = EnqueuedTask{ task_config: self.task_config.clone() , task, enqueued_at: Instant::now() };
+        enq_task.task.check_task_priority(self.task_config.max_priority);
 
-        self.priority_queue.insert(enqueued_task.task.base_priority, AtomicCell::new(Some(enqueued_task)));
+        self.priority_queue.insert((enq_task.task.base_priority , enq_task.enqueued_at , enq_task.task.id), AtomicCell::new(Some(enq_task)));
 
         if *self.pause_flag.lock().unwrap() == false{
             self.condition_var.notify_one();
