@@ -1,9 +1,10 @@
 // This file has the task priority queue that will notify the threadpools of tasks.
 // It is part of the threadpool system.
 
-use std::collections::BinaryHeap;
 use std::sync::{ Arc, Condvar, Mutex };
 use std::time::{Instant , Duration};
+use crossbeam::atomic::AtomicCell;
+use crossbeam_skiplist::SkipMap;
 
 use crate::any_naming_input::ANNamingInput;
 use crate::config::{Config, TaskConfig};
@@ -18,7 +19,8 @@ pub struct TaskQueue{
     task_config: Arc<TaskConfig>,
     // ---- CONFIG END
 
-    priority_queue: Mutex<BinaryHeap<EnqueuedTask>>,    // The priority queue that will hold the tasks.                                     | no permissions.
+    priority_queue: SkipMap<u8 , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
+    gate: Mutex<()>,
     condition_var: Condvar,                             // The condition variable that will notify the threads when a task is available.    | no permissions.
     exit_flag: Mutex<bool>,                             // The flag that will indicate when the queue is being finalized.                   | no permissions.
     pause_flag: Mutex<bool>,                            // The flag that will indicate when the queue is being paused.                      | no permissions.
@@ -27,7 +29,7 @@ pub struct TaskQueue{
 
 pub struct EnqueuedTask{
     task_config: Arc<TaskConfig>,
-    task: Task,
+    pub (crate) task: Task,
     enqueued_at: Instant,
 }
 
@@ -39,7 +41,8 @@ impl TaskQueue {
     pub fn new(config: &Config, packet_handle: PacketHandle) -> Self{
         Self {
             task_config: Arc::new(config.tasks),
-            priority_queue: Mutex::new(BinaryHeap::new()),
+            priority_queue: SkipMap::new(),
+            gate: Mutex::new(()),
             condition_var: Condvar::new(),
             exit_flag: Mutex::new(false),
             pause_flag: Mutex::new(false),
@@ -53,8 +56,7 @@ impl TaskQueue {
         let mut enqueued_task = EnqueuedTask{ task_config: self.task_config.clone() , task, enqueued_at: Instant::now() };
         enqueued_task.task.check_task_priority(self.task_config.max_priority);
 
-        let mut queue  = self.priority_queue.lock().unwrap();
-        queue.push(enqueued_task);
+        self.priority_queue.insert(enqueued_task.task.base_priority, AtomicCell::new(Some(enqueued_task)));
 
         if *self.pause_flag.lock().unwrap() == false{
             self.condition_var.notify_one();
@@ -66,8 +68,6 @@ impl TaskQueue {
     // If the queue is finalized, return a special task that will indicate to the thread that it should exit.
     // @return The task popped from the priority queue.
     pub fn pop(&self) -> Task {
-        let mut queue = self.priority_queue.lock().unwrap();
-
         // loop until a task is available or the queue is finalized.
         // The loop is necessary because the condition variable can be notified spuriously, meaning that it sometimes can be notified even if no task is available.
         loop {
@@ -79,29 +79,36 @@ impl TaskQueue {
 
                 // check if the service is paused.
                 else if *self.pause_flag.lock().unwrap() == true {
-                    queue = self.condition_var.wait(queue).unwrap();
+                    let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
+                }
+            }
+            
+            // If a task is available, return it.
+            if let Some(entry) = self.priority_queue.pop_front() {
+                let mut wrapper = entry.value().take();
+                
+                // .take() atomically moves the Task out and leaves None behind.
+                // This works behind a shared reference (&) and is lock-free!
+                if let Some(moved_task) = wrapper.take() {
+                    return moved_task.task; 
                 }
             }
 
-            // If a task is available, return it.
-            if let Some(enqueued_task) = queue.pop() {
-                return enqueued_task.task;
-            }
-
             // Wait until notified that a task is available or the queue is finalized.
-            queue = self.condition_var.wait(queue).unwrap();
+            let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
         }
 
         // If the queue is being finalized, return a special task that will indicate to the thread that it should exit.
         // The task will have the name "Fin" and a priority of 0.
         Task::new(ANNamingInput::fin(), 0, Box::new(|| {Result::new(ANNamingInput::fin(), "".to_string() , ANNamingInput::new("Main")) }))
+        
     }
 
     // Finalize the task queue.
     // This will clear the priority queue, set the exit flag to true and notify all threads waiting on the condition variable.
     pub fn finalize(&self) {
         {
-            self.priority_queue.lock().unwrap().clear();
+            self.priority_queue.clear();
             let mut exit = self.exit_flag.lock().unwrap();
             *exit = true;
             self.condition_var.notify_all();
