@@ -1,7 +1,7 @@
 // This file handles the packet passing between modules and engine.
 // It uses channels to send and receive packets.
 // Packets can be tasks or notifications.
-// It uses mpsc channels to send and receive packets.
+// It uses crossbeam channels to send and receive packets.
 
 
 // This system ensures that the only way for plugins to communicate with the engine is through the 2 channels in the strct below.
@@ -13,13 +13,13 @@
 // All the modules can do is use the send functions to send packets to the engine.
 
 use crate::{notif::Notif, task::Task};
-use std::sync::mpsc;
+use crossbeam::channel::Sender;
 
 // The struct that will handle the packets between modules and engine.
 #[derive(Clone)]
 pub struct PacketHandle {
-    task_tx: mpsc::Sender<Task>,                // Channel to send tasks to the thread pool.        | no permissions.
-    notif_tx: mpsc::Sender<Box<dyn Notif>>,       // Channel to send notifications to the engine.     | no permissions.
+    task_tx: Sender<Task>,                // Channel to send tasks to the thread pool.        | no permissions.
+    notif_tx: Sender<Box<dyn Notif>>,       // Channel to send notifications to the engine.     | no permissions.
 }
 
 impl PacketHandle {
@@ -29,7 +29,7 @@ impl PacketHandle {
     // @param task_tx: The channel to send tasks to the thread pool.
     // @param notif_tx: The channel to send notifications to the engine.
     // @return A new PacketHandle with the given channels. 
-    pub fn new(task_tx: mpsc::Sender<Task> , notif_tx: mpsc::Sender<Box<dyn Notif>>) -> Self {
+    pub fn new(task_tx: Sender<Task> , notif_tx: Sender<Box<dyn Notif>>) -> Self {
         Self {
             task_tx: task_tx,
             notif_tx: notif_tx,

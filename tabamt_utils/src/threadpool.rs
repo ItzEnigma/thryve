@@ -4,15 +4,16 @@
 
 use rayon;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc , Mutex};
+use std::sync::Arc;
+use crossbeam::channel::Sender;
 
 use crate::any_naming_input::ANNamingInput;
 use crate::config::Config;
 use crate::notif_log::NotifLog;
 use crate::packet_handle::PacketHandle;
+use crate::res;
 use crate::task_queue::TaskQueue;
 use crate::task::Task;
-use crate::res_bullitin::ResBullitin;
 
 // The struct containing the threadpool.
 pub struct ThreadPool {
@@ -20,7 +21,7 @@ pub struct ThreadPool {
     pool_exit_flag: Arc<AtomicBool>,                      // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
     pool_pause_flag: Arc<AtomicBool>,                     // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
     main_queue: Arc<TaskQueue>,                     // A thread-safe shared reference to the priority Queue holding the tasks                       | no permissions.
-    res_bullitin: Arc<Mutex<ResBullitin>>,          // A thread-safe shared reference to a mutex holding the result bullitin.                       | read only.
+    res_tx: Arc<Sender<(u64 , res::Result)>>,          // A thread-safe shared reference to a mutex holding the result bullitin.                       | read only.
     packet_handle: PacketHandle                     // The packet handle that will be used to send notifications to the engine.                     | no permissions.
 }
 
@@ -29,7 +30,7 @@ impl ThreadPool {
     // @param size: The number of threads in the pool.
     // @param packet_handle: The packet handle that will be used to send notifications to the engine.
     // @return: A new threadpool.
-    pub fn new(config: &Config , packet_handle: PacketHandle) -> Self {
+    pub fn new(config: &Config , packet_handle: PacketHandle , res_tx: Arc<Sender<(u64 , res::Result)>>) -> Self {
         Self {
             main_pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(config.threads.worker_count)
@@ -38,7 +39,7 @@ impl ThreadPool {
             pool_exit_flag: Arc::new(AtomicBool::new(false)),
             pool_pause_flag: Arc::new(AtomicBool::new(false)),
             main_queue: Arc::new(TaskQueue::new(config , packet_handle.clone())),
-            res_bullitin: Arc::new(Mutex::new(ResBullitin::new())),
+            res_tx: res_tx,
             packet_handle: packet_handle,
 
         }
@@ -55,7 +56,7 @@ impl ThreadPool {
     // Each thread will continuously check the queue for new tasks.
     pub fn run_threads(&self) {
         let queue = Arc::clone(&self.main_queue);
-        let results = Arc::clone(&self.res_bullitin);
+        let res_tx = Arc::clone(&self.res_tx);
         let exit_flag = Arc::clone(&self.pool_exit_flag);
         
         // Spawn threads in the pool.
@@ -77,8 +78,7 @@ impl ThreadPool {
                 let res_container = task.run();
 
                 // Store the result in the result bullitin.
-                let mut res_bullitin_lock = results.lock().unwrap();
-                res_bullitin_lock.insert(res_container);
+                let _ = res_tx.send(res_container);
             }
         });
     }
@@ -107,14 +107,5 @@ impl ThreadPool {
     pub fn resume(&mut self){
         self.pool_pause_flag.store(false, Ordering::SeqCst);
         self.main_queue.resume();
-    }
-}
-
-impl ThreadPool {
-    // Get a clone of the shared reference to the result bullitin.
-    // This allows the engine to access the results of the tasks executed in the pool.
-    // @return: A clone of the shared reference to the result bullitin.
-    pub fn res_bullitin(&self) -> Arc<Mutex<ResBullitin>>{
-        self.res_bullitin.clone()
     }
 }

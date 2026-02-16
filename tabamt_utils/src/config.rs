@@ -8,6 +8,7 @@ pub struct Config {
     pub service: SerivceConfig,
     pub engine: EngineConfig,
     pub threads: ThreadConfig,
+    pub pipes: PipeConfig,
     pub tasks: TaskConfig,
     pub debugging: DebugConfig
 }
@@ -17,6 +18,7 @@ impl Default for Config {
             service: Default::default(),
             engine: Default::default(),
             threads: Default::default(),
+            pipes: Default::default(),
             tasks: Default::default(),
             debugging: Default::default(),
         }
@@ -74,6 +76,25 @@ impl Default for ThreadConfig {
     }
 }
 
+#[derive(Debug, Deserialize , Clone , Copy)]
+#[serde(default)]
+pub struct PipeConfig {
+    // Capacity of task, notif, and result pipes.
+    // Default is 1024 for each of the pipes.
+    pub task_pipe_capacity: usize,
+    pub notif_pipe_capacity: usize,
+    pub res_pipe_capacity: usize,
+}
+
+impl Default for PipeConfig {
+    fn default() -> Self {
+        Self {
+            task_pipe_capacity: 1024,
+            notif_pipe_capacity: 1024,
+            res_pipe_capacity: 1024,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize , Clone , Copy)]
 #[serde(default)]

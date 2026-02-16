@@ -5,7 +5,5 @@
 
 [dependencies]
     # Internal Dependencies
+    chrono = { workspace = true }
     tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
-
-    # External Dependencies
-    chrono = { version = "0.4.9" }

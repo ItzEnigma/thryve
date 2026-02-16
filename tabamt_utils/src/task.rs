@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64 , Ordering};
 
-use crate::{any_naming_input::ANNamingInput, res::{self, Result}, res_bullitin_container::ResultBullitinContainer};
+use crate::{any_naming_input::ANNamingInput, res::{self, Result}};
 
 // Atomic counter to generate unique ids for tasks.
 // This is a global static variable that is safe to use across threads.
@@ -41,10 +41,9 @@ impl Task {
     // This will execute the function that was passed to the task.
     // It will also create a ResultBullitinContainer with the result of the function and the id of the task.
     // @return A ResultBullitinContainer with the result of the function and the id of the task.
-    pub (crate) fn run(self) -> ResultBullitinContainer{
+    pub (crate) fn run(self) -> (u64 , res::Result){
         let id = self.id;
-        let task_result: res::Result = (self.job)();
-        ResultBullitinContainer::new(id, task_result)
+        (id , (self.job)())
     }
 }
 

@@ -1,7 +1,8 @@
-use std::{sync::mpsc::{self, Receiver}, thread, time::Duration};
-use tabamt_core::runtime::engine::Engine;
-use tabamt_utils::{any_naming_input::ANNamingInput, config::Config, notif::Notif, packet_handle::PacketHandle, task::Task};
-use crate::init::init;
+use crossbeam::channel::bounded;
+
+use std::{thread, time::Duration};
+use tabamt_utils::{config::Config, ctx::Ctx, packet_handle::PacketHandle};
+use crate::init::init::{self, init_manager};
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
 // @param max_threads: an optional usize indicating the maximum number of threads the service can handle at once.
@@ -11,28 +12,16 @@ use crate::init::init;
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
 // @param logging_file_names: a vector of ANNamingInput representing the names of the log files to be created.
-pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>> , obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>) {
+pub fn run_interactive(mut ctx: Ctx) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
 
-    // Creating the engine instance.
-    let mut eng = Engine::new(&config , task_rx , notif_rx , packet_handle.clone());
-    let len_obs_tasks = obs_init_tasks.len();
-    let len_plugin_tasks = plugin_init_tasks.len(); 
-
-    // This spawns the threads in the thread pool and makes them wait for tasks.
-    eng.threadpool.run_threads();
-
-    // Initializing the logger first.
-    // The initialization function takes ownership of the vector.
-    init::init_logger(packet_handle.clone() , logging_file_names);
+    let mut eng = init_manager(&ctx);
     
     let mut state: u8 = 0;
+    let len_obs_tasks = ctx.obs_init_tasks.len();
+    let len_plugin_tasks = ctx.plugin_init_tasks.len();
     
-    // Taking ownership of the observers and plugins vectors.
-    let mut obs_init_tasks_clone = Some(obs_init_tasks);
-    let mut plugin_init_tasks_clone = Some(plugin_init_tasks);
-
     while eng.exit_flag == false {
         // is_Running the engine once to process any tasks in the queue.
         // The first time this is called, it will also initialize the logger.
@@ -49,10 +38,7 @@ pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Re
             // This needs to be done after the logger is initialized.
             if len_obs_tasks > 0 {
                 // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                if let Some(obs) = obs_init_tasks_clone.take() {
-                    // The initialization function takes ownership of the vector.
-                    init::init(obs, packet_handle.clone());
-                }
+                init::init(ctx.obs_init_tasks(), ctx.packet_handle());
             }
         }
         
@@ -66,28 +52,23 @@ pub fn run_interactive(config: Config, packet_handle: PacketHandle , task_rx: Re
             // Initializing the plugins if there are any.
             // This needs to be done after the observers are initialized.
             if len_plugin_tasks > 0 {
-                // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                if let Some(plugins) = plugin_init_tasks_clone.take() {
-                    // The initialization function takes ownership of the vector.
-                    init::init(plugins, packet_handle.clone());
-                }
+                init::init(ctx.plugin_init_tasks(), ctx.packet_handle());
             }
             
             // The engine is now fully initialized.
             // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
-            if config.debugging.is_debugging{
-                thread::sleep(Duration::from_secs(config.debugging.wait_before_execution));
+            if ctx.config.debugging.is_debugging{
+                thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
             }
         }
     }
 }
 
-pub fn summon_requirements() -> (PacketHandle , Receiver<Task> , Receiver<Box<dyn Notif>>) {
+pub fn summon_requirements(config: Config) -> Ctx{
     // Creating the channel that will be used to send tasks to the engine.
-    let (task_tx , task_rx) = mpsc::channel();
-    let (notif_tx , notif_rx) = mpsc::channel();
+    let (task_tx , task_rx) = bounded(1024);
+    let (notif_tx , notif_rx) = bounded(1024);
     
-    let packet_handle = PacketHandle::new(task_tx, notif_tx);
 
-    (packet_handle , task_rx , notif_rx)
+    Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx))
 }

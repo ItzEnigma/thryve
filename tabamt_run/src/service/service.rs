@@ -2,31 +2,17 @@
 // It serves as the ground basis that will instanciate the service, initialize it, manage it, and finalize it.
 
 use windows_services::{ Command, Service};
-use tabamt_core::runtime::engine::Engine;
-use std::{sync::{atomic::{AtomicBool, Ordering}, mpsc::{self, Receiver}, Arc, Mutex}, thread, time::Duration};
+use crossbeam::channel::bounded;
+use std::{sync::{atomic::{AtomicBool, Ordering} , Arc, Mutex}, thread, time::Duration};
 
-use tabamt_utils::{any_naming_input::ANNamingInput, config::Config, debug_logging::log, notif::Notif, packet_handle::PacketHandle, task::Task};
-use crate::init::init;
+use tabamt_utils::{config::Config, ctx::Ctx, debug_logging::log, packet_handle::PacketHandle};
+use crate::init::init::{self, init_manager};
 
 // The main struct holding the service instance and service information.
 pub struct TaBaMT <'a>{
-    // ---- CONFIG START
-    config: Config,
-    // ---- CONFIG END
-
     is_running: Arc<AtomicBool>,        // Thread-safe shared reference to a flag for maintaining engine runs until finalized               | No Permissions.
     is_paused: Arc<AtomicBool>,         // Thread-safe shared reference to a flag for checking whether the service is paused or not         | No Permissions.
     service_instance: Service<'a>,      // The service instance                                                                             | No Permissions.
-    packet_handle: PacketHandle,        // The packet handle to send tasks and notifications                                                | Read Only.
-}
-
-// Getters and Setters
-impl <'a> TaBaMT <'a> {
-    // Getter to get a clone of the task handle
-    // @return: PacketHandle - a clone of the task handle
-    pub fn packet_handle(&self) -> PacketHandle {
-        self.packet_handle.clone()
-    }
 }
 
 // Implementing the functional methods.
@@ -39,33 +25,32 @@ impl <'a> TaBaMT <'a> {
     // @param can_pause: Option<bool> - flag to allow the service to be paused, default: false.
     // @param can_stop: Option<bool> - flag to allow the service to be stopped, default: false.
     // @return: (Self, Receiver<Task>, Receiver<Notification>) - a tuple containing the service instance and the receiver parts of both channels.
-    pub fn new(config: Config) -> (Self , Receiver<Task> , Receiver<Box<dyn Notif>>) {
-
+    pub fn new(config: Config) -> (Self , Ctx)  {
+        
         // Creating the channel that will be used to send tasks to the engine.
-        let (task_tx , task_rx) = mpsc::channel();
-        let (notif_tx , notif_rx) = mpsc::channel();
-
+        let (task_tx , task_rx) = bounded(1024);
+        let (notif_tx , notif_rx) = bounded(1024);
+        
         // Creating the service instance.
         let mut svc: TaBaMT<'a> = TaBaMT{
-            config: config,
             is_running: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
             service_instance: Service::new(),
-            packet_handle: PacketHandle::new(task_tx , notif_tx),
         };
-
-
-        if svc.config.service.can_pause {
+        
+        
+        if config.service.can_pause {
             // If the service can be paused, then set the service instance to be pausable.
             svc.service_instance.can_pause();
         }
-
-        if svc.config.service.can_stop {
+        
+        if config.service.can_stop {
             // If the service can be stopped, then set the service instance to be stoppable.
             svc.service_instance.can_stop();
         }
-
-        (svc , task_rx , notif_rx)
+        
+        let ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx));
+        (svc , ctx)
     }
 
     // is_Running the service.
@@ -78,30 +63,17 @@ impl <'a> TaBaMT <'a> {
     // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
     // @param logging_file_names: Vec<ANNamingInput> A vector of log file names to initialize the logger with.
     // return: -
-    pub fn run_service(&mut self , task_rx: Receiver<Task> , notif_rx: Receiver<Box<dyn Notif>>, obs_init_tasks: Vec<Task> , plugin_init_tasks: Vec<Task> , logging_file_names: Vec<ANNamingInput>){
+    pub fn run_service(&mut self , ctx: Ctx){
         // Cloning the is_running flag and the receiver to be used in the thread.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
         let pause_flag: Arc<AtomicBool> = self.is_paused.clone();
-        let rx = Arc::new(Mutex::new(Some((task_rx , notif_rx))));
-        
-        // Cloning the config to be passed to the engine in the engine thread.
-        // Keep in mind that this excludes the main engine thread.
-        let config_clone = self.config;
-
-        // Cloning the task handle to be used in the thread.
-        let packet_handle = self.packet_handle.clone();
-
-        // Storing the lengths of the observers and plugins vectors.
-        let len_obs_tasks = obs_init_tasks.len();
-        let len_plugin_tasks = plugin_init_tasks.len();
-
-        // Wrapping the observers, plugins, and log-file-name vectors in Options to allow for taking ownership in the thread.
-        let mut obs_init_tasks: Option<Vec<Task>> = Some(obs_init_tasks);
-        let mut plugin_init_tasks: Option<Vec<Task>> = Some(plugin_init_tasks);
-        let mut logging_file_names: Option<Vec<ANNamingInput>> = Some(logging_file_names);
 
         let engine_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
         let engine_thread_clone = engine_thread.clone();
+
+        let len_obs_tasks = ctx.obs_init_tasks.len();
+        let len_plugin_tasks = ctx.plugin_init_tasks.len();
+        let mut ctx = Some(ctx);
 
         // is_Running the service instance.
         // The service instance will call the closure whenever a command is received.
@@ -111,132 +83,89 @@ impl <'a> TaBaMT <'a> {
         // The engine will finalize itself when the is_running flag is set to false.
         let _ = self.service_instance.run(move |_service, command| match command {
             Command::Start => {
-                // Cloning the observers, plugins and log-file-name vectors to be used in the thread.
-                let mut obs_init_tasks_clone: Vec<Task> = Vec::new();
-                if let Some(obs_clone) = obs_init_tasks.take() {
-                    obs_init_tasks_clone = Vec::from(obs_clone);
-                }
+                // Setting the is_running flag to true.
+                is_running.store(true, Ordering::SeqCst);
+                let is_running_clone = is_running.clone();
+                let pause_flag_clone = pause_flag.clone();
 
-                let mut plugin_init_tasks_clone: Vec<Task> = Vec::new();
-                if let Some(plugins_clone) = plugin_init_tasks.take() {
-                    plugin_init_tasks_clone = Vec::from(plugins_clone);
-                }
-
-                let mut logging_file_names_clone: Vec<ANNamingInput> = Vec::new();
-                if let Some(file_names_clone) = logging_file_names.take() {
-                    logging_file_names_clone = Vec::from(file_names_clone);
-                }
-
-                // If the receiver is available, then run the engine in a separate thread.
-                if let Some(rec) = rx.lock().unwrap().take() {
-
-                    // Setting the is_running flag to true.
-                    is_running.store(true, Ordering::SeqCst);
-                    let is_running_clone = is_running.clone();
-                    let pause_flag_clone = pause_flag.clone();
+                let mut ctx = Some(ctx.take().expect("Start Called More Than Once"));
+                
+                // Spawning the thread that will run the engine.
+                let handle = thread::spawn(move || {
+                    let mut ctx = ctx.take().expect("Start Called More Than Once");
+                    let mut eng = init_manager(&ctx);
                     
-                    // Cloning the task handle to be used in the thread.
-                    let t_handle_clone = packet_handle.clone();
+                    let mut state: u8 = 0;
+                    let mut eng_paused = false;
 
-                    // Spawning the thread that will run the engine.
-                    let handle = thread::spawn(move || {
-                        // Taking ownership of the observers and plugins vectors.
-                        let mut obs_init_tasks_clone = Some(obs_init_tasks_clone);
-                        let mut plugin_init_tasks_clone = Some(plugin_init_tasks_clone);
-                        let mut logging_file_names_clone = Some(logging_file_names_clone);
+                    // is_Running the engine until the is_running flag is set to false.
+                    while is_running_clone.load(Ordering::SeqCst) {
+                        // Logic for pausing. Just looping until the service is stopped or until the service is continued.
+                        let is_pause_flag_loaded = pause_flag_clone.load(Ordering::SeqCst);
                         
-                        // Creating the engine instance.
-                        let mut eng = Engine::new(&config_clone , rec.0 , rec.1 , t_handle_clone.clone());
-
-                        // This spawns the threads in the thread pool and makes them wait for tasks.
-                        eng.threadpool.run_threads();
-
-                        // Initializing the logger first.
-                        if let Some(file_names) = logging_file_names_clone.take() {
-                            // The initialization function takes ownership of the vector.
-                            init::init_logger(t_handle_clone.clone() , file_names);
+                        if eng_paused && is_pause_flag_loaded{
+                            thread::sleep(Duration::from_millis(500));
+                            continue;
                         }
                         
-                        let mut state: u8 = 0;
-                        let mut eng_paused = false;
+                        if is_pause_flag_loaded{    
+                            eng.pause();
+                            eng_paused = true;
+                        }
 
-                        // is_Running the engine until the is_running flag is set to false.
-                        while is_running_clone.load(Ordering::SeqCst) {
-                            // Logic for pausing. Just looping until the service is stopped or until the service is continued.
-                            let is_pause_flag_loaded = pause_flag_clone.load(Ordering::SeqCst);
+                        // When the service resumes, turn the paused flag off.
+                        else if eng_paused {
+                            eng.resume();
+                            eng_paused = false;
+                        } 
+                        
+                        // is_Running the engine once to process any tasks in the queue.
+                        // The first time this is called, it will also initialize the logger.
+                        // This is important as the logger needs to be initialized before any other module.
+                        // Once the logger is initialized, the state is incremented to move to the next step.
+                        let logger_loaded = eng.run_once();
+
+                        if state == 0 && logger_loaded.unwrap_or(false) == true {
+                            // The logger is now initialized.
+                            // Increment the state to move to the next step.
+                            state += 1;
                             
-                            if eng_paused && is_pause_flag_loaded{
-                                thread::sleep(Duration::from_millis(500));
-                                continue;
+                            // Initializing the observers if there are any.
+                            // This needs to be done after the logger is initialized.
+                            if len_obs_tasks > 0{
+                                init::init(ctx.obs_init_tasks(), ctx.packet_handle());
                             }
-                            
-                            if is_pause_flag_loaded{    
-                                eng.pause();
-                                eng_paused = true;
-                            }
 
-                            // When the service resumes, turn the paused flag off.
-                            else if eng_paused {
-                                eng.resume();
-                                eng_paused = false;
-                            } 
+                        }
+                        
+                        // Once the observers are initialized, the plugins can be initialized.
+                        // This needs to be done after the observers are initialized.
+                        if state == 1{
+                            // The observers are now initialized.
+                            // Increment the state to move to the next step.
+                            state += 1;
                             
-                            // is_Running the engine once to process any tasks in the queue.
-                            // The first time this is called, it will also initialize the logger.
-                            // This is important as the logger needs to be initialized before any other module.
-                            // Once the logger is initialized, the state is incremented to move to the next step.
-                            let logger_loaded = eng.run_once();
-
-                            if state == 0 && logger_loaded.unwrap_or(false) == true {
-                                // The logger is now initialized.
-                                // Increment the state to move to the next step.
-                                state += 1;
-                                
-                                // Initializing the observers if there are any.
-                                // This needs to be done after the logger is initialized.
-                                if len_obs_tasks > 0{
-                                    // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                                    if let Some(obs) = obs_init_tasks_clone.take() {
-                                        // The initialization function takes ownership of the vector.
-                                        init::init(obs, t_handle_clone.clone());
-                                    }
-                                }
-
-                            }
-                            
-                            // Once the observers are initialized, the plugins can be initialized.
+                            // Initializing the plugins if there are any.
                             // This needs to be done after the observers are initialized.
-                            if state == 1{
-                                // The observers are now initialized.
-                                // Increment the state to move to the next step.
-                                state += 1;
-                                
-                                // Initializing the plugins if there are any.
-                                // This needs to be done after the observers are initialized.
-                                if len_plugin_tasks > 0 {
-                                    // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                                    if let Some(plugins) = plugin_init_tasks_clone.take() {
-                                        // The initialization function takes ownership of the vector.
-                                        init::init(plugins, t_handle_clone.clone());
-                                    }
-                                }
-                                
-                                // The engine is now fully initialized.
-                                // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
-                                if config_clone.debugging.is_debugging{
-                                    thread::sleep(Duration::from_secs(config_clone.debugging.wait_before_execution));
-                                }
+                            if len_plugin_tasks > 0 {
+                                init::init(ctx.plugin_init_tasks(), ctx.packet_handle());
+                            }
+                            
+                            // The engine is now fully initialized.
+                            // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
+                            if ctx.config.debugging.is_debugging{
+                                thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
                             }
                         }
+                    }
 
-                        // Finalizing the engine.
-                        // This will stop all threads in the thread pool and wait for them to finish.
-                        // This is only called when the is_running flag is set to false.
-                        eng.finalize();
-                    });
+                    // Finalizing the engine.
+                    // This will stop all threads in the thread pool and wait for them to finish.
+                    // This is only called when the is_running flag is set to false.
+                    eng.finalize();
+                });
 
-                    *engine_thread_clone.lock().unwrap() = Some(handle);
-                }
+                *engine_thread_clone.lock().unwrap() = Some(handle);
 
             }
             

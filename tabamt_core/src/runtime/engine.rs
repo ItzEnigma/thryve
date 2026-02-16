@@ -1,7 +1,7 @@
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
-use tabamt_utils::{any_naming_input::ANNamingInput, config::Config, notif::Notif, notif_log::NotifLog, packet_handle::PacketHandle, res, res_bullitin::ResBullitin, task::Task, threadpool::ThreadPool};
-use std::{sync::{mpsc , Arc , Mutex}, thread, time::Duration};
-
+use tabamt_utils::{any_naming_input::ANNamingInput, ctx::Ctx, notif::Notif, notif_log::NotifLog, res, task::Task, threadpool::ThreadPool};
+use std::{sync::Arc, thread, time::Duration};
+use crossbeam::channel::{Receiver , bounded };
 // The Engine struct is responsible for managing the overall runtime of the application.
 // It holds the ObserverManager, PluginManager, and ThreadPool, and coordinates their interactions.
 pub struct Engine {
@@ -13,8 +13,9 @@ pub struct Engine {
     pub plugin_manager: PluginManager,              // Manages plugins and their tasks.                         | Read Only.
     pub threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
 
-    task_rx: mpsc::Receiver<Task>,              // Receives tasks to be executed.                           | No Permissions.
-    notif_rx: mpsc::Receiver<Box<dyn Notif>>,   // Receives notifications to be processed.                  | No Permissions.
+    task_rx: Arc<Receiver<Task>>,              // Receives tasks to be executed.                           | No Permissions.
+    notif_rx: Arc<Receiver<Box<dyn Notif>>>,   // Receives notifications to be processed.                  | No Permissions.
+    res_rx: Receiver<(u64 , res::Result)>,
 
     pub exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.
     pause_flag: bool,                           // Flag to indicate if the engine should pause.             | No Permissions.
@@ -28,14 +29,17 @@ impl Engine {
     // @param notif_rx: Receiver for incoming notifications.
     // @param packet_handle: Packet handle for sending tasks and notifications.
     // @return: A new Engine instance.
-    pub fn new(config: &Config , task_rx: mpsc::Receiver<Task> , notif_rx: mpsc::Receiver<Box<dyn Notif>> , packet_handle: PacketHandle) -> Self {
+    pub fn new(ctx: &Ctx) -> Self {
+        let (res_tx , res_rx) = bounded(1024);
+
         Self {
-            sleep_tick_rate: config.engine.sleep_tick_rate,
-            plugin_manager: PluginManager::new(packet_handle.clone()),
+            sleep_tick_rate: ctx.config.engine.sleep_tick_rate,
+            plugin_manager: PluginManager::new(ctx.packet_handle()),
             obs_manager: ObserverManager::new(),
-            threadpool: ThreadPool::new(config , packet_handle.clone()),     // Default to 4 threads in the pool.
-            task_rx: task_rx,
-            notif_rx: notif_rx,
+            threadpool: ThreadPool::new(&ctx.config , ctx.packet_handle() , Arc::new(res_tx)),     // Default to 4 threads in the pool.
+            task_rx: ctx.task_rx.clone(),
+            notif_rx: ctx.notif_rx.clone(),
+            res_rx: res_rx,
             exit_flag: false,
             pause_flag: false,
         }
@@ -63,33 +67,15 @@ impl Engine {
         // This ensures that the engine remains responsive without consuming excessive CPU resources.
         let received_tasks = self.check_tasks();
         let received_notifs = self.check_notifs();
-        let mut received_results = false;
-        
-        {
-            // Check for completed task results from the thread pool.
-            // If results are available, handle them and check if the logger is loaded.
-            // The lock is needed to safely access the shared ResBullitin.
-            let lock: Arc<Mutex<ResBullitin>> = self.threadpool.res_bullitin();
-            let mut results = lock.lock().unwrap();
-
-            // Try to get results without blocking. If results are available, process them.
-            if let Ok(task_results) = results.try_get(){
-                received_results = true;
-
-                // Handle the results and check if the logger is loaded.
-                // The firt time this function runs, it will return Some(true) if the logger is loaded.
-                // The next time it runs, ret should be none None.
-                let ret = self.handle_results(task_results);
-                
-                // If the logger is loaded, return Some(true) immediately.
-                if ret.unwrap_or(false) == true {return ret}
-            }
-        }
+        let received_results = self.check_results();
         
         // If no tasks, notifications, or results were received, sleep for a short duration to avoid busy-waiting.
         //// duration to be implemented as a config later.
-        if !received_tasks && !received_results && !received_notifs {
+        if !received_tasks && !received_notifs && received_results == 0 {
             thread::sleep(Duration::from_millis(self.sleep_tick_rate));
+        }
+        else if received_results == 2 {
+            return Some(true)
         }
         
         return None
@@ -122,6 +108,25 @@ impl Engine {
         received_notifs
     }
     
+    pub fn check_results(&mut self) -> u8 {
+        let mut received_results = 0;
+
+        // Try to get results without blocking. If results are available, process them.
+        while let Ok(task_result) = self.res_rx.try_recv(){
+            received_results = 1;
+
+            // Handle the results and check if the logger is loaded.
+            // The firt time this function runs, it will return Some(true) if the logger is loaded.
+            // The next time it runs, ret should be none None.
+            let ret = self.handle_result(task_result);
+            
+            // If the logger is loaded, return Some(true) immediately.
+            if ret.unwrap_or(false) == true {return 2}
+        };
+
+        received_results
+    }
+
     // Finalizes the engine, ensuring all components are properly shut down.
     // This includes finalizing the plugin manager, thread pool, the pool's queue, and observer manager.
     pub fn finalize(&mut self) {
@@ -146,6 +151,7 @@ impl Engine {
         let notif = NotifLog::log("Service Finalized Successfully".to_string() , ANNamingInput::new("Main"));
         logger.consume(Box::new(notif));
     }
+
 
     // Pauses the engine, stopping task processing and notifying observers.
     pub fn pause(&mut self) {
@@ -182,52 +188,50 @@ impl Engine {
     // Handles the results of completed tasks, forwarding notifications and loading new observers or plugins as needed.
     // @param task_results: A vector of tuples containing task IDs and their corresponding results.
     // @return: An Option<bool> indicating if the logger is loaded (Some(true)) or not (None).
-    fn handle_results(&mut self , task_results: Vec<(u64 , res::Result)>) -> Option<bool> {
+    fn handle_result(&mut self , task_result: (u64 , res::Result)) -> Option<bool> {
         let mut ret: Option<bool> = None;
 
         // Iterate over each task result and process it.
-        for task_tuple in task_results{
-            let task_result = task_tuple.1;
-            
-            // If the task result includes a new observer, load it into the observer manager.
-            // If the observer is of type "Logging", set ret to Some(true) to indicate that the logger is loaded.
-            if let Some(obs) = task_result.observer{
-                let observer_type = obs.observer_type().clone();
-                if observer_type == ANNamingInput::new("Logging") {
-                    ret = Some(true);
-                }
-
-                self.obs_manager.load_observer(obs);
+        let result = task_result.1;
+        
+        // If the task result includes a new observer, load it into the observer manager.
+        // If the observer is of type "Logging", set ret to Some(true) to indicate that the logger is loaded.
+        if let Some(obs) = result.observer{
+            let observer_type = obs.observer_type().clone();
+            if observer_type == ANNamingInput::new("Logging") {
+                ret = Some(true);
             }
 
-            // If the task result includes a new plugin, load it into the plugin manager.
-            else if let Some(plugin) = task_result.plugin{
-                self.plugin_manager.load_plugin(plugin);
-            }
+            self.obs_manager.load_observer(obs);
+        }
 
-            // If the task result includes a next task to be executed, submit it to the thread pool.
-            if let Some(next_task) = task_result.next_task{
-                self.threadpool.submit_task(next_task);
-            }
+        // If the task result includes a new plugin, load it into the plugin manager.
+        else if let Some(plugin) = result.plugin{
+            self.plugin_manager.load_plugin(plugin);
+        }
 
-            // Forward a notification indicating that the task has finished.
-            let finished_notif = NotifLog::log(format!("Finished Task ID: {}." , task_tuple.0) , ANNamingInput::new("Main"));
+        // If the task result includes a next task to be executed, submit it to the thread pool.
+        if let Some(next_task) = result.next_task{
+            self.threadpool.submit_task(next_task);
+        }
+
+        // Forward a notification indicating that the task has finished.
+        let finished_notif = NotifLog::log(format!("Finished Task ID: {}." , task_result.0) , ANNamingInput::new("Main"));
+        self.obs_manager.forward_notif(Box::new(finished_notif));
+
+        // If the task result includes a message to be logged, forward it to the appropriate observer.
+        // The message will be logged to the file specified in the task result.
+        let task_res_message = result.message;
+        let log_file = result.log_msg_to_file;
+        if task_res_message != "".to_string(){
+            let finished_notif = NotifLog::log(task_res_message , log_file);
             self.obs_manager.forward_notif(Box::new(finished_notif));
+        }
 
-            // If the task result includes a message to be logged, forward it to the appropriate observer.
-            // The message will be logged to the file specified in the task result.
-            let task_res_message = task_result.message;
-            let log_file = task_result.log_msg_to_file;
-            if task_res_message != "".to_string(){
-                let finished_notif = NotifLog::log(task_res_message , log_file);
-                self.obs_manager.forward_notif(Box::new(finished_notif));
-            }
-
-            // If the result type is "Fin", finalize the engine.
-            if task_result.result_type.inner() == "Fin"{
-                self.finalize();
-                return ret
-            }
+        // If the result type is "Fin", finalize the engine.
+        if result.result_type.inner() == "Fin"{
+            self.finalize();
+            return ret
         }
         return ret
     }

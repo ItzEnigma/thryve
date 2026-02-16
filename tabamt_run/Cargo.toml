@@ -10,6 +10,5 @@
 
     # External Dependencies.
     windows = { version = "0.62.2", features = ["Win32_System_Services", "Win32_Foundation"] }
-    windows-services = "0.25.0"
-    strum = { version = "0.27.2" , features = ["derive"] }
-    strum_macros = "0.27.2"
+    windows-services = { workspace = true }
+    crossbeam = { workspace = true }
