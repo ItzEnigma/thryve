@@ -28,8 +28,8 @@ impl <'a> TaBaMT <'a> {
     pub fn new(config: Config) -> (Self , Ctx)  {
         
         // Creating the channel that will be used to send tasks to the engine.
-        let (task_tx , task_rx) = bounded(1024);
-        let (notif_tx , notif_rx) = bounded(1024);
+        let (task_tx , task_rx) = bounded(config.pipes.task_pipe_capacity);
+        let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
         
         // Creating the service instance.
         let mut svc: TaBaMT<'a> = TaBaMT{

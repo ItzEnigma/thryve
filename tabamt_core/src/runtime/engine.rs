@@ -30,7 +30,7 @@ impl Engine {
     // @param packet_handle: Packet handle for sending tasks and notifications.
     // @return: A new Engine instance.
     pub fn new(ctx: &Ctx) -> Self {
-        let (res_tx , res_rx) = bounded(1024);
+        let (res_tx , res_rx) = bounded(ctx.config.pipes.res_pipe_capacity);
 
         Self {
             sleep_tick_rate: ctx.config.engine.sleep_tick_rate,

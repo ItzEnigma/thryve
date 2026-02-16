@@ -66,8 +66,8 @@ pub fn run_interactive(mut ctx: Ctx) {
 
 pub fn summon_requirements(config: Config) -> Ctx{
     // Creating the channel that will be used to send tasks to the engine.
-    let (task_tx , task_rx) = bounded(1024);
-    let (notif_tx , notif_rx) = bounded(1024);
+    let (task_tx , task_rx) = bounded(config.pipes.task_pipe_capacity);
+    let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
     
 
     Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx))
