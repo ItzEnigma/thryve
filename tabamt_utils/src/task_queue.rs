@@ -1,6 +1,7 @@
 // This file has the task priority queue that will notify the threadpools of tasks.
 // It is part of the threadpool system.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{ Arc, Condvar, Mutex };
 use std::time::{Instant , Duration};
 use crossbeam::atomic::AtomicCell;
@@ -22,8 +23,8 @@ pub struct TaskQueue{
     priority_queue: SkipMap<(u8, Instant, u64) , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
     gate: Mutex<()>,
     condition_var: Condvar,                             // The condition variable that will notify the threads when a task is available.    | no permissions.
-    exit_flag: Mutex<bool>,                             // The flag that will indicate when the queue is being finalized.                   | no permissions.
-    pause_flag: Mutex<bool>,                            // The flag that will indicate when the queue is being paused.                      | no permissions.
+    exit_flag: Arc<AtomicBool>,                             // The flag that will indicate when the queue is being finalized.                   | no permissions.
+    pause_flag: Arc<AtomicBool>,                            // The flag that will indicate when the queue is being paused.                      | no permissions.
     packet_handle: PacketHandle,                        // The packet handle that will be used to send notifications to the engine.         | no permissions.
 }
 
@@ -44,8 +45,8 @@ impl TaskQueue {
             priority_queue: SkipMap::new(),
             gate: Mutex::new(()),
             condition_var: Condvar::new(),
-            exit_flag: Mutex::new(false),
-            pause_flag: Mutex::new(false),
+            exit_flag: Arc::new(AtomicBool::new(false)),
+            pause_flag: Arc::new(AtomicBool::new(false)),
             packet_handle: packet_handle,
         }
     }
@@ -58,7 +59,7 @@ impl TaskQueue {
 
         self.priority_queue.insert((enq_task.task.base_priority , enq_task.enqueued_at , enq_task.task.id), AtomicCell::new(Some(enq_task)));
 
-        if *self.pause_flag.lock().unwrap() == false{
+        if self.pause_flag.load(Ordering::SeqCst) == false{
             self.condition_var.notify_one();
         }
     }
@@ -71,16 +72,14 @@ impl TaskQueue {
         // loop until a task is available or the queue is finalized.
         // The loop is necessary because the condition variable can be notified spuriously, meaning that it sometimes can be notified even if no task is available.
         loop {
-            {
-                // Check if the queue is being finalized.
-                if *self.exit_flag.lock().unwrap() == true {
-                    break;
-                }
+            // Check if the queue is being finalized.
+            if self.exit_flag.load(Ordering::SeqCst) == true {
+                break;
+            }
 
-                // check if the service is paused.
-                else if *self.pause_flag.lock().unwrap() == true {
-                    let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
-                }
+            // check if the service is paused.
+            else if self.pause_flag.load(Ordering::SeqCst) == true {
+                let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
             }
             
             // If a task is available, return it.
@@ -109,8 +108,8 @@ impl TaskQueue {
     pub fn finalize(&self) {
         {
             self.priority_queue.clear();
-            let mut exit = self.exit_flag.lock().unwrap();
-            *exit = true;
+            self.exit_flag.store(true, Ordering::SeqCst);
+
             self.condition_var.notify_all();
 
             // Send a notification to the engine that the queue is finalized.
@@ -123,8 +122,7 @@ impl TaskQueue {
     // This will set the pause flag to true and stop notifying threads of new tasks.
     pub fn pause(&self) {
         // Set the pause flag to true to stop processing tasks.
-        let mut pause = self.pause_flag.lock().unwrap();
-        *pause = true;
+        self.pause_flag.store(true, Ordering::SeqCst);
 
         // Send a notification to the engine that the queue is paused.
         let notif = NotifLog::log("Task Queue Paused".to_string() , ANNamingInput::new("Main"));
@@ -135,9 +133,8 @@ impl TaskQueue {
     // This will set the pause flag to false and notify all threads waiting on the condition variable.
     pub fn resume(&self) {
         // Set the pause flag to false to continue processing tasks.
-        let mut pause = self.pause_flag.lock().unwrap();
-        *pause = false;
-
+        self.pause_flag.store(false, Ordering::SeqCst);
+        
         // Send a notification to the engine that the queue is continuing.
         let notif = NotifLog::log("Task Queue continuing".to_string() , ANNamingInput::new("Main"));
         self.packet_handle.send_notification(Box::new(notif));
