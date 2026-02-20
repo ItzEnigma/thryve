@@ -20,7 +20,7 @@ pub struct TaskQueue{
     task_config: Arc<TaskConfig>,
     // ---- CONFIG END
 
-    priority_queue: SkipMap<(u8, Instant, u64) , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
+    priority_queue: SkipMap<Priority , AtomicCell<Option<EnqueuedTask>>>,         // The priority queue that will hold the tasks.                                     | no permissions.
     gate: Mutex<()>,
     condition_var: Condvar,                             // The condition variable that will notify the threads when a task is available.    | no permissions.
     exit_flag: Arc<AtomicBool>,                             // The flag that will indicate when the queue is being finalized.                   | no permissions.
@@ -29,9 +29,15 @@ pub struct TaskQueue{
 }
 
 pub struct EnqueuedTask{
-    task_config: Arc<TaskConfig>,
     pub (crate) task: Task,
-    enqueued_at: Instant,
+    enq_at: Instant,
+}
+
+pub struct Priority{
+    task_config: Arc<TaskConfig>,
+    base_priority: u8,
+    enq_at: Instant,
+    task_id: u64
 }
 
 impl TaskQueue {
@@ -54,10 +60,12 @@ impl TaskQueue {
     // Push a task to the priority queue and notify one thread that a task is available.
     // @param task: The task to push to the priority queue.
     pub fn push(&self , task: Task) {
-        let mut enq_task = EnqueuedTask{ task_config: self.task_config.clone() , task, enqueued_at: Instant::now() };
+        let mut enq_task = EnqueuedTask{task, enq_at: Instant::now() };
         enq_task.task.check_task_priority(self.task_config.max_priority);
 
-        self.priority_queue.insert((enq_task.task.base_priority , enq_task.enqueued_at , enq_task.task.id), AtomicCell::new(Some(enq_task)));
+        let priority = Priority{task_config: self.task_config.clone() , base_priority: enq_task.task.base_priority , enq_at: enq_task.enq_at , task_id: enq_task.task.id};
+
+        self.priority_queue.insert(priority, AtomicCell::new(Some(enq_task)));
 
         if self.pause_flag.load(Ordering::SeqCst) == false{
             self.condition_var.notify_one();
@@ -141,30 +149,32 @@ impl TaskQueue {
     }
 }
 
-impl EnqueuedTask {
+impl Priority {
     // Calculate the effective priority of the task based on its base priority and the time it has been waiting.
     // The effective priority increases by 1 for every AGING_INTERVAL the task has been waiting.
     // @return The effective priority of the task.
     pub (crate) fn effective_priority(&self) -> u8 {
-        let waited = self.enqueued_at.elapsed();
+        let waited = self.enq_at.elapsed();
         let aging_boost = (waited.as_secs_f64() / Duration::from_secs(self.task_config.aging_interval).as_secs_f64()) as u8;
 
-        (self.task.base_priority + aging_boost).min(self.task_config.max_priority)
+        (self.base_priority + aging_boost).min(self.task_config.max_priority)
     }
 }
 
-impl PartialEq for EnqueuedTask {
+impl PartialEq for Priority {
     // Two tasks are equal if they have the same priority.
     // This is used to prioritize tasks in the thread pool.
     // @param other: The other task to compare to.
     // @return true if the tasks have the same priority, false otherwise.
     fn eq(&self, other: &Self) -> bool {
-        self.task.base_priority == other.task.base_priority
+        self.base_priority == other.base_priority
+            && self.enq_at == other.enq_at
+            && self.task_id == other.task_id
     }
 }
-impl Eq for EnqueuedTask {}
+impl Eq for Priority {}
 
-impl Ord for EnqueuedTask {
+impl Ord for Priority {
     // Imagine task "Self" has priority 4 and task "Other" has priority 2.
     // Then "Self" is greater than "Other" because it has a higher priority.
     // If both tasks have the same priority, then the one that was enqueued earlier is greater.
@@ -172,15 +182,18 @@ impl Ord for EnqueuedTask {
     // @param other: The other task to compare to.
     // @return An Ordering indicating the relative priority of the tasks.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.effective_priority()
-            .cmp(&other.effective_priority())
-            .then_with(|| other.enqueued_at.cmp(&self.enqueued_at))
-            .then_with(|| other.task.id.cmp(&self.task.id))
+        if other.base_priority >= (self.task_config.max_priority as f32 * 0.8) as u8{
+            return std::cmp::Ordering::Greater
+        }
+        other.effective_priority()
+            .cmp(&self.effective_priority())
+            .then_with(|| self.enq_at.cmp(&other.enq_at))
+            .then_with(|| self.task_id.cmp(&other.task_id))
     }
     
 }
 
-impl PartialOrd for EnqueuedTask {
+impl PartialOrd for Priority {
     // This is needed to implement Ord.
     // It simply calls the cmp function.
     // @param other: The other task to compare to.
