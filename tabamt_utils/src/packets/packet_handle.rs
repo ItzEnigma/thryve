@@ -12,7 +12,9 @@
 // It is important to note that any module (plugin or observer) holding the PacketHandle struct will have no read or right access to the senders part.
 // All the modules can do is use the send functions to send packets to the engine.
 
-use crate::{notif::Notif, task::Task};
+use crate::traits::notif::Notif;
+use crate::packets::task::Task;
+
 use crossbeam::channel::Sender;
 
 // The struct that will handle the packets between modules and engine.

@@ -5,16 +5,16 @@
 // Each plugin will have its own implementation of these functions.
 // All plugins must be Send + Sync to be used in a multithreaded context.
 
-use crate::task::{ Job , Task };
-use crate::packet_handle::PacketHandle;
-use crate::any_naming_input::ANNamingInput;
+use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle};
+use crate::packets::task::{ Job , Task };
+use crate::any_naming_input::NamedInput;
 
 pub trait Plugin: Send + Sync {
     // Getters for plugin metadata
 
     // Get the type of the plugin
-    // @return The type of the plugin as an ANNamingInput
-    fn plugin_type(&self) -> &ANNamingInput;
+    // @return The type of the plugin as an NamedInput
+    fn plugin_type(&self) -> &NamedInput;
 
     // Get the name of the plugin
     // @return The name of the plugin as a &str
@@ -27,11 +27,11 @@ pub trait Plugin: Send + Sync {
     // Core plugin functionality
 
     // Create a new task
-    // @param task_name The name of the task as an ANNamingInput
+    // @param task_name The name of the task as an NamedInput
     // @param task_priority The priority of the task as a u8
     // @param job The job to be executed as a Job
     // @return The created Task
-    fn create_task(&self, task_name: ANNamingInput , task_priority: u8 , job: Job) -> Task;
+    fn create_task(&self, task_name: NamedInput , task_priority: u8 , job: Job) -> Task;
 
     // Send a task to be executed
     // @param task The task to be sent as a Task
@@ -40,4 +40,11 @@ pub trait Plugin: Send + Sync {
     // Get the initial function to run when the plugin is loaded
     // @return The initial Job to be run
     fn initial_fn_to_run(&self) -> Job;
+
+    fn clean_up(self: Box<Self>) {
+        let p_type = self.plugin_type().inner();
+
+        let notif = NotifLog::log(format!("Plugin - {} Has Cleaned Up Successfully." , p_type), "Main");
+        self.packet_handle().send_notification(notif);
+    }
 }

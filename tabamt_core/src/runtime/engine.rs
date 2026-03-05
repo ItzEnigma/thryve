@@ -1,5 +1,10 @@
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
-use tabamt_utils::{any_naming_input::ANNamingInput, ctx::Ctx, notif::Notif, notif_log::NotifLog, res, task::Task, threadpool::ThreadPool};
+
+use tabamt_utils::cfg::ctx::Ctx;
+use tabamt_utils::traits::notif::Notif;
+use tabamt_utils::packets::{notif_log::NotifLog , task::Task};
+use tabamt_utils::res;
+
 use std::{sync::Arc, thread, time::Duration};
 use crossbeam::channel::{Receiver , bounded };
 // The Engine struct is responsible for managing the overall runtime of the application.
@@ -11,7 +16,7 @@ pub struct Engine {
 
     pub obs_manager: ObserverManager,               // Manages observers and forwards notifications to them.    | Read Only.
     pub plugin_manager: PluginManager,              // Manages plugins and their tasks.                         | Read Only.
-    pub threadpool: ThreadPool,                     // Manages a pool of threads for executing tasks.           | Read Only.
+    
 
     task_rx: Arc<Receiver<Task>>,              // Receives tasks to be executed.                           | No Permissions.
     notif_rx: Arc<Receiver<Box<dyn Notif>>>,   // Receives notifications to be processed.                  | No Permissions.
@@ -34,9 +39,8 @@ impl Engine {
 
         Self {
             sleep_tick_rate: ctx.config.engine.sleep_tick_rate,
-            plugin_manager: PluginManager::new(ctx.packet_handle()),
+            plugin_manager: PluginManager::new(ctx , res_tx),
             obs_manager: ObserverManager::new(),
-            threadpool: ThreadPool::new(&ctx.config , ctx.packet_handle() , Arc::new(res_tx)),     // Default to 4 threads in the pool.
             task_rx: ctx.task_rx.clone(),
             notif_rx: ctx.notif_rx.clone(),
             res_rx: res_rx,
@@ -90,7 +94,7 @@ impl Engine {
         // Try to receive tasks without blocking. If tasks are available, submit them to the thread pool.
         while let Ok(task) = self.task_rx.try_recv() {
             received_tasks = true;
-            self.threadpool.submit_task(task);
+            self.plugin_manager.threadpool.submit_task(task);
         }
         received_tasks
     }
@@ -134,7 +138,7 @@ impl Engine {
 
         self.exit_flag = true.into();
         self.plugin_manager.finalize();
-        self.threadpool.finalize();
+        self.plugin_manager.threadpool.finalize();
         
         // Run the engine once more to process any remaining notifications before shutdown.
         // This ensures that all the finalization messages are logged.
@@ -145,25 +149,25 @@ impl Engine {
         // The observer manager is finalized last to ensure all notifications are logged before shutdown.
         let mut logger = self.obs_manager.finalize();
         
-        let notif = NotifLog::log("Engine Finalized".to_string() , ANNamingInput::new("Main"));
-        logger.consume(Box::new(notif));
+        let notif = NotifLog::log("Engine Finalized".to_string() , "Main");
+        logger.consume(notif);
         
-        let notif = NotifLog::log("Service Finalized Successfully".to_string() , ANNamingInput::new("Main"));
-        logger.consume(Box::new(notif));
+        let notif = NotifLog::log("Service Finalized Successfully".to_string() , "Main");
+        logger.consume(notif);
     }
 
 
     // Pauses the engine, stopping task processing and notifying observers.
     pub fn pause(&mut self) {
         // Pause the thread pool to stop processing tasks.
-        self.threadpool.pause();
+        self.plugin_manager.threadpool.pause();
         
         // Set the pause flag to true to indicate that the engine is paused.
         self.pause_flag = true;
         
         // Forward a notification to the observer_manager that the engine is paused.
-        let notif = NotifLog::log("Engine Paused".to_string() , ANNamingInput::new("Main"));
-        self.obs_manager.forward_notif(Box::new(notif));
+        let notif = NotifLog::log("Engine Paused".to_string() , "Main");
+        self.obs_manager.forward_notif(notif);
         
         // Run the engine once more to process any remaining notifications before pausing.
         self.run_once();
@@ -173,14 +177,14 @@ impl Engine {
     // Continues the engine, resuming task processing and notifying observers.
     pub fn resume(&mut self) {
         // Continue the thread pool to resume processing tasks.
-        self.threadpool.resume();
+        self.plugin_manager.threadpool.resume();
         
         // Set the pause flag to false to indicate that the engine is running.
         self.pause_flag = false;
 
         // Forward a notification to the observer_manager that the engine is continued.
-        let notif = NotifLog::log("Engine continued".to_string() , ANNamingInput::new("Main"));
-        self.obs_manager.forward_notif(Box::new(notif));
+        let notif = NotifLog::log("Engine continued".to_string() , "Main");
+        self.obs_manager.forward_notif(notif);
     }
 }
 
@@ -198,7 +202,7 @@ impl Engine {
         // If the observer is of type "Logging", set ret to Some(true) to indicate that the logger is loaded.
         if let Some(obs) = result.observer{
             let observer_type = obs.observer_type().clone();
-            if observer_type == ANNamingInput::new("Logging") {
+            if observer_type.inner() == "Logging" {
                 ret = Some(true);
             }
 
@@ -212,24 +216,25 @@ impl Engine {
 
         // If the task result includes a next task to be executed, submit it to the thread pool.
         if let Some(next_task) = result.next_task{
-            self.threadpool.submit_task(next_task);
+            self.plugin_manager.threadpool.submit_task(next_task);
         }
 
         // Forward a notification indicating that the task has finished.
-        let finished_notif = NotifLog::log(format!("Finished Task ID: {}." , task_result.0) , ANNamingInput::new("Main"));
-        self.obs_manager.forward_notif(Box::new(finished_notif));
+        let finished_notif = NotifLog::log(format!("Finished Task ID: {}." , task_result.0) , "Main");
+        self.obs_manager.forward_notif(finished_notif);
 
         // If the task result includes a message to be logged, forward it to the appropriate observer.
         // The message will be logged to the file specified in the task result.
         let task_res_message = result.message;
-        let log_file = result.log_msg_to_file;
+        let log_file = result.log_msg_to_file.inner();
         if task_res_message != "".to_string(){
             let finished_notif = NotifLog::log(task_res_message , log_file);
-            self.obs_manager.forward_notif(Box::new(finished_notif));
+            self.obs_manager.forward_notif(finished_notif);
         }
 
         // If the result type is "Fin", finalize the engine.
-        if result.result_type.inner() == "Fin"{
+        let res_type = result.result_type.inner().to_lowercase();
+        if (res_type == "fin" || res_type == "finerr") && !self.exit_flag {
             self.finalize();
             return ret
         }

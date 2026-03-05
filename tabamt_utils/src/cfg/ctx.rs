@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use crossbeam::channel::Receiver;
 
-use crate::{config::Config, notif::Notif, packet_handle::PacketHandle, task::Task};
+use crate::cfg::config::Config;
+use crate::traits::notif::Notif;
+use crate::packets::{packet_handle::PacketHandle , task::Task};
 
 pub struct Ctx {
     pub config: Config,

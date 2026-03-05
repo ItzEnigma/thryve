@@ -1,4 +1,6 @@
-use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog , notif::Notif , observer::Observer};
+use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::packets::notif_log::NotifLog;
+use tabamt_utils::traits::{notif::Notif , observer::Observer};
 
 use std::{collections::HashMap};
 
@@ -8,7 +10,7 @@ use std::{collections::HashMap};
 // It stores observers in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the observers if needed.
 pub struct ObserverManager {
-    observers: HashMap<ANNamingInput , Box<dyn Observer>>      // Key: Observer type specified by the developer, Value: Observer | read only
+    observers: HashMap<NamedInput , Box<dyn Observer>>      // Key: Observer type specified by the developer, Value: Observer | read only
 }
 
 impl ObserverManager {
@@ -24,7 +26,7 @@ impl ObserverManager {
     // This is used internally to ensure that notifications are sent to valid observers.
     // @param obs_type: The type of the observer to check for.
     // @return: true if the observer exists, false otherwise.
-    fn check_observer(&self , obs_type: &ANNamingInput) -> bool{
+    fn check_observer(&self , obs_type: &NamedInput) -> bool{
         if self.observers.contains_key(obs_type) {
             return true;
         }
@@ -48,9 +50,9 @@ impl ObserverManager {
     // @param message: The error message to be logged.
     pub fn notif_err(&mut self , message: &str){
         self.observers
-            .get_mut(&ANNamingInput::new("Logging"))
+            .get_mut(&NamedInput::new("Logging"))
             .unwrap()
-            .consume(Box::new(NotifLog::err(message.to_string())));
+            .consume(NotifLog::err(message.to_string()));
     }
 
     // Loads a new observer into the manager.
@@ -63,11 +65,11 @@ impl ObserverManager {
     // Finalizes the observer manager by clearing all observers and sending a final notification.
     // This is typically called during system shutdown to ensure that resources are cleaned up properly.
     pub fn finalize(&mut self) -> Box<dyn Observer>{
-        let notif = NotifLog::log("Observer manager Finalized".to_string() , ANNamingInput::new("Main"));
-        self.forward_notif(Box::new(notif));
+        let notif = NotifLog::log("Observer manager Finalized".to_string() , "Main");
+        self.forward_notif(notif);
 
         
-        let logger = self.observers.remove(&ANNamingInput::new("Logging")).unwrap();
+        let logger = self.observers.remove(&NamedInput::new("Logging")).unwrap();
         self.observers.clear();
             
         logger
@@ -86,14 +88,5 @@ impl ObserverManager {
         }
     
         vector
-    }
-
-    // A function to retrieve a specific observer by its type.
-    // @param obs_type: The type of the observer to retrieve.
-    // @return: An Option containing a reference to the observer if found, or None if not found.
-    fn observer(&mut self , obs_type: &ANNamingInput) -> Option<&Box<dyn Observer>>{
-        // Assert that the observer exists before attempting to retrieve it.
-        assert!(self.check_observer(obs_type), "Observer Manager Cannot Find Requested Observer. Got {}" , obs_type);
-        self.observers.get(obs_type)
     }
 }

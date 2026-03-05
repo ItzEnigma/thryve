@@ -1,6 +1,14 @@
-use tabamt_utils::{any_naming_input::ANNamingInput, notif_log::NotifLog, packet_handle::PacketHandle, plugin::Plugin};
+use crossbeam::channel::Sender;
 
-use std::{collections::HashMap};
+use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::cfg::ctx::Ctx;
+use tabamt_utils::packets::{notif_log::NotifLog , packet_handle::PacketHandle , task::Task};
+use tabamt_utils::traits::plugin::Plugin;
+use tabamt_utils::res;
+use tabamt_utils::queues::priority_queue::PQChild;
+use tabamt_utils::threadpool::ThreadPool;
+
+use std::{collections::HashMap, sync::Arc};
 
 // Manages plugins and their interactions with the system.
 // Handles loading and finalizing plugins.
@@ -8,7 +16,8 @@ use std::{collections::HashMap};
 // It stores Plugins in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the Plugins if needed.
 pub struct PluginManager {
-    plugins: HashMap<ANNamingInput , Box<dyn Plugin>>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
+    plugins: HashMap<NamedInput , Box<dyn Plugin>>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
+    pub threadpool: ThreadPool<PQChild<Task> , Task>,                     // Manages a pool of threads for executing tasks.           | Read Only.
     packet_handle: PacketHandle,                            // Used to send notifications to the ObserverManager            | read only
 }
 
@@ -16,18 +25,21 @@ impl PluginManager{
     // Creates a new PluginManager with an empty plugin list and a packet handle for communication with the ObserverManager.
     // @param tx: The PacketHandle used for sending notifications to the ObserverManager.
     // @return: A new instance of PluginManager.
-    pub fn new(tx: PacketHandle) -> Self{
+    pub fn new(ctx: &Ctx , res_tx: Sender<(u64 , res::Result)>) -> Self{
+        let queue = PQChild::new(&ctx.config, ctx.packet_handle());
+
         PluginManager{
-            plugins: HashMap::new(),        
-            packet_handle: tx,
+            plugins: HashMap::new(),
+            threadpool: ThreadPool::new(&ctx.config , queue , ctx.packet_handle() , Arc::new(res_tx)),     // Default to 4 threads in the pool.
+            packet_handle: ctx.packet_handle(),
         }
     }
 
     // Retrieves a list of all plugin types currently loaded in the manager.
     // This is useful for managing and interacting with the available plugins.
     // @return: A vector containing references to the types of all loaded plugins.
-    pub fn plugin_names(&self) -> Vec<&ANNamingInput>{
-        let mut vector: Vec<&ANNamingInput> = Vec::new();
+    pub fn plugin_names(&self) -> Vec<&NamedInput>{
+        let mut vector: Vec<&NamedInput> = Vec::new();
         for plugin in self.plugins.keys(){
             vector.push(plugin);
         }
@@ -38,12 +50,12 @@ impl PluginManager{
     // Checks if a plugin of the specified type exists in the manager.
     // @param plugin_type: The type of the plugin to check for.
     // @return: true if the plugin exists, false otherwise.
-    fn check_plugin(&self , plugin_type: &ANNamingInput) -> bool{
-        if self.plugins.contains_key(plugin_type) {
-            return true;
-        }
-        return false;
-    }
+    // fn check_plugin(&self , plugin_type: &NamedInput) -> bool{
+    //     if self.plugins.contains_key(plugin_type) {
+    //         return true;
+    //     }
+    //     return false;
+    // }
 
     // Loads a new plugin into the manager.
     // This allows the system to dynamically add plugins at runtime.
@@ -55,20 +67,11 @@ impl PluginManager{
     // Finalizes the plugin manager by clearing all plugins and sending a final notification.
     // This is typically called during system shutdown to ensure that resources are cleaned up properly.
     pub fn finalize(&mut self) {
-        self.plugins.clear();
+        for (_ , plugin) in self.plugins.drain(){
+            plugin.clean_up();
+        }
 
-        let notif = NotifLog::log("Plugin Manager Finalized".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(Box::new(notif));
-    }
-}
-
-
-impl PluginManager{
-    // A function to retrieve a specific plugin by its type.
-    // @param plugin_type: The type of the plugin to retrieve.
-    // @return: An Option containing a reference to the plugin if found, or None if not found.
-    fn plugin(&mut self , plugin_type: &ANNamingInput) -> Option<&Box<dyn Plugin>>{
-        assert!(self.check_plugin(plugin_type), "Plugin Manager Cannot Find Requested Plugin. Got {}" , plugin_type);
-        self.plugins.get(plugin_type)
+        let notif = NotifLog::log("Plugin Manager Finalized".to_string() , "Main");
+        self.packet_handle.send_notification(notif);
     }
 }

@@ -5,16 +5,16 @@ use std::fmt::Display;
 
 // The struct that wraps a String and ensures it is alphanumeric.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ANNamingInput(String);
+pub struct NamedInput(String);
 
-impl ANNamingInput {
-    // Creates a new ANNamingInput if the input string is alphanumeric.
+impl NamedInput {
+    // Creates a new NamedInput if the input string is alphanumeric.
     // Panics if the input string contains non-alphanumeric characters.
     // @param s: &str
-    // @return ANNamingInput
+    // @return NamedInput
     pub fn new(s: &str) -> Self {
-        assert!(s.chars().all(|c| c.is_alphanumeric()), "ANNamingInput must be alphanumeric. Got '{}'", s);
-        ANNamingInput(s.to_owned())
+        assert!(s.chars().all(|c| c.is_alphanumeric()), "NamedInput must be alphanumeric. Got '{}'", s);
+        NamedInput(s.to_owned())
     }
 
     // Returns a reference to the inner string.
@@ -24,16 +24,8 @@ impl ANNamingInput {
     }
 }
 
-impl ANNamingInput {
-    // A special naming input representing "fin".
-    // This is used in various places to indicate the end of a process or sequence.
-    pub (crate) fn fin() -> Self {
-        ANNamingInput("fin".to_string())
-    }
-}
-
-impl Display for ANNamingInput {
-    // Formats the ANNamingInput for display.
+impl Display for NamedInput {
+    // Formats the NamedInput for display.
     // @param f: the formatter
     // @return std::fmt::Result
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

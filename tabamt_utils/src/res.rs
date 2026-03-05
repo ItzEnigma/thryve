@@ -4,14 +4,16 @@
 use std::fmt::Display;
 
 // This is just a struct that has results returned by executed tasks.
-use crate::{any_naming_input::ANNamingInput, observer::Observer, plugin::Plugin, task::Task};
+use crate::any_naming_input::NamedInput;
+use crate::traits::{observer::Observer, plugin::Plugin};
+use crate::packets::task::Task;
 
 // The struct that will hold the results returned by tasks.
 // It can hold different types of data depending on the type of result.
 pub struct Result {
-    pub result_type: ANNamingInput,             // The type of result.                                                          | Take Ownership.
+    pub result_type: NamedInput,             // The type of result.                                                          | Take Ownership.
     pub message: String,                        // A message associated with the result.                                        | Take Ownership.
-    pub log_msg_to_file: ANNamingInput,         // The module type that will be used to name the log file.                      | Take Ownership.
+    pub log_msg_to_file: NamedInput,         // The module type that will be used to name the log file.                      | Take Ownership.
     pub next_task: Option<Task>,                // An optional task that can be executed after the result is handled.           | Take Ownership.
     pub observer: Option<Box<dyn Observer>>,    // An optional observer that can be registered after the result is handled.     | Take Ownership.
     pub plugin: Option<Box<dyn Plugin>>,        // An optional plugin that can be registered after the result is handled.       | Take Ownership.
@@ -35,11 +37,11 @@ impl Result {
     // @param msg: The message associated with the result.
     // @param logging_file: The module type that will be used to name the log file.
     // @return A new Result with the given parameters.
-    pub fn new(res_type: ANNamingInput , msg: String , logging_file: ANNamingInput) -> Self{
+    pub fn new(res_type: &str , msg: String , logging_file: &str) -> Self{
         Result {
-            result_type: res_type,
+            result_type: NamedInput::new(res_type),
             message: msg,
-            log_msg_to_file: logging_file,
+            log_msg_to_file: NamedInput::new(logging_file),
             next_task: None,
             observer: None,
             plugin: None,
@@ -53,11 +55,11 @@ impl Result {
     // @param logging_file: The module type that will be used to name the log file.
     // @param next_task: An optional task that can be executed after the result is handled
     // @return A new Result with the given parameters.
-    pub fn new_tasked_res(res_type: ANNamingInput , msg: String , logging_file: ANNamingInput , next_task: Option<Task>) -> Self{
+    pub fn new_tasked_res(res_type: &str , msg: String , logging_file: &str , next_task: Option<Task>) -> Self{
         Result {
-            result_type: res_type,
+            result_type: NamedInput::new(res_type),
             message: msg,
-            log_msg_to_file: logging_file,
+            log_msg_to_file: NamedInput::new(logging_file),
             next_task: next_task,
             observer: None,
             plugin: None,
@@ -73,11 +75,11 @@ impl Result {
     // @param next_task: An optional task that can be executed after the result is handled
     // @param obs: An observer that can be registered after the result is handled.
     // @return A new Result with the given parameters.
-    pub fn new_obs_result(res_type: ANNamingInput , msg: String , logging_file: ANNamingInput , next_task: Option<Task> , obs: Box<dyn Observer>) -> Self{
+    pub fn new_obs_result(res_type: &str , msg: String , logging_file: &str , next_task: Option<Task> , obs: Box<dyn Observer>) -> Self{
         Result {
-            result_type: res_type,
+            result_type: NamedInput::new(res_type),
             message: msg,
-            log_msg_to_file: logging_file,
+            log_msg_to_file: NamedInput::new(logging_file),
             next_task: next_task,
             observer: Some(obs),
             plugin: None,
@@ -93,11 +95,11 @@ impl Result {
     // @param next_task: An optional task that can be executed after the result is handled.
     // @param plugin: A plugin that can be registered after the result is handled.
     // @return A new Result with the given parameters.
-    pub fn new_plugin_result(res_type: ANNamingInput , msg: String , logging_file: ANNamingInput , next_task: Option<Task> , plugin: Box<dyn Plugin>) -> Self{
+    pub fn new_plugin_result(res_type: &str , msg: String , logging_file: &str , next_task: Option<Task> , plugin: Box<dyn Plugin>) -> Self{
         Result {
-            result_type: res_type,
+            result_type: NamedInput::new(res_type),
             message: msg,
-            log_msg_to_file: logging_file,
+            log_msg_to_file: NamedInput::new(logging_file),
             next_task: next_task,
             observer: None,
             plugin: Some(plugin),

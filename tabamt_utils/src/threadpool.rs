@@ -5,32 +5,35 @@
 use rayon;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::marker::PhantomData;
 use crossbeam::channel::Sender;
 
-use crate::any_naming_input::ANNamingInput;
-use crate::config::Config;
-use crate::notif_log::NotifLog;
-use crate::packet_handle::PacketHandle;
+use crate::cfg::config::Config;
+use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle};
+use crate::traits::{packets::Packet , queue::Queue};
 use crate::res;
-use crate::task_queue::TaskQueue;
-use crate::task::Task;
 
 // The struct containing the threadpool.
-pub struct ThreadPool {
+pub struct ThreadPool <Q , P> {
     main_pool: rayon::ThreadPool,                   // The main pool that will be created by Rayon                                                  | no permissions.
     pool_exit_flag: Arc<AtomicBool>,                      // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
     pool_pause_flag: Arc<AtomicBool>,                     // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
-    main_queue: Arc<TaskQueue>,                     // A thread-safe shared reference to the priority Queue holding the tasks                       | no permissions.
+    main_queue: Arc<Q>,                     // A thread-safe shared reference to the priority Queue holding the tasks                       | no permissions.
     res_tx: Arc<Sender<(u64 , res::Result)>>,          // A thread-safe shared reference to a mutex holding the result bullitin.                       | read only.
-    packet_handle: PacketHandle                     // The packet handle that will be used to send notifications to the engine.                     | no permissions.
+    packet_handle: PacketHandle,                     // The packet handle that will be used to send notifications to the engine.                     | no permissions.
+
+    _marker: PhantomData<P>
 }
 
-impl ThreadPool {
+impl <Q , P: Packet> ThreadPool<Q , P> 
+where
+    Q: Queue<P>
+{
     // Create a new threadpool with the given size.
     // @param size: The number of threads in the pool.
     // @param packet_handle: The packet handle that will be used to send notifications to the engine.
     // @return: A new threadpool.
-    pub fn new(config: &Config , packet_handle: PacketHandle , res_tx: Arc<Sender<(u64 , res::Result)>>) -> Self {
+    pub fn new(config: &Config , queue: Q , packet_handle: PacketHandle , res_tx: Arc<Sender<(u64 , res::Result)>>) -> Self {
         Self {
             main_pool: rayon::ThreadPoolBuilder::new()
                 .num_threads(config.threads.worker_count)
@@ -38,18 +41,18 @@ impl ThreadPool {
                 .unwrap(),
             pool_exit_flag: Arc::new(AtomicBool::new(false)),
             pool_pause_flag: Arc::new(AtomicBool::new(false)),
-            main_queue: Arc::new(TaskQueue::new(config , packet_handle.clone())),
+            main_queue: Arc::new(queue),
             res_tx: res_tx,
             packet_handle: packet_handle,
-
+            _marker: PhantomData
         }
     }
 
     // Submit a task to the pool.
     // This adds the task to the priority queue.
     // @param task: The task to be submitted.
-    pub fn submit_task(&self , task: Task) {
-        self.main_queue.push(task);
+    pub fn submit_task(&self , obj: P) {
+        self.main_queue.push(obj);
     }
 
     // This initializes the threads in the pool.
@@ -72,13 +75,14 @@ impl ThreadPool {
 
                 // Check the queue for new tasks.
                 // If a task is found, execute it and store the result in the result bullitin.
-                let task = queue.pop();
+                let obj = queue.pop();
 
-                // If the code reaches here, it means either the queue has been finalized, or a task was captured.
-                let res_container = task.run();
+                // If the code reaches here, it means either the queue has been finalized, or a task was captured.                
+                if let Some(res_container) = obj.process().take() {
+                    let _ = res_tx.send(res_container);
+                }
 
                 // Store the result in the result bullitin.
-                let _ = res_tx.send(res_container);
             }
         });
     }
@@ -91,8 +95,8 @@ impl ThreadPool {
 
         // Send a notification to the engine that the threadpool has been finalized.
         // This is mainly for logging purposes.
-        let notif = NotifLog::log("ThreadPool Finalized".to_string() , ANNamingInput::new("Main"));
-        self.packet_handle.send_notification(Box::new(notif));
+        let notif = NotifLog::log("ThreadPool Finalized".to_string() , "Main");
+        self.packet_handle.send_notification(notif);
     }
 
     // A function to pause the threadpool.

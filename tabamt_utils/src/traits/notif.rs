@@ -4,9 +4,10 @@
 
 use std::time::SystemTime;
 
-use crate::any_naming_input::ANNamingInput;
+use crate::any_naming_input::NamedInput;
+use crate::traits::packets::Packet;
 
-pub trait Notif: Send + Sync {
+pub trait Notif: Packet {
     // A function to get a reference to the object as a dynamic Any type.
     // This is useful for downcasting to the concrete type later.
     // @return A reference to the object as a dynamic Any type.
@@ -15,14 +16,16 @@ pub trait Notif: Send + Sync {
     // Getter methods for notification properties.
 
     // Get the event type of the notification.
-    // @return A reference to the event type as an ANNamingInput.
-    fn event_type(&self) -> &ANNamingInput;
+    // @return A reference to the event type as an NamedInput.
+    fn event_type(&self) -> &NamedInput;
 
     // Get the time stamp of the notification.
     // @return A reference to the time stamp as a SystemTime.
     fn time_stamp(&self) -> &SystemTime;
 
     // Get the sender of the notification.
-    // @return A reference to whom should the notification be sent as an ANNamingInput.
-    fn obs_receiver(&self) -> &ANNamingInput;
+    // @return A reference to whom should the notification be sent as an NamedInput.
+    fn obs_receiver(&self) -> &NamedInput;
 }
+
+impl <T:Notif> Packet for T{}

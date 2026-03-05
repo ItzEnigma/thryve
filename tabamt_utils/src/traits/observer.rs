@@ -1,7 +1,8 @@
 // Implementation for the observer pattern.
 // Observers can be loggers, audits, email sendings, etc.... Each needs to be implemented alone.
 
-use crate::{notif::Notif, any_naming_input::ANNamingInput};
+use crate::traits::notif::Notif;
+use crate::any_naming_input::NamedInput;
 
 // The trait that needs to be implemented by any observer created.
 // It needs to be Send + Sync in order to be used in a multithreaded context.
@@ -17,6 +18,6 @@ pub trait Observer: Send + Sync{
     fn observer_name(&self) -> &str;
     
     // Get the type of the observer.
-    // @return A reference to the type of the observer as an ANNamingInput.
-    fn observer_type(&self) -> &ANNamingInput;
+    // @return A reference to the type of the observer as an NamedInput.
+    fn observer_type(&self) -> &NamedInput;
 }

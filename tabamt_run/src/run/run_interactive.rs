@@ -1,7 +1,8 @@
 use crossbeam::channel::bounded;
 
 use std::{thread, time::Duration};
-use tabamt_utils::{config::Config, ctx::Ctx, packet_handle::PacketHandle};
+use tabamt_utils::cfg::{config::Config, ctx::Ctx};
+use tabamt_utils::packets::packet_handle::PacketHandle;
 use crate::init::init::{self, init_manager};
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
@@ -11,7 +12,7 @@ use crate::init::init::{self, init_manager};
 // @param notif_rx: Receiver<Box<dyn Notif>> - the receiver part of the notification channel to be handed to the engine.
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
-// @param logging_file_names: a vector of ANNamingInput representing the names of the log files to be created.
+// @param logging_file_names: a vector of NamedInput representing the names of the log files to be created.
 pub fn run_interactive(mut ctx: Ctx) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");

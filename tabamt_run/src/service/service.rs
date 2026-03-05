@@ -5,7 +5,10 @@ use windows_services::{ Command, Service};
 use crossbeam::channel::bounded;
 use std::{sync::{atomic::{AtomicBool, Ordering} , Arc, Mutex}, thread, time::Duration};
 
-use tabamt_utils::{config::Config, ctx::Ctx, debug_logging::log, packet_handle::PacketHandle};
+use tabamt_utils::cfg::{config::Config, ctx::Ctx};
+use tabamt_utils::debug_logging::log;
+use tabamt_utils::packets::packet_handle::PacketHandle;
+
 use crate::init::init::{self, init_manager};
 
 // The main struct holding the service instance and service information.
@@ -61,7 +64,7 @@ impl <'a> TaBaMT <'a> {
     // @param notif_rx: Receiver<Box<dyn Notif>> The receiver part of the notification channel to be handed to the engine.
     // @param obs_init_tasks: Vec<Task> A vector of tasks to initialize observers
     // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
-    // @param logging_file_names: Vec<ANNamingInput> A vector of log file names to initialize the logger with.
+    // @param logging_file_names: Vec<NamedInput> A vector of log file names to initialize the logger with.
     // return: -
     pub fn run_service(&mut self , ctx: Ctx){
         // Cloning the is_running flag and the receiver to be used in the thread.
