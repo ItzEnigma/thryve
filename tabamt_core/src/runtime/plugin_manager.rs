@@ -61,6 +61,8 @@ impl PluginManager{
     // This allows the system to dynamically add plugins at runtime.
     // @param plugin: The plugin to be loaded.
     pub fn load_plugin(&mut self , plugin: Box<dyn Plugin>){
+        let task_init = Task::new("Init", 0, plugin.initial_fn_to_run());
+        self.packet_handle.send_task(task_init);
         self.plugins.insert(plugin.plugin_type().clone() , plugin);
     }
 

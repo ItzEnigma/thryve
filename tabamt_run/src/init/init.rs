@@ -8,18 +8,7 @@ use tabamt_utils::res::{self};
 
 use tabamt_observers::logger::LoggerObserver;
 
-// This function initializes observers, except for the logger, and plugins.
-// @param vector_init_tasks: a vector of Tasks that initialize observers/plugins.
-// @param packet_handle: the PacketHandle to send the initialization tasks to the engine.
-pub fn init(vector_init_tasks: Vec<Task> , packet_handle: PacketHandle){
-    // For each initialization function in the vector, create a task and send it to the engine via the PacketHandle.
-    for task in vector_init_tasks{
-        packet_handle.send_task(task);
-    }
-    
-}
-
-pub fn init_manager(ctx: &Ctx) -> Engine {
+pub fn init_engine(ctx: &Ctx) -> Engine {
     // Creating the engine instance.
     let eng = Engine::new(&ctx);
 

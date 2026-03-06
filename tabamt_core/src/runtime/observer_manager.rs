@@ -3,8 +3,7 @@ use tabamt_utils::extras::named_input::NamedInput;
 use tabamt_utils::packets::notif_log::NotifLog;
 use tabamt_utils::queues::seg_queue::QChild;
 use tabamt_utils::threadpool::ThreadPool;
-use tabamt_utils::traits::notif_ex::NotifEX;
-use tabamt_utils::traits::{notif::Notif , observer::Observer};
+use tabamt_utils::traits::{notif_ex::NotifEX , queue::Queue , observer::Observer};
 
 use std::{collections::HashMap};
 
@@ -44,13 +43,10 @@ impl ObserverManager {
     // Forwards a notification to the appropriate observer based on its type.
     // Asserts that the observer exists before attempting to send the notification.
     // @param notif: The notification to be forwarded.
-    pub fn forward_notif(&mut self , notif: Box<dyn Notif>) {
+    pub fn forward_notif(&mut self , notif: Box<dyn NotifEX>) {
         assert!(self.check_observer(notif.obs_receiver()), "Observer Manager Cannot Find Requested Observer. Got {}" , notif.obs_receiver());
 
-        self.observers
-        .get_mut(notif.obs_receiver())
-        .unwrap()
-        .consume(notif);
+        self.threadpool.main_queue.push(notif);
     }
 
     // Convenience method to send an error notification to the logging observer.

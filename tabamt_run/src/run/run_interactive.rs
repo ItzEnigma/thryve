@@ -3,13 +3,13 @@ use crossbeam::channel::bounded;
 use std::{thread, time::Duration};
 use tabamt_utils::cfg::{config::Config, ctx::Ctx};
 use tabamt_utils::packets::packet_handle::PacketHandle;
-use crate::init::init::{self, init_manager};
+use crate::init::init::init_engine;
 
 // The main function if the app will be running without the SCM: the main interactive entrypoint to the program
 // @param max_threads: an optional usize indicating the maximum number of threads the service can handle at once.
 // @param packet_handle: PacketHandle - the packet handle to be used by the engine.
 // @param task_rx: Receiver<Task> - the receiver part of the channel to be handed to the engine.
-// @param notif_rx: Receiver<Box<dyn Notif>> - the receiver part of the notification channel to be handed to the engine.
+// @param notif_rx: Receiver<Box<dyn NotifEX>> - the receiver part of the notification channel to be handed to the engine.
 // @param obs_init_tasks: a vector of Tasks that initialize observers.
 // @param plugin_init_tasks: a vector of Tasks that initialize plugins.
 // @param logging_file_names: a vector of NamedInput representing the names of the log files to be created.
@@ -17,11 +17,11 @@ pub fn run_interactive(mut ctx: Ctx) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
 
-    let mut eng = init_manager(&ctx);
+    let mut eng = init_engine(&ctx);
     
     let mut state: u8 = 0;
-    let len_obs_tasks = ctx.obs_init_tasks.len();
-    let len_plugin_tasks = ctx.plugin_init_tasks.len();
+    let len_obs_tasks = ctx.observers.len();
+    let len_plugin_tasks = ctx.plugins.len();
     
     while eng.exit_flag == false {
         // is_Running the engine once to process any tasks in the queue.
@@ -38,8 +38,9 @@ pub fn run_interactive(mut ctx: Ctx) {
             // Initializing the observers if there are any.
             // This needs to be done after the logger is initialized.
             if len_obs_tasks > 0 {
-                // The option is taken here to move the vector into the init function, meaning the option is unwrapped to reveal the vector.
-                init::init(ctx.obs_init_tasks(), ctx.packet_handle());
+                for obs in ctx.observers(){
+                    eng.obs_manager.load_observer(obs);
+                }
             }
         }
         
@@ -53,7 +54,11 @@ pub fn run_interactive(mut ctx: Ctx) {
             // Initializing the plugins if there are any.
             // This needs to be done after the observers are initialized.
             if len_plugin_tasks > 0 {
-                init::init(ctx.plugin_init_tasks(), ctx.packet_handle());
+                for plugin in ctx.plugins(){
+                    eng.plugin_manager.load_plugin(plugin);
+                }
+
+                // init::init_plugins(ctx.plugins(), ctx.packet_handle());
             }
             
             // The engine is now fully initialized.

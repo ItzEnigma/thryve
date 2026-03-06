@@ -1,7 +1,7 @@
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
 
 use tabamt_utils::cfg::ctx::Ctx;
-use tabamt_utils::traits::notif::Notif;
+use tabamt_utils::traits::notif_ex::NotifEX;
 use tabamt_utils::packets::{notif_log::NotifLog , task::Task};
 use tabamt_utils::res;
 
@@ -19,7 +19,7 @@ pub struct Engine {
     
 
     task_rx: Arc<Receiver<Task>>,              // Receives tasks to be executed.                           | No Permissions.
-    notif_rx: Arc<Receiver<Box<dyn Notif>>>,   // Receives notifications to be processed.                  | No Permissions.
+    notif_rx: Arc<Receiver<Box<dyn NotifEX>>>,   // Receives notifications to be processed.                  | No Permissions.
     res_rx: Receiver<(u64 , res::Result)>,
 
     pub exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.

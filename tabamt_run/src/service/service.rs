@@ -9,7 +9,7 @@ use tabamt_utils::cfg::{config::Config, ctx::Ctx};
 use tabamt_utils::debug_logging::log;
 use tabamt_utils::packets::packet_handle::PacketHandle;
 
-use crate::init::init::{self, init_manager};
+use crate::init::init::init_engine;
 
 // The main struct holding the service instance and service information.
 pub struct TaBaMT <'a>{
@@ -61,7 +61,7 @@ impl <'a> TaBaMT <'a> {
     // It checks for the start command and runs the engine in a separate thread.
     // It also checks for the stop command and stops the engine.
     // @param task_rx: Receiver<Task> The receiver part of the channel to be handed to the engine.
-    // @param notif_rx: Receiver<Box<dyn Notif>> The receiver part of the notification channel to be handed to the engine.
+    // @param notif_rx: Receiver<Box<dyn NotifEX>> The receiver part of the notification channel to be handed to the engine.
     // @param obs_init_tasks: Vec<Task> A vector of tasks to initialize observers
     // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
     // @param logging_file_names: Vec<NamedInput> A vector of log file names to initialize the logger with.
@@ -74,8 +74,8 @@ impl <'a> TaBaMT <'a> {
         let engine_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>> = Arc::new(Mutex::new(None));
         let engine_thread_clone = engine_thread.clone();
 
-        let len_obs_tasks = ctx.obs_init_tasks.len();
-        let len_plugin_tasks = ctx.plugin_init_tasks.len();
+        let len_obs_tasks = ctx.observers.len();
+        let len_plugin_tasks = ctx.plugins.len();
         let mut ctx = Some(ctx);
 
         // is_Running the service instance.
@@ -96,7 +96,7 @@ impl <'a> TaBaMT <'a> {
                 // Spawning the thread that will run the engine.
                 let handle = thread::spawn(move || {
                     let mut ctx = ctx.take().expect("Start Called More Than Once");
-                    let mut eng = init_manager(&ctx);
+                    let mut eng = init_engine(&ctx);
                     
                     let mut state: u8 = 0;
                     let mut eng_paused = false;
@@ -136,7 +136,9 @@ impl <'a> TaBaMT <'a> {
                             // Initializing the observers if there are any.
                             // This needs to be done after the logger is initialized.
                             if len_obs_tasks > 0{
-                                init::init(ctx.obs_init_tasks(), ctx.packet_handle());
+                                for obs in ctx.observers(){
+                                    eng.obs_manager.load_observer(obs);
+                                }
                             }
 
                         }
@@ -151,7 +153,9 @@ impl <'a> TaBaMT <'a> {
                             // Initializing the plugins if there are any.
                             // This needs to be done after the observers are initialized.
                             if len_plugin_tasks > 0 {
-                                init::init(ctx.plugin_init_tasks(), ctx.packet_handle());
+                                for plugin in ctx.plugins(){
+                                    eng.plugin_manager.load_plugin(plugin);
+                                }
                             }
                             
                             // The engine is now fully initialized.

@@ -6,6 +6,7 @@ pub mod utils {
     pub mod traits{
         pub use tabamt_utils::traits::observer;
         pub use tabamt_utils::traits::plugin;
+        pub use tabamt_utils::traits::notif_ex;
     }
     pub mod cfg{
         pub use tabamt_utils::cfg::config::{load_config_from_file , load_def_config};

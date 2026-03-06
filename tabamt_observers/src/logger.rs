@@ -8,7 +8,7 @@ use chrono::{ DateTime , Local };
 
 use tabamt_utils::{extras::named_input::NamedInput, packets::task::{Job, Task}};
 use tabamt_utils::packets::notif_log::NotifLog;
-use tabamt_utils::traits::{notif::Notif , observer::Observer};
+use tabamt_utils::traits::{notif_ex::NotifEX , observer::Observer};
 use tabamt_utils::res;
 
 // The logger observer struct.
@@ -26,7 +26,7 @@ pub struct LoggerObserver{
 impl Observer for LoggerObserver {
     // Consume a notification and log it to the appropriate file.
     // @param notif - The notification to consume.
-    fn consume(&mut self , notif: Box<dyn Notif>) {
+    fn consume(&mut self , notif: Box<dyn NotifEX>) {
         self.log(notif);
     }
 
@@ -110,7 +110,7 @@ impl LoggerObserver {
 
     // Log a notification to the appropriate file.
     // @param notif - The notification to log.
-    fn log(&mut self , notif: Box<dyn Notif>) {
+    fn log(&mut self , notif: Box<dyn NotifEX>) {
         // Attempt to downcast the notification to a NotifLog.
         let notif_as_any = notif.as_any();
         let notif_casted = notif_as_any.downcast_ref::<NotifLog>();

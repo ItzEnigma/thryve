@@ -2,7 +2,7 @@
 // Observers can be loggers, audits, email sendings, etc.... Each needs to be implemented alone.
 
 use crate::packets::task::{Job, Task};
-use crate::traits::notif::Notif;
+use crate::traits::notif_ex::NotifEX;
 use crate::extras::named_input::NamedInput;
 
 // The trait that needs to be implemented by any observer created.
@@ -10,7 +10,7 @@ use crate::extras::named_input::NamedInput;
 pub trait Observer: Send + Sync{
     // Function to consume a notification.
     // @param notif: A boxed dynamic notification object.
-    fn consume(&mut self , notif: Box<dyn Notif>);
+    fn consume(&mut self , notif: Box<dyn NotifEX>);
 
     // Getter methods for observer properties.
 

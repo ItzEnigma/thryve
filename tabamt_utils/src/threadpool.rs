@@ -19,7 +19,7 @@ pub struct ThreadPool <Q , P> {
     main_pool: rayon::ThreadPool,                   // The main pool that will be created by Rayon                                                  | no permissions.
     pool_exit_flag: Arc<AtomicBool>,                      // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
     pool_pause_flag: Arc<AtomicBool>,                     // A thread-safe shared reference to the flag to indicate the application is shutting down      | no permissions.
-    main_queue: Arc<Q>,                     // A thread-safe shared reference to the priority Queue holding the tasks                       | no permissions.
+    pub main_queue: Arc<Q>,                     // A thread-safe shared reference to the priority Queue holding the tasks                       | no permissions.
     res_tx: Option<Arc<Sender<(u64 , res::Result)>>>,          // A thread-safe shared reference to a mutex holding the result bullitin.                       | read only.
     packet_handle: PacketHandle,                     // The packet handle that will be used to send notifications to the engine.                     | no permissions.
 
