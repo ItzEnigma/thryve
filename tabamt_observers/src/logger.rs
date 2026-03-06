@@ -6,7 +6,7 @@ use std::{collections::HashMap, env::current_exe, fs::{create_dir_all, File, Ope
 
 use chrono::{ DateTime , Local };
 
-use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::{extras::named_input::NamedInput, packets::task::{Job, Task}};
 use tabamt_utils::packets::notif_log::NotifLog;
 use tabamt_utils::traits::{notif::Notif , observer::Observer};
 use tabamt_utils::res;
@@ -40,6 +40,18 @@ impl Observer for LoggerObserver {
     // @return - The type of the observer.
     fn observer_type(&self) -> &NamedInput {
         &self.observer_type
+    }
+
+    fn create_task(&self, task_name: &str , task_priority: u8 , job: Job) -> Task {
+        Task::new(task_name, task_priority, job)
+    }
+
+    fn initial_fn_to_run(&self) -> Job {
+        todo!()
+    }
+
+    fn send_task(&self, _task: Task) {
+        todo!()
     }
 }
 

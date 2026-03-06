@@ -1,6 +1,6 @@
 use tabamt_core::runtime::engine::Engine;
 
-use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::extras::named_input::NamedInput;
 use tabamt_utils::cfg::ctx::Ctx;
 use tabamt_utils::packets::packet_handle::PacketHandle;
 use tabamt_utils::packets::task::{Job, Task};
@@ -24,7 +24,7 @@ pub fn init_manager(ctx: &Ctx) -> Engine {
     let eng = Engine::new(&ctx);
 
     // This spawns the threads in the thread pool and makes them wait for tasks.
-    eng.plugin_manager.threadpool.run_threads();
+    eng.plugin_manager.threadpool.run_threads_plugins();
 
     // Initializing the logger first.
     // The initialization function takes ownership of the vector.

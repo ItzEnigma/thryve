@@ -1,10 +1,7 @@
 use std::{marker::PhantomData, sync::{Arc, Condvar, Mutex, atomic::AtomicBool}};
 
-use crossbeam::queue::SegQueue;
-
 use crate::cfg::config::TaskConfig;
 use crate::packets::packet_handle::PacketHandle;
-use crate::traits::queue::Queue;
 
 pub struct QueueBase <Q , P> {
     // ---- CONFIG START
@@ -19,32 +16,4 @@ pub struct QueueBase <Q , P> {
     pub packet_handle: PacketHandle,                        // The packet handle that will be used to send notifications to the engine.         | no permissions.
 
     pub _marker: PhantomData<P>
-}
-pub type QChild<T> = QueueBase<SegQueue<T> , T>;
-
-
-impl <Q , P: Send + Sync + 'static> Queue<P> for QueueBase<Q , P> 
-where
-    Q: Queue<P>
-{
-    
-    fn push(&self, value: P) {
-        self.main_queue.push(value);
-    }
-
-    fn pop(&self) -> P {
-        self.main_queue.pop()
-    }
-
-    fn finalize(&self) {
-        self.main_queue.finalize();
-    }
-
-    fn pause(&self) {
-        self.main_queue.pause();
-    }
-
-    fn resume(&self) {
-        self.main_queue.resume();
-    }
 }

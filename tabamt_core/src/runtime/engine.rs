@@ -40,7 +40,7 @@ impl Engine {
         Self {
             sleep_tick_rate: ctx.config.engine.sleep_tick_rate,
             plugin_manager: PluginManager::new(ctx , res_tx),
-            obs_manager: ObserverManager::new(),
+            obs_manager: ObserverManager::new(ctx),
             task_rx: ctx.task_rx.clone(),
             notif_rx: ctx.notif_rx.clone(),
             res_rx: res_rx,

@@ -6,8 +6,8 @@
 // All plugins must be Send + Sync to be used in a multithreaded context.
 
 use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle};
-use crate::packets::task::{ Job , Task };
-use crate::any_naming_input::NamedInput;
+use crate::packets::task::Job;
+use crate::extras::named_input::NamedInput;
 
 pub trait Plugin: Send + Sync {
     // Getters for plugin metadata
@@ -25,17 +25,6 @@ pub trait Plugin: Send + Sync {
     fn packet_handle(&self) -> PacketHandle;
 
     // Core plugin functionality
-
-    // Create a new task
-    // @param task_name The name of the task as an NamedInput
-    // @param task_priority The priority of the task as a u8
-    // @param job The job to be executed as a Job
-    // @return The created Task
-    fn create_task(&self, task_name: NamedInput , task_priority: u8 , job: Job) -> Task;
-
-    // Send a task to be executed
-    // @param task The task to be sent as a Task
-    fn send_task(&self, task: Task);
 
     // Get the initial function to run when the plugin is loaded
     // @return The initial Job to be run

@@ -1,5 +1,9 @@
-use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::cfg::ctx::Ctx;
+use tabamt_utils::extras::named_input::NamedInput;
 use tabamt_utils::packets::notif_log::NotifLog;
+use tabamt_utils::queues::seg_queue::QChild;
+use tabamt_utils::threadpool::ThreadPool;
+use tabamt_utils::traits::notif_ex::NotifEX;
 use tabamt_utils::traits::{notif::Notif , observer::Observer};
 
 use std::{collections::HashMap};
@@ -10,15 +14,19 @@ use std::{collections::HashMap};
 // It stores observers in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the observers if needed.
 pub struct ObserverManager {
-    observers: HashMap<NamedInput , Box<dyn Observer>>      // Key: Observer type specified by the developer, Value: Observer | read only
+    observers: HashMap<NamedInput , Box<dyn Observer>>,      // Key: Observer type specified by the developer, Value: Observer | read only
+    pub threadpool: ThreadPool<QChild , Box<dyn NotifEX>>,
 }
 
 impl ObserverManager {
     // Creates a new ObserverManager with an empty observer list.
     // @return: A new instance of ObserverManager.
-    pub fn new() -> Self{
+    pub fn new(ctx: &Ctx) -> Self{
+        let queue = QChild::new(&ctx.config, ctx.packet_handle());
+
         ObserverManager {
-            observers: HashMap::new()
+            observers: HashMap::new(),
+            threadpool: ThreadPool::new(&ctx.config, queue, ctx.packet_handle(), None),
         }
     }
 

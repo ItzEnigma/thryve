@@ -4,7 +4,7 @@
 use std::fmt::Display;
 
 // This is just a struct that has results returned by executed tasks.
-use crate::any_naming_input::NamedInput;
+use crate::extras::named_input::NamedInput;
 use crate::traits::{observer::Observer, plugin::Plugin};
 use crate::packets::task::Task;
 

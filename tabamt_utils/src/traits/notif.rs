@@ -4,10 +4,10 @@
 
 use std::time::SystemTime;
 
-use crate::any_naming_input::NamedInput;
+use crate::extras::named_input::NamedInput;
 use crate::traits::packets::Packet;
 
-pub trait Notif: Packet {
+pub trait Notif: Packet{
     // A function to get a reference to the object as a dynamic Any type.
     // This is useful for downcasting to the concrete type later.
     // @return A reference to the object as a dynamic Any type.

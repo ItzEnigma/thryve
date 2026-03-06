@@ -16,6 +16,6 @@ pub mod utils {
         pub use tabamt_utils::packets::packet_handle;
         pub use tabamt_utils::packets::task;
     }
-    pub use tabamt_utils::any_naming_input::NamedInput;
+    pub use tabamt_utils::extras::named_input::NamedInput;
     pub use tabamt_utils::res;
 }

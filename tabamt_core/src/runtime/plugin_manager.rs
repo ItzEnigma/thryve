@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 
-use tabamt_utils::any_naming_input::NamedInput;
+use tabamt_utils::extras::named_input::NamedInput;
 use tabamt_utils::cfg::ctx::Ctx;
 use tabamt_utils::packets::{notif_log::NotifLog , packet_handle::PacketHandle , task::Task};
 use tabamt_utils::traits::plugin::Plugin;
@@ -30,7 +30,7 @@ impl PluginManager{
 
         PluginManager{
             plugins: HashMap::new(),
-            threadpool: ThreadPool::new(&ctx.config , queue , ctx.packet_handle() , Arc::new(res_tx)),     // Default to 4 threads in the pool.
+            threadpool: ThreadPool::new(&ctx.config , queue , ctx.packet_handle() , Some(Arc::new(res_tx))),     // Default to 4 threads in the pool.
             packet_handle: ctx.packet_handle(),
         }
     }

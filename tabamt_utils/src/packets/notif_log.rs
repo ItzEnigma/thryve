@@ -8,7 +8,7 @@ use std::io::Write;
 
 use crate::traits::notif::Notif;
 use crate::packets::task::Task;
-use crate::any_naming_input::NamedInput;
+use crate::extras::named_input::NamedInput;
 
 // This struct will be used to send notifications to any observers created.
 pub struct NotifLog {
