@@ -56,13 +56,11 @@ impl Engine {
     // It will only run once and return an Option<bool>.
     // the return value is Some(true) only when the logger is loaded, None otherwise.
     // The main loop in the run_service should call this function repeatedly until the application exits.
-    pub fn run_once(&mut self) -> Option<bool>{
+    pub fn run_once(&mut self){
 
         // If the exit flag is set, check for any remaining notifications before final shutdown and return None.
         if self.exit_flag || self.pause_flag{
             self.check_notifs();
-
-            return None
         }
 
         // Continuously check for new tasks, notifications, and results.
@@ -75,15 +73,9 @@ impl Engine {
         
         // If no tasks, notifications, or results were received, sleep for a short duration to avoid busy-waiting.
         //// duration to be implemented as a config later.
-        if !received_tasks && !received_notifs && received_results == 0 {
+        if !received_tasks && !received_notifs && !received_results {
             thread::sleep(Duration::from_millis(self.sleep_tick_rate));
         }
-        else if received_results == 2 {
-            return Some(true)
-        }
-        
-        return None
-        
     }
 
     // Checks for new tasks from the task receiver and submits them to the thread pool.
@@ -112,20 +104,17 @@ impl Engine {
         received_notifs
     }
     
-    pub fn check_results(&mut self) -> u8 {
-        let mut received_results = 0;
+    pub fn check_results(&mut self) -> bool {
+        let mut received_results = false;
 
         // Try to get results without blocking. If results are available, process them.
         while let Ok(task_result) = self.res_rx.try_recv(){
-            received_results = 1;
+            received_results = true;
 
             // Handle the results and check if the logger is loaded.
             // The firt time this function runs, it will return Some(true) if the logger is loaded.
             // The next time it runs, ret should be none None.
-            let ret = self.handle_result(task_result);
-            
-            // If the logger is loaded, return Some(true) immediately.
-            if ret.unwrap_or(false) == true {return 2}
+            self.handle_result(task_result);
         };
 
         received_results
@@ -147,13 +136,13 @@ impl Engine {
         self.run_once();
 
         // The observer manager is finalized last to ensure all notifications are logged before shutdown.
-        let mut logger = self.obs_manager.finalize();
+        let mut _logger = self.obs_manager.finalize();
         
-        let notif = NotifLog::log("Engine Finalized".to_string() , "Main");
-        logger.consume(notif);
+        let _notif = NotifLog::log("Engine Finalized".to_string() , "Main");
+        // logger.consume(notif);
         
-        let notif = NotifLog::log("Service Finalized Successfully".to_string() , "Main");
-        logger.consume(notif);
+        let _notif = NotifLog::log("Service Finalized Successfully".to_string() , "Main");
+        // logger.consume(notif);
     }
 
 
@@ -192,27 +181,9 @@ impl Engine {
     // Handles the results of completed tasks, forwarding notifications and loading new observers or plugins as needed.
     // @param task_results: A vector of tuples containing task IDs and their corresponding results.
     // @return: An Option<bool> indicating if the logger is loaded (Some(true)) or not (None).
-    fn handle_result(&mut self , task_result: (u64 , res::Result)) -> Option<bool> {
-        let mut ret: Option<bool> = None;
-
+    fn handle_result(&mut self , task_result: (u64 , res::Result)) {
         // Iterate over each task result and process it.
         let result = task_result.1;
-        
-        // If the task result includes a new observer, load it into the observer manager.
-        // If the observer is of type "Logging", set ret to Some(true) to indicate that the logger is loaded.
-        if let Some(obs) = result.observer{
-            let observer_type = obs.observer_type().clone();
-            if observer_type.inner() == "Logging" {
-                ret = Some(true);
-            }
-
-            self.obs_manager.load_observer(obs);
-        }
-
-        // If the task result includes a new plugin, load it into the plugin manager.
-        else if let Some(plugin) = result.plugin{
-            self.plugin_manager.load_plugin(plugin);
-        }
 
         // If the task result includes a next task to be executed, submit it to the thread pool.
         if let Some(next_task) = result.next_task{
@@ -236,8 +207,6 @@ impl Engine {
         let res_type = result.result_type.inner().to_lowercase();
         if (res_type == "fin" || res_type == "finerr") && !self.exit_flag {
             self.finalize();
-            return ret
         }
-        return ret
     }
 }

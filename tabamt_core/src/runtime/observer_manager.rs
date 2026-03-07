@@ -1,9 +1,10 @@
 use tabamt_utils::cfg::ctx::Ctx;
 use tabamt_utils::extras::named_input::NamedInput;
+use tabamt_utils::bases::observer_base::ObsBase;
 use tabamt_utils::packets::notif_log::NotifLog;
 use tabamt_utils::queues::seg_queue::QChild;
 use tabamt_utils::threadpool::ThreadPool;
-use tabamt_utils::traits::{notif_ex::NotifEX , queue::Queue , observer::Observer};
+use tabamt_utils::traits::{notif_ex::NotifEX , queue::Queue};
 
 use std::{collections::HashMap};
 
@@ -13,7 +14,7 @@ use std::{collections::HashMap};
 // It stores observers in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the observers if needed.
 pub struct ObserverManager {
-    observers: HashMap<NamedInput , Box<dyn Observer>>,      // Key: Observer type specified by the developer, Value: Observer | read only
+    observers: HashMap<NamedInput , ObsBase>,      // Key: Observer type specified by the developer, Value: Observer | read only
     pub threadpool: ThreadPool<QChild , Box<dyn NotifEX>>,
 }
 
@@ -53,22 +54,20 @@ impl ObserverManager {
     // This is a shortcut for sending error messages to the logger instead of specifying known parameters.
     // @param message: The error message to be logged.
     pub fn notif_err(&mut self , message: &str){
-        self.observers
-            .get_mut(&NamedInput::new("Logging"))
-            .unwrap()
-            .consume(NotifLog::err(message.to_string()));
+        self.threadpool.main_queue.push(NotifLog::err(message.to_string()));
     }
 
     // Loads a new observer into the manager.
     // This allows the system to dynamically add observers at runtime.
     // @param observer: The observer to be loaded.
-    pub fn load_observer(&mut self , observer: Box<dyn Observer>){
-        self.observers.insert(observer.observer_type().clone() , observer);
+    pub fn load_observer(&mut self , mut observer: ObsBase){
+        self.threadpool.run_thread_obs(observer.fn_to_run());
+        self.observers.insert(NamedInput::new(observer.obs_type.inner()) , observer);
     }
     
     // Finalizes the observer manager by clearing all observers and sending a final notification.
     // This is typically called during system shutdown to ensure that resources are cleaned up properly.
-    pub fn finalize(&mut self) -> Box<dyn Observer>{
+    pub fn finalize(&mut self) -> ObsBase{
         let notif = NotifLog::log("Observer manager Finalized".to_string() , "Main");
         self.forward_notif(notif);
 

@@ -126,9 +126,9 @@ impl <'a> TaBaMT <'a> {
                         // The first time this is called, it will also initialize the logger.
                         // This is important as the logger needs to be initialized before any other module.
                         // Once the logger is initialized, the state is incremented to move to the next step.
-                        let logger_loaded = eng.run_once();
+                        eng.run_once();
 
-                        if state == 0 && logger_loaded.unwrap_or(false) == true {
+                        if state == 0 {
                             // The logger is now initialized.
                             // Increment the state to move to the next step.
                             state += 1;
@@ -141,15 +141,6 @@ impl <'a> TaBaMT <'a> {
                                 }
                             }
 
-                        }
-                        
-                        // Once the observers are initialized, the plugins can be initialized.
-                        // This needs to be done after the observers are initialized.
-                        if state == 1{
-                            // The observers are now initialized.
-                            // Increment the state to move to the next step.
-                            state += 1;
-                            
                             // Initializing the plugins if there are any.
                             // This needs to be done after the observers are initialized.
                             if len_plugin_tasks > 0 {
@@ -163,6 +154,7 @@ impl <'a> TaBaMT <'a> {
                             if ctx.config.debugging.is_debugging{
                                 thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
                             }
+
                         }
                     }
 
@@ -171,9 +163,8 @@ impl <'a> TaBaMT <'a> {
                     // This is only called when the is_running flag is set to false.
                     eng.finalize();
                 });
-
+                
                 *engine_thread_clone.lock().unwrap() = Some(handle);
-
             }
             
             Command::Stop => {

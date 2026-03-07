@@ -6,3 +6,4 @@ pub mod res;
 pub mod extras;
 pub mod debug_logging;
 pub mod threadpool;
+pub mod bases;

@@ -28,9 +28,9 @@ pub fn run_interactive(mut ctx: Ctx) {
         // The first time this is called, it will also initialize the logger.
         // This is important as the logger needs to be initialized before any other module.
         // Once the logger is initialized, the state is incremented to move to the next step.
-        let logger_loaded = eng.run_once();
+        eng.run_once();
 
-        if state == 0 && logger_loaded.unwrap_or(false) == true {
+        if state == 0{
             // The logger is now initialized.
             // Increment the state to move to the next step.
             state += 1;
@@ -42,15 +42,7 @@ pub fn run_interactive(mut ctx: Ctx) {
                     eng.obs_manager.load_observer(obs);
                 }
             }
-        }
-        
-        // Once the observers are initialized, the plugins can be initialized.
-        // This needs to be done after the observers are initialized.
-        if state == 1{
-            // The observers are now initialized.
-            // Increment the state to move to the next step.
-            state += 1;
-            
+
             // Initializing the plugins if there are any.
             // This needs to be done after the observers are initialized.
             if len_plugin_tasks > 0 {

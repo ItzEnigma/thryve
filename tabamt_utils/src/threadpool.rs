@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 use crossbeam::channel::Sender;
 
 use crate::cfg::config::Config;
-use crate::cfg::ctx::Ctx;
+use crate::packets::task::Job;
 use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle};
 use crate::traits::{packets::Packet , queue::Queue};
 use crate::res;
@@ -88,35 +88,16 @@ where
         });
     }
 
-    pub fn run_threads_obs(&self , _ctx: &Ctx) {
-        let queue = Arc::clone(&self.main_queue);
-        let exit_flag = Arc::clone(&self.pool_exit_flag);
+    pub fn run_thread_obs(&self , job: Job) {
+        let _queue = Arc::clone(&self.main_queue);
+        let _exit_flag = Arc::clone(&self.pool_exit_flag);
+
+        self.main_pool.spawn(move || {
+            let _ = job;
+        });
         
 
         // Spawn threads in the pool.
-        // The spawn_broadcast method will spawn a copy of the closure in each thread in the pool.
-        // Rayon's thread pool will manage the threads and scheduling and ensure they are running.
-        self.main_pool.spawn_broadcast(move |_| {
-            loop {
-                // Check if the exit flag is set.
-                // If it is, break the loop and exit the thread.
-                if exit_flag.load(Ordering::SeqCst) == true {
-                    break
-                }
-
-                // Check the queue for new tasks.
-                // If a task is found, execute it and store the result in the result bullitin.
-                let obj = queue.pop();
-
-                // If the code reaches here, it means either the queue has been finalized, or a task was captured.                
-                if let Some(_res_container) = obj.process().take() {
-                    // let _ = res_tx.send(res_container);
-                    todo!()
-                }
-
-                // Store the result in the result bullitin.
-            }
-        });
     }
 
     // Finalize the threadpool.

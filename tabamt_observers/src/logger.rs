@@ -2,55 +2,25 @@
 // It is an observer that can be used by any module to log messages.
 // It creates a log directory with a timestamp and creates log files for each module type.
 
-use std::{collections::HashMap, env::current_exe, fs::{create_dir_all, File, OpenOptions}, time::SystemTime};
+use std::{collections::HashMap, env::current_exe, fs::{File, OpenOptions, create_dir_all}, sync::Arc, time::SystemTime};
 
 use chrono::{ DateTime , Local };
 
-use tabamt_utils::{extras::named_input::NamedInput, packets::task::{Job, Task}};
-use tabamt_utils::packets::notif_log::NotifLog;
-use tabamt_utils::traits::{notif_ex::NotifEX , observer::Observer};
+use tabamt_utils::extras::named_input::NamedInput;
+use tabamt_utils::bases::observer_base::ObsBase;
+use tabamt_utils::packets::{task::Job , notif_log::NotifLog};
+use tabamt_utils::traits::{observer::Observer , notif_ex::NotifEX};
 use tabamt_utils::res;
 
 // The logger observer struct.
 // Holds the log files and the logging type.
 pub struct LoggerObserver{
-    observer_name: String,                  // Name of the observer.                        | read only
-    observer_type: NamedInput,           // Type of the observer.                        | read only
-
     _currentdir: String,                    // Current directory of the executable.         | read only
-
     files: HashMap<NamedInput , File>,   // HashMap of log files based on module type.   | no permission
 }
 
-// Implement the Observer trait for the LoggerObserver.
 impl Observer for LoggerObserver {
-    // Consume a notification and log it to the appropriate file.
-    // @param notif - The notification to consume.
-    fn consume(&mut self , notif: Box<dyn NotifEX>) {
-        self.log(notif);
-    }
-
-    // Get the name of the observer.
-    // @return - The name of the observer.
-    fn observer_name(&self) -> &str {
-        &self.observer_name
-    }
-
-    // Get the type of the observer.
-    // @return - The type of the observer.
-    fn observer_type(&self) -> &NamedInput {
-        &self.observer_type
-    }
-
-    fn create_task(&self, task_name: &str , task_priority: u8 , job: Job) -> Task {
-        Task::new(task_name, task_priority, job)
-    }
-
-    fn initial_fn_to_run(&self) -> Job {
-        todo!()
-    }
-
-    fn send_task(&self, _task: Task) {
+    fn clean_up(&self) {
         todo!()
     }
 }
@@ -60,7 +30,7 @@ impl LoggerObserver {
     // An instance of this observer should be created once and stored within the observer manager.
     // @param file_names - A vector of module types to create log files for.
     // @return - A result indicating success or failure.
-    pub fn new(file_names: Vec<NamedInput>) -> res::Result {
+    pub fn new(file_names: Vec<NamedInput>) -> ObsBase {
         // Get the current executable directory.
         let exe_dir = current_exe()
         .unwrap()
@@ -92,20 +62,18 @@ impl LoggerObserver {
 
         // Create the logger observer instance.
         let logger = LoggerObserver {
-            observer_name: "Logger".to_string(),
-            observer_type: NamedInput::new("Logging"),
             _currentdir: exe_dir.file_name().unwrap().to_string_lossy().to_string(),
             files: temp_hash_map,       // The ownership of the files hashmap is moved to the struct.
         };
 
-        // Return the logger observer wrapped in a result.
-        res::Result::new_obs_result(
-            "ObserverInit",
-            "Loaded Observer - Logger".to_string(),
-            "Main",
-            None, 
-            Box::new(logger),
-        )
+        let logger_core: Job = Box::new(move || logger_core());
+
+        ObsBase {
+            obs_name: "Logger".to_string(),
+            obs_type: NamedInput::new("Logging"),
+            obs_core: Arc::new(logger),
+            fn_to_run: logger_core
+        }
     }
 
     // Log a notification to the appropriate file.
@@ -131,4 +99,8 @@ impl LoggerObserver {
             assert!(false, "Logger Observer Received Unsupported Notification Type.");
         }
     }
+}
+
+fn logger_core() -> res::Result{
+    todo!()
 }

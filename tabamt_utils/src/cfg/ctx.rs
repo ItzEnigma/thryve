@@ -1,19 +1,19 @@
 use std::sync::Arc;
 use crossbeam::channel::Receiver;
 
+use crate::bases::plugin_base::PluginBase;
 use crate::cfg::config::Config;
+use crate::bases::observer_base::ObsBase;
 use crate::traits::notif_ex::NotifEX;
 use crate::packets::{packet_handle::PacketHandle , task::Task};
-use crate::traits::observer::Observer;
-use crate::traits::plugin::Plugin;
 
 pub struct Ctx {
     pub config: Config,
     pub task_rx: Arc<Receiver<Task>>,
     pub notif_rx: Arc<Receiver<Box<dyn NotifEX>>>,
     packet_handle: PacketHandle,
-    pub observers: Vec<Box<dyn Observer>>,
-    pub plugins: Vec<Box<dyn Plugin>>,
+    pub observers: Vec<ObsBase>,
+    pub plugins: Vec<PluginBase>,
     pub logging_file_names: Vec<String>,
 }
 
@@ -30,11 +30,11 @@ impl Ctx {
         }
     }
 
-    pub fn observers(&mut self) -> Vec<Box<dyn Observer>>{
+    pub fn observers(&mut self) -> Vec<ObsBase>{
         std::mem::take(&mut self.observers)
     }
 
-    pub fn plugins(&mut self) -> Vec<Box<dyn Plugin>>{
+    pub fn plugins(&mut self) -> Vec<PluginBase>{
         std::mem::take(&mut self.plugins)
     }
 

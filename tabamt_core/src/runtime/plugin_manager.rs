@@ -1,9 +1,10 @@
 use crossbeam::channel::Sender;
 
+use tabamt_utils::bases::plugin_base::PluginBase;
 use tabamt_utils::extras::named_input::NamedInput;
 use tabamt_utils::cfg::ctx::Ctx;
 use tabamt_utils::packets::{notif_log::NotifLog , packet_handle::PacketHandle , task::Task};
-use tabamt_utils::traits::plugin::Plugin;
+use tabamt_utils::traits::plugin::PluginB;
 use tabamt_utils::res;
 use tabamt_utils::queues::priority_queue::PQChild;
 use tabamt_utils::threadpool::ThreadPool;
@@ -16,7 +17,7 @@ use std::{collections::HashMap, sync::Arc};
 // It stores Plugins in a HashMap for efficient access.
 // This makes the engine modular, but still capable of directly accessing public facing functions of the Plugins if needed.
 pub struct PluginManager {
-    plugins: HashMap<NamedInput , Box<dyn Plugin>>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
+    plugins: HashMap<NamedInput , PluginBase>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
     pub threadpool: ThreadPool<PQChild<Task> , Task>,                     // Manages a pool of threads for executing tasks.           | Read Only.
     packet_handle: PacketHandle,                            // Used to send notifications to the ObserverManager            | read only
 }
@@ -60,10 +61,10 @@ impl PluginManager{
     // Loads a new plugin into the manager.
     // This allows the system to dynamically add plugins at runtime.
     // @param plugin: The plugin to be loaded.
-    pub fn load_plugin(&mut self , plugin: Box<dyn Plugin>){
+    pub fn load_plugin(&mut self , mut plugin: PluginBase){
         let task_init = Task::new("Init", 0, plugin.initial_fn_to_run());
         self.packet_handle.send_task(task_init);
-        self.plugins.insert(plugin.plugin_type().clone() , plugin);
+        self.plugins.insert(NamedInput::new(plugin.plg_type()) , plugin);
     }
 
     // Finalizes the plugin manager by clearing all plugins and sending a final notification.
