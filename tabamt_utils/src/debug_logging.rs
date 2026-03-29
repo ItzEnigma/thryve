@@ -13,7 +13,7 @@ pub fn log(message: String){
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)   // create if doesn’t exist
-        .open("E:\\My Projects\\Rust\\TaBaMT TestLib\\log\\output.log")
+        .open("E:/Projects/MTC/TaBaMT TestLib/log/output.log")
         .expect("Failed To Open File");
 
     // Write the message to the file.

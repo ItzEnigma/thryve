@@ -5,7 +5,7 @@ use crate::packets::packet_handle::PacketHandle;
 
 pub struct QueueBase <Q , P> {
     // ---- CONFIG START
-    pub task_config: Arc<TaskConfig>,
+    pub task_config: Option<Arc<TaskConfig>>,
     // ---- CONFIG END
 
     pub main_queue: Q,         // The queue that will hold the objects.                                     | no permissions.

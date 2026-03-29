@@ -8,6 +8,8 @@ pub trait PluginB {
     fn clean_up(&self);
 }
 
-pub trait Plugin: Send + Sync {
+pub trait PlgLogic: Send + Sync {
     fn clean_up(&self);
+
+    fn as_any(&self) -> &dyn std::any::Any;
 }

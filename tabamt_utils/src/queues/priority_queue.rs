@@ -7,9 +7,10 @@ use std::time::{Instant , Duration};
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
 
+use crate::bases::observer::Observer;
 use crate::cfg::config::{Config, TaskConfig};
-use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle , task::Task};
-use crate::queues::queue_base::QueueBase;
+use crate::packets::{notif_log::Log , packet_handle::PacketHandle , task::Task};
+use crate::bases::queue::QueueBase;
 use crate::traits::queue::Queue;
 use crate::res::Result;
 
@@ -33,9 +34,9 @@ impl Queue<Task> for PQChild<Task> {
     // @param task: The task to push to the priority queue.
     fn push(&self , task: Task) {
         let mut enq_task = EnqueuedTask{task, enq_at: Instant::now() };
-        enq_task.task.check_task_priority(self.task_config.max_priority);
+        enq_task.task.check_task_priority(self.task_config.clone().unwrap().max_priority);
 
-        let priority = Priority{task_config: self.task_config.clone() , base_priority: enq_task.task.base_priority , enq_at: enq_task.enq_at , task_id: enq_task.task.id};
+        let priority = Priority{task_config: self.task_config.clone().unwrap() , base_priority: enq_task.task.base_priority , enq_at: enq_task.enq_at , task_id: enq_task.task.id};
 
         self.main_queue.insert(priority, AtomicCell::new(Some(enq_task)));
 
@@ -85,7 +86,7 @@ impl Queue<Task> for PQChild<Task> {
 
     // Finalize the task queue.
     // This will clear the priority queue, set the exit flag to true and notify all threads waiting on the condition variable.
-    fn finalize(&self) {
+    fn finalize(&self , _: Option<Arc<Observer>>) {
         {
             self.main_queue.clear();
             self.exit_flag.store(true, Ordering::SeqCst);
@@ -93,7 +94,7 @@ impl Queue<Task> for PQChild<Task> {
             self.condition_var.notify_all();
 
             // Send a notification to the engine that the queue is finalized.
-            let notif = NotifLog::log("Task Queue Finalized".to_string() , "Main");
+            let notif = Log::log("Task Queue Finalized".to_string() , "Main");
             self.packet_handle.send_notification(notif);
         }
     }
@@ -105,7 +106,7 @@ impl Queue<Task> for PQChild<Task> {
         self.pause_flag.store(true, Ordering::SeqCst);
 
         // Send a notification to the engine that the queue is paused.
-        let notif = NotifLog::log("Task Queue Paused".to_string() , "Main");
+        let notif = Log::log("Task Queue Paused".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 
@@ -116,7 +117,7 @@ impl Queue<Task> for PQChild<Task> {
         self.pause_flag.store(false, Ordering::SeqCst);
         
         // Send a notification to the engine that the queue is continuing.
-        let notif = NotifLog::log("Task Queue continuing".to_string() , "Main");
+        let notif = Log::log("Task Queue continuing".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 }
@@ -128,7 +129,7 @@ impl PQChild<Task> {
     // @return A new TaskQueue with the given PacketHandle.
     pub fn new(config: &Config, packet_handle: PacketHandle) -> Self{
         Self {
-            task_config: Arc::new(config.tasks),
+            task_config: Some(Arc::new(config.tasks)),
             main_queue: SkipMap::new(),
             gate: Mutex::new(()),
             condition_var: Condvar::new(),

@@ -1,6 +1,5 @@
-pub mod notif;
+pub mod notif_logic;
 pub mod packets;
-pub mod notif_ex;
-pub mod observer;
-pub mod plugin;
+pub mod observer_logic;
+pub mod plugin_logic;
 pub mod queue;

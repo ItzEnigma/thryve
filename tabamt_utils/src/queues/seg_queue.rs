@@ -2,16 +2,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{ Arc, Condvar, Mutex };
 use crossbeam::queue::SegQueue;
 
-use crate::cfg::config::Config;
-use crate::packets::{notif_log::NotifLog , packet_handle::PacketHandle};
-use crate::queues::queue_base::QueueBase;
-use crate::traits::notif_ex::NotifEX;
+use crate::bases::observer::Observer;
+use crate::bases::{notif::Notif , queue::QueueBase};
+use crate::packets::{notif_log::Log , packet_handle::PacketHandle};
 use crate::traits::queue::Queue;
 
-pub type QChild = QueueBase<SegQueue<Box<dyn NotifEX>> , Box<dyn NotifEX>>;
+pub type QChild = QueueBase<SegQueue<Notif> , Notif>;
 
-impl Queue<Box<dyn NotifEX>> for QChild{
-    fn push(&self, value: Box<dyn NotifEX>) {
+impl Queue<Notif> for QChild{
+    fn push(&self, value: Notif) {
         self.main_queue.push(value);
 
         if self.pause_flag.load(Ordering::SeqCst) == false{
@@ -19,7 +18,7 @@ impl Queue<Box<dyn NotifEX>> for QChild{
         }
     }
 
-    fn pop(&self) -> Box<dyn NotifEX> {
+    fn pop(&self) -> Notif {
         loop {
             // Check if the queue is being finalized.
             if self.exit_flag.load(Ordering::SeqCst) == true {
@@ -42,23 +41,24 @@ impl Queue<Box<dyn NotifEX>> for QChild{
 
         // If the queue is being finalized, return a special task that will indicate to the thread that it should exit.
         // The task will have the name "Fin" and a priority of 0.
-        NotifLog::log(format!("Exit Flag Detected! Thread Exiting..."), "Main")
+        Log::log(format!("Exit Flag Detected! Obs Thread Exiting..."), "Main")
     }
     
     // Finalize the task queue.
     // This will clear the priority queue, set the exit flag to true and notify all threads waiting on the condition variable.
-    fn finalize(&self) {
+    fn finalize(&self , logger: Option<Arc<Observer>>) {
         {
             while self.main_queue.len() != 0 {
-                self.main_queue.pop();
+                let notif = self.main_queue.pop().unwrap();
+                logger.as_ref().unwrap().obs_queue.push(notif);
             };
             self.exit_flag.store(true, Ordering::SeqCst);
 
             self.condition_var.notify_all();
 
             // Send a notification to the engine that the queue is finalized.
-            let notif = NotifLog::log("Task Queue Finalized".to_string() , "Main");
-            self.packet_handle.send_notification(notif);
+            let notif = Log::log("Obs Queue Finalized".to_string() , "Main");
+            logger.unwrap().obs_queue.push(notif);
         }
     }
 
@@ -69,7 +69,7 @@ impl Queue<Box<dyn NotifEX>> for QChild{
         self.pause_flag.store(true, Ordering::SeqCst);
 
         // Send a notification to the engine that the queue is paused.
-        let notif = NotifLog::log("Task Queue Paused".to_string() , "Main");
+        let notif = Log::log("Obs Queue Paused".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 
@@ -80,7 +80,7 @@ impl Queue<Box<dyn NotifEX>> for QChild{
         self.pause_flag.store(false, Ordering::SeqCst);
         
         // Send a notification to the engine that the queue is continuing.
-        let notif = NotifLog::log("Task Queue continuing".to_string() , "Main");
+        let notif = Log::log("Obs Queue continuing".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 }
@@ -90,9 +90,9 @@ impl QChild {
     // In this struct, for now, the PacketHandle is only used to send a notification when the queue is finalized.
     // @param packet_handle: The PacketHandle that will be used to send notifications to the engine.
     // @return A new TaskQueue with the given PacketHandle.
-    pub fn new(config: &Config, packet_handle: PacketHandle) -> Self{
+    pub fn new(packet_handle: PacketHandle) -> Self{
         Self {
-            task_config: Arc::new(config.tasks),
+            task_config: None,
             main_queue: SegQueue::new(),
             gate: Mutex::new(()),
             condition_var: Condvar::new(),

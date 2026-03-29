@@ -3,10 +3,10 @@
 
 use std::fmt::Display;
 
-use crate::bases::plugin_base::PluginBase;
+use crate::bases::plugin::Plugin;
 // This is just a struct that has results returned by executed tasks.
 use crate::extras::named_input::NamedInput;
-use crate::bases::observer_base::ObsBase;
+use crate::bases::observer::Observer;
 use crate::packets::task::Task;
 
 // The struct that will hold the results returned by tasks.
@@ -16,8 +16,8 @@ pub struct Result {
     pub message: String,                        // A message associated with the result.                                        | Take Ownership.
     pub log_msg_to_file: NamedInput,         // The module type that will be used to name the log file.                      | Take Ownership.
     pub next_task: Option<Task>,                // An optional task that can be executed after the result is handled.           | Take Ownership.
-    pub observer: Option<ObsBase>,    // An optional observer that can be registered after the result is handled.     | Take Ownership.
-    pub plugin: Option<PluginBase>,        // An optional plugin that can be registered after the result is handled.       | Take Ownership.
+    pub observer: Option<Observer>,    // An optional observer that can be registered after the result is handled.     | Take Ownership.
+    pub plugin: Option<Plugin>,        // An optional plugin that can be registered after the result is handled.       | Take Ownership.
 }
 
 // Implement Display for Result so that it can be printed easily.

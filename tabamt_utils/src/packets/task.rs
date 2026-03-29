@@ -1,17 +1,13 @@
 use std::sync::atomic::{AtomicU64 , Ordering};
 
-use crate::extras::named_input::NamedInput;
+use crate::extras::{named_input::NamedInput , jobs::TaskJob};
 use crate::traits::packets::Packet;
-use crate::res::{self, Result};
+use crate::res;
 
 // Atomic counter to generate unique ids for tasks.
 // This is a global static variable that is safe to use across threads.
 // It starts at 1 and increments by 1 for each new task.
 static COUNTER: AtomicU64 = AtomicU64::new(1);
-
-// A Job is a function that takes no parameters and returns a Result.
-// Instead of having to type the entire type every time, a type alias is defined.
-pub type Job = Box<dyn FnOnce() -> Result + Send + Sync>;
 
 // A Task is a unit of work that can be executed by the thread pool.
 // This will be the object that will be sent to the thread pool.
@@ -20,7 +16,7 @@ pub struct Task{
     pub id: u64,                    // Unique identifier for the task.                                          | read only.
     pub task_name: NamedInput,   // The name of the task.                                                    | read only.
     pub base_priority: u8,          // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | read write.
-    job: Job                        // The function that will be executed by the thread pool.                   | no permissions.
+    job: TaskJob                        // The function that will be executed by the thread pool.                   | no permissions.
 }
 
 impl Packet for Task {
@@ -41,7 +37,7 @@ impl Task {
     // @param task_priority: The priority of the task.
     // @param function_to_exec: The function that will be executed by the thread pool.
     // @return A new Task with the given parameters.
-    pub fn new(task_name: &str , task_priority: u8 , function_to_exec: Job) -> Self {
+    pub fn new(task_name: &str , task_priority: u8 , function_to_exec: TaskJob) -> Self {
         Task{ 
             id: next_id(),
             task_name: NamedInput::new(task_name),

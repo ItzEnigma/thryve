@@ -13,7 +13,7 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 
     // Initializing the logger first.
     // The initialization function takes ownership of the vector.
-    init_logger(&mut eng , ctx.logging_file_names.clone());
+    init_logger(ctx , &mut eng , ctx.logging_file_names.clone());
 
     eng
 }
@@ -21,14 +21,14 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 // This function initializes the logger observer.
 // @param packet_handle: the PacketHandle to send the initialization task to the engine.
 // @param file_names: a vector of NamedInput representing the names of the log files to be created.
-pub fn init_logger(eng: & mut Engine , mut file_names: Vec<String>){
+pub fn init_logger(ctx: &Ctx , eng: & mut Engine , mut file_names: Vec<String>){
     let mut file_names_checked = vec![];
 
     while !file_names.is_empty(){
-        file_names_checked.push(NamedInput::new(file_names[0].as_str()));
+        file_names_checked.push(NamedInput::new(file_names[file_names.len() - 1].as_str()));
         file_names.pop();
     }
 
-    let logger = LoggerObserver::new(file_names_checked);
+    let logger = LoggerObserver::new(file_names_checked , ctx.packet_handle());
     eng.obs_manager.load_observer(logger);
 }

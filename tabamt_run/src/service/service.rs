@@ -60,12 +60,6 @@ impl <'a> TaBaMT <'a> {
     // This function will take ownership of the receiver part of the channel, the observers vector, and the plugins vector.
     // It checks for the start command and runs the engine in a separate thread.
     // It also checks for the stop command and stops the engine.
-    // @param task_rx: Receiver<Task> The receiver part of the channel to be handed to the engine.
-    // @param notif_rx: Receiver<Box<dyn NotifEX>> The receiver part of the notification channel to be handed to the engine.
-    // @param obs_init_tasks: Vec<Task> A vector of tasks to initialize observers
-    // @param plugin_init_tasks: Vec<Task> A vector of tasks to initialize
-    // @param logging_file_names: Vec<NamedInput> A vector of log file names to initialize the logger with.
-    // return: -
     pub fn run_service(&mut self , ctx: Ctx){
         // Cloning the is_running flag and the receiver to be used in the thread.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
@@ -149,6 +143,8 @@ impl <'a> TaBaMT <'a> {
                                 }
                             }
                             
+                            eng.obs_manager.init_obs_sorter_thread();
+
                             // The engine is now fully initialized.
                             // This thread sleep is only here to allow in debugging to open the log file and see the initialization messages.
                             if ctx.config.debugging.is_debugging{

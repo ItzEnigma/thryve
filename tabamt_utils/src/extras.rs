@@ -3,6 +3,7 @@ pub mod named_input{
     // This is important for security reasons, as namings from developer inputs are used in various places where special characters could cause issues.
     // This ensures developer freedom in naming, while maintaining a secure environment
     use std::fmt::Display;
+
     
     // The struct that wraps a String and ensures it is alphanumeric.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -33,4 +34,17 @@ pub mod named_input{
             write!(f, "{}", self.0)
         }
     }
+}
+
+pub mod jobs {
+    use std::sync::Arc;
+
+    use crate::bases::observer::Observer;
+    use crate::res::Result;
+
+    // A TaskJob is a function that takes no parameters and returns a Result.
+    // Instead of having to type the entire type every time, a type alias is defined.
+    pub type TaskJob = Box<dyn FnOnce() -> Result + Send + Sync>;
+
+    pub type ObsJob = Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>;
 }
