@@ -6,11 +6,11 @@ use std::{collections::HashMap, env::current_exe, fs::{File, OpenOptions, create
 
 use chrono::{ DateTime , Local };
 
-use tabamt_utils::{bases::notif::Notif, impl_as_any};
-use tabamt_utils::bases::observer::Observer;
-use tabamt_utils::packets::{notif_log::Log , packet_handle::PacketHandle};
-use tabamt_utils::extras::{jobs::ObsJob, named_input::NamedInput};
-use tabamt_utils::traits::{observer_logic::ObsLogic , queue::Queue};
+use thryve_utils::{bases::notif::Notif, impl_as_any};
+use thryve_utils::bases::observer::Observer;
+use thryve_utils::packets::{notif_log::Log , packet_handle::PacketHandle};
+use thryve_utils::extras::{jobs::ObsJob, named_input::NamedInput};
+use thryve_utils::traits::{observer_logic::ObsLogic , queue::Queue};
 
 /// The `LoggerObserver` struct is the core logic for the logger observer.
 /// It implements the `ObsLogic` trait, which defines the behavior of the observer.

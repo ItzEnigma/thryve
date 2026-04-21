@@ -1,4 +1,4 @@
-//! This module contains the `Observer` struct, which is the core of the observer system in TabAMT.
+//! This module contains the `Observer` struct, which is the core of the observer system in Thryve.
 //! The `Observer` struct holds information about an observer,
 //! including its name, type, queue, core logic, exit flag, and the function to run.
 //! 

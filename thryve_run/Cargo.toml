@@ -1,12 +1,12 @@
 [package]
-    name = "tabamt_run"
+    name = "thryve_run"
     version = "0.1.0"
     edition = "2024"
 
 [dependencies]
-    tabamt_core = { path = "../tabamt_core" , version = "0.1.0" , features = ["bin-only"]}
-    tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
-    tabamt_observers = { path = "../tabamt_observers" , version = "0.1.0"}
+    thryve_core = { path = "../thryve_core" , version = "0.1.0" , features = ["bin-only"]}
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
+    thryve_observers = { path = "../thryve_observers" , version = "0.1.0"}
 
     # External Dependencies.
     windows = { version = "0.62.2", features = ["Win32_System_Services", "Win32_Foundation"] }

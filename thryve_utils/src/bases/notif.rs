@@ -1,4 +1,4 @@
-//! This module contains the `Notif` struct, which is the core of the notification system in TabAMT.
+//! This module contains the `Notif` struct, which is the core of the notification system in Thryve.
 //! 
 //! The `Notif` struct holds information about a notification,
 //! including its type, receiver, core logic, and timestamp.

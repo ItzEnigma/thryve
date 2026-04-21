@@ -1,9 +1,9 @@
 [package]
-    name = "tabamt_observers"
+    name = "thryve_observers"
     version = "0.1.0"
     edition = "2024"
 
 [dependencies]
     # Internal Dependencies
     chrono = { workspace = true }
-    tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}

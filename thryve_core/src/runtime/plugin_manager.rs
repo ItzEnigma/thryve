@@ -3,21 +3,21 @@
 
 use crossbeam::channel::Sender;
 
-use tabamt_utils::bases::plugin::Plugin;
-use tabamt_utils::extras::named_input::NamedInput;
-use tabamt_utils::cfg::ctx::Ctx;
-use tabamt_utils::packets::{notif_log::Log , packet_handle::PacketHandle , task::Task};
-use tabamt_utils::traits::plugin_logic::PluginB;
-use tabamt_utils::res;
-use tabamt_utils::queues::priority_queue::PQChild;
-use tabamt_utils::threadpool::ThreadPool;
+use thryve_utils::bases::plugin::Plugin;
+use thryve_utils::extras::named_input::NamedInput;
+use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::packets::{notif_log::Log , packet_handle::PacketHandle , task::Task};
+use thryve_utils::traits::plugin_logic::PluginB;
+use thryve_utils::res;
+use thryve_utils::queues::priority_queue::PQChild;
+use thryve_utils::threadpool::ThreadPool;
 
 use std::{collections::HashMap, sync::Arc};
 
 /// Takes a hashmap of plugin types to their corresponding `Plugin` instances and manages a thread pool for processing tasks.
 /// It provides methods to load plugins, retrieve plugin names, and finalize the plugin manager by cleaning up resources and finalizing the thread pool.
 /// The thread pool is created with a number of workers specified in the configuration.
-/// It uses a [tabamt_utils::queues::priority_queue::PQChild] queue for managing tasks.
+/// It uses a `PQChild` queue for managing tasks.
 pub struct PluginManager {
     plugins: HashMap<NamedInput , Plugin>,      
     pub threadpool: ThreadPool<PQChild<Task> , Task>,                     

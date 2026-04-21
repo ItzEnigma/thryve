@@ -1,10 +1,10 @@
 [package]
-    name = "tabamt_core"
+    name = "thryve_core"
     version = "0.1.0"
     edition = "2024"
 
 [dependencies]
-    tabamt_utils = { path = "../tabamt_utils" , version = "0.1.0"}
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
 
     # External Dependencies.
     tokio = {version = "1.47.1" , features = ["full"]}

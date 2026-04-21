@@ -1,10 +1,10 @@
 [workspace]
     members = [
-        "tabamt_run",
-        "tabamt_core",
-        "tabamt_utils",
-        "tabamt_observers",
-        "tabamt",
+        "thryve_run",
+        "thryve_core",
+        "thryve_utils",
+        "thryve_observers",
+        "thryve",
         ]
 
     resolver = "3"

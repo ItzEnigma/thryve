@@ -1,12 +1,12 @@
 # workspace_A/my_project/Cargo.toml
 [package]
-name = "tabamt"
+name = "thryve"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tabamt_utils = { path = "../tabamt_utils" }
-tabamt_run = { path = "../tabamt_run" }
+thryve_utils = { path = "../thryve_utils" }
+thryve_run = { path = "../thryve_run" }
 
 [lib]
     crate-type = ["rlib" , "staticlib"]

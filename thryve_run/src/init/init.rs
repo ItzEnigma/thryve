@@ -1,8 +1,8 @@
-use tabamt_core::runtime::engine::Engine;
+use thryve_core::runtime::engine::Engine;
 
-use tabamt_utils::extras::named_input::NamedInput;
-use tabamt_utils::cfg::ctx::Ctx;
-use tabamt_observers::logger::LoggerObserver;
+use thryve_utils::extras::named_input::NamedInput;
+use thryve_utils::cfg::ctx::Ctx;
+use thryve_observers::logger::LoggerObserver;
 
 /// Initializes the engine by creating a new instance of the `Engine` struct with the given `Ctx` and setting up the logger observer.
 /// The `Engine` is then returned.

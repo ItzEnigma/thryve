@@ -3,14 +3,14 @@
 //! The `ObserverManager` maintains a mapping of observer types to their corresponding `Observer` instances and manages a thread pool for processing notifications.
 
 
-use tabamt_utils::bases::notif::Notif;
-use tabamt_utils::cfg::ctx::Ctx;
-use tabamt_utils::extras::named_input::NamedInput;
-use tabamt_utils::bases::observer::Observer;
-use tabamt_utils::packets::notif_log::Log;
-use tabamt_utils::queues::seg_queue::QChild;
-use tabamt_utils::threadpool::ThreadPool;
-use tabamt_utils::traits::queue::Queue;
+use thryve_utils::bases::notif::Notif;
+use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::extras::named_input::NamedInput;
+use thryve_utils::bases::observer::Observer;
+use thryve_utils::packets::notif_log::Log;
+use thryve_utils::queues::seg_queue::QChild;
+use thryve_utils::threadpool::ThreadPool;
+use thryve_utils::traits::queue::Queue;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -32,7 +32,7 @@ impl ObserverManager {
     /// Creates the manager of observers with the provided `Ctx`, initializing its components.
     /// The `ObserverManager` is initialized with the provided context, which contains configuration and communication channels.
     /// The thread pool is created with a number of workers equal to the number of observers plus 2.
-    /// It uses a [tabamt_utils::queues::seg_queue::QChild] queue for managing notifications.
+    /// It uses a `QChild` queue for managing notifications.
     pub fn new(ctx: &Ctx) -> Self{
         let queue = QChild::new(ctx.packet_handle());
         let num_workers = ctx.observers.len() + 2;

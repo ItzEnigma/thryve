@@ -1,8 +1,8 @@
 use crossbeam::channel::bounded;
 
 use std::{thread, time::Duration};
-use tabamt_utils::cfg::{config::Config, ctx::Ctx};
-use tabamt_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::cfg::{config::Config, ctx::Ctx};
+use thryve_utils::packets::packet_handle::PacketHandle;
 use crate::init::init::init_engine;
 
 /// Is the entry point for running the Engine in interactive mode.

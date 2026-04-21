@@ -5,14 +5,14 @@ use windows_services::{ Command, Service};
 use crossbeam::channel::bounded;
 use std::{sync::{atomic::{AtomicBool, Ordering} , Arc, Mutex}, thread, time::Duration};
 
-use tabamt_utils::cfg::{config::Config, ctx::Ctx};
-use tabamt_utils::debug_logging::log;
-use tabamt_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::cfg::{config::Config, ctx::Ctx};
+use thryve_utils::debug_logging::log;
+use thryve_utils::packets::packet_handle::PacketHandle;
 
 use crate::init::init::init_engine;
 
 /// Holds the service instance and service information.
-pub struct TaBaMT <'a>{
+pub struct Thryve <'a>{
     is_running: Arc<AtomicBool>,        
     is_paused: Arc<AtomicBool>,         
     service_instance: Service<'a>,      
@@ -20,7 +20,7 @@ pub struct TaBaMT <'a>{
 
 
 
-impl <'a> TaBaMT <'a> {
+impl <'a> Thryve <'a> {
 
     /// Creates a new service instance with the given Config.
     /// It initializes the necessary channels for communication between the service and the engine.
@@ -33,7 +33,7 @@ impl <'a> TaBaMT <'a> {
         let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
         
         // Initialize the service struct with the created channels and the service instance.
-        let mut svc: TaBaMT<'a> = TaBaMT{
+        let mut svc: Thryve<'a> = Thryve{
             is_running: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
             service_instance: Service::new(),

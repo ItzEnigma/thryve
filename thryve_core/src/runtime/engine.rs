@@ -4,11 +4,11 @@
 
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
 
-use tabamt_utils::bases::notif::Notif;
-use tabamt_utils::cfg::ctx::Ctx;
-use tabamt_utils::packets::{notif_log::Log , task::Task};
-use tabamt_utils::res;
-use tabamt_utils::traits::queue::Queue;
+use thryve_utils::bases::notif::Notif;
+use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::packets::{notif_log::Log , task::Task};
+use thryve_utils::res;
+use thryve_utils::traits::queue::Queue;
 
 use std::{sync::Arc, thread, time::Duration};
 use crossbeam::channel::{Receiver , bounded };

@@ -6,4 +6,4 @@ plugins
 target
 Cargo.lock
 
-tabamt_utils/src/debug_logging.rs
+thryve_utils/src/debug_logging.rs
