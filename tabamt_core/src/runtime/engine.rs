@@ -1,3 +1,7 @@
+//! The Engine is the core component of the runtime, responsible for managing the execution flow of tasks and notifications.
+//! It maintains the main loop that checks for new tasks, processes notifications, and handles results from task executions.
+//! The Engine also manages the lifecycle of the application, allowing for graceful shutdowns and pauses.
+
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
 
 use tabamt_utils::bases::notif::Notif;
@@ -8,33 +12,38 @@ use tabamt_utils::traits::queue::Queue;
 
 use std::{sync::Arc, thread, time::Duration};
 use crossbeam::channel::{Receiver , bounded };
-// The Engine struct is responsible for managing the overall runtime of the application.
-// It holds the ObserverManager, PluginManager, and ThreadPool, and coordinates their interactions.
+
+/// Encapsulates the core functionality of the runtime, managing the execution flow of tasks and notifications.
 pub struct Engine {
-    // ----CONFIG START
+    /// Defines how many milliseconds the engine should sleep when idle before the next iteration.
     sleep_tick_rate: u64,
-    // ----CONFIG END
 
-    pub obs_manager: ObserverManager,               // Manages observers and forwards notifications to them.    | Read Only.
-    pub plugin_manager: PluginManager,              // Manages plugins and their tasks.                         | Read Only.
+    /// Manages observers and their notifications.
+    pub obs_manager: ObserverManager,
+
+    /// Manages plugins and the lifecycle of their tasks.
+    pub plugin_manager: PluginManager,
     
+    /// Receives tasks from the service to be executed by plugins.
+    task_rx: Arc<Receiver<Task>>,
 
-    task_rx: Arc<Receiver<Task>>,              // Receives tasks to be executed.                           | No Permissions.
-    notif_rx: Arc<Receiver<Notif>>,   // Receives notifications to be processed.                  | No Permissions.
+    /// Receives notifications from observers to be processed by the engine.
+    notif_rx: Arc<Receiver<Notif>>,
+
+    /// Receives results from plugin executions to be handled by the engine.
     res_rx: Receiver<(u64 , res::Result)>,
 
-    pub exit_flag: bool,                            // Flag to indicate if the engine should exit.              | Read Only.
-    pause_flag: bool,                           // Flag to indicate if the engine should pause.             | No Permissions.
+    /// Indicates whether the engine should exit, allowing for graceful shutdowns.
+    pub exit_flag: bool,
+
+    /// Indicates whether the engine is paused, allowing for temporary halts in execution.
+    pause_flag: bool,
 
 }
 
 impl Engine {
-    // Creates a new Engine instance with the provided task and notification receivers, and packet handle.
-    // @param max_threads: The maximum number of threads in the thread pool.
-    // @param task_rx: Receiver for incoming tasks.
-    // @param notif_rx: Receiver for incoming notifications.
-    // @param packet_handle: Packet handle for sending tasks and notifications.
-    // @return: A new Engine instance.
+    /// Creates a new instance of the Engine, initializing its components and setting up communication channels.
+    /// The Engine is initialized with a `Ctx`, which contains configuration and communication channels.
     pub fn new(ctx: &Ctx) -> Self {
         let (res_tx , res_rx) = bounded(ctx.config.pipes.res_pipe_capacity);
 
@@ -52,40 +61,33 @@ impl Engine {
 }
 
 impl Engine {
-    // Runs the engine, sending tasks and processing notifications until the exit flag is set.
-    // This function will not block even when continuously check for new tasks and notifications,
-    // It will only run once and return an Option<bool>.
-    // the return value is Some(true) only when the logger is loaded, None otherwise.
-    // The main loop in the run_service should call this function repeatedly until the application exits.
+    /// Runs a single iteration of the engine's main loop, checking for new tasks, processing notifications, and handling results.
+    /// If the engine is paused or marked for exit, it will only process notifications and skip task execution.
+    /// This method is called repeatedly in the main loop of the service to keep the engine responsive to incoming tasks and notifications.
+    /// The engine will sleep for a configured duration when idle to prevent excessive CPU usage while waiting for new tasks or notifications.
     pub fn run_once(&mut self){
-
-        // If the exit flag is set, check for any remaining notifications before final shutdown and return None.
+        // If the engine is marked for exit or is currently paused, it will only check for notifications and skip task execution.
         if self.exit_flag || self.pause_flag{
             self.check_notifs();
             return
         }
-
-        // Continuously check for new tasks, notifications, and results.
-        // If none are received, sleep for a short duration to avoid busy-waiting.
-        // Return Some(true) if the logger is loaded, None otherwise.
-        // This ensures that the engine remains responsive without consuming excessive CPU resources.
+        
+        // Check for new tasks, notifications, and results.
+        // If none are received, the engine will sleep for a configured duration before the next iteration.
         let received_tasks = self.check_tasks();
         let received_notifs = self.check_notifs();
         let received_results = self.check_results();
         
-        // If no tasks, notifications, or results were received, sleep for a short duration to avoid busy-waiting.
-        //// duration to be implemented as a config later.
         if !received_tasks && !received_notifs && !received_results {
             thread::sleep(Duration::from_millis(self.sleep_tick_rate));
         }
     }
 
-    // Checks for new tasks from the task receiver and submits them to the thread pool.
-    // @return: true if any tasks were received and submitted, false otherwise.
+    /// Checks for new tasks from the service and submits them to the plugin manager for execution.
     fn check_tasks(&self) -> bool {
         let mut received_tasks = false;
 
-        // Try to receive tasks without blocking. If tasks are available, submit them to the thread pool.
+        // While there are tasks available in the task receiver, pop them and submit them to the plugin manager's thread pool for execution.
         while let Ok(task) = self.task_rx.try_recv() {
             received_tasks = true;
             self.plugin_manager.threadpool.submit_task(task);
@@ -93,12 +95,11 @@ impl Engine {
         received_tasks
     }
 
-    // Checks for new notifications from the notification receiver and forwards them to the observer manager.
-    // @return: true if any notifications were received and forwarded, false otherwise.
+    /// Checks for new notifications from observers and forwards them to the observer manager.
     fn check_notifs(&mut self) -> bool {
         let mut received_notifs = false;
 
-        // Try to receive notifications without blocking. If notifications are available, forward them to the observer manager.
+        // While there are notifications available in the notification receiver, pop them and forward them to the observer manager for processing.
         while let Ok(notif) = self.notif_rx.try_recv() {
             received_notifs = true;
             self.obs_manager.forward_notif(notif);
@@ -106,36 +107,32 @@ impl Engine {
         received_notifs
     }
     
+    /// Checks for new results from plugin executions and handles them accordingly, including submitting any next tasks and logging messages.
     pub fn check_results(&mut self) -> bool {
         let mut received_results = false;
 
-        // Try to get results without blocking. If results are available, process them.
+        // While there are results available in the result receiver, pop them and handle them using the `handle_result` method, which processes the result and submits any next tasks if necessary.
         while let Ok(task_result) = self.res_rx.try_recv(){
             received_results = true;
-
-            // Handle the results and check if the logger is loaded.
-            // The firt time this function runs, it will return Some(true) if the logger is loaded.
-            // The next time it runs, ret should be none None.
             self.handle_result(task_result);
         };
 
         received_results
     }
 
-    // Finalizes the engine, ensuring all components are properly shut down.
-    // This includes finalizing the plugin manager, thread pool, the pool's queue, and observer manager.
+    /// Finalizes the engine by setting the exit flag, finalizing the plugin manager, processing any remaining notifications, and cleaning up resources.
     pub fn finalize(&mut self) {
-        // Set the exit flag to true to indicate that the engine should stop running.
-
+        // Set the exit flag to true to signal all components to begin shutdown procedures.
         self.exit_flag = true.into();
+
+        // Finalize the plugin manager, which will stop all plugin threads and clean up resources related to plugin execution.
         self.plugin_manager.finalize();
-        // Run the engine once more to process any remaining notifications before shutdown.
-        // This ensures that all the finalization messages are logged.
-        // Tasks will not be processed as the exit flag is set.
         
+        // Process any remaining notifications to ensure all observers have a chance to clean up and log final messages before the engine fully shuts down.
         self.run_once();
 
-        // The observer manager is finalized last to ensure all notifications are logged before shutdown.
+        // Finalize the observer manager and clean up resources, ensuring that all logs are flushed and any necessary cleanup is performed before the engine exits.
+        // Takes Ownership of the logger to ensure it is properly cleaned up after finalization.
         let logger = self.obs_manager.finalize();
         
         let notif = Log::log("Engine Finalized".to_string() , "Main");
@@ -148,65 +145,61 @@ impl Engine {
 
     }
 
-
-    // Pauses the engine, stopping task processing and notifying observers.
+    /// to be documented when properly implemented.
     pub fn pause(&mut self) {
-        // Pause the thread pool to stop processing tasks.
+        
         self.plugin_manager.threadpool.pause();
         
-        // Set the pause flag to true to indicate that the engine is paused.
+        
         self.pause_flag = true;
         
-        // Forward a notification to the observer_manager that the engine is paused.
+        
         let notif = Log::log("Engine Paused".to_string() , "Main");
         self.obs_manager.forward_notif(notif);
         
-        // Run the engine once more to process any remaining notifications before pausing.
+        
         self.run_once();
         
     }
 
-    // Continues the engine, resuming task processing and notifying observers.
+    /// to be documented when properly implemented.
     pub fn resume(&mut self) {
-        // Continue the thread pool to resume processing tasks.
+        
         self.plugin_manager.threadpool.resume();
         
-        // Set the pause flag to false to indicate that the engine is running.
+        
         self.pause_flag = false;
 
-        // Forward a notification to the observer_manager that the engine is continued.
+        
         let notif = Log::log("Engine continued".to_string() , "Main");
         self.obs_manager.forward_notif(notif);
     }
 }
 
 impl Engine {
-    // Handles the results of completed tasks, forwarding notifications and loading new observers or plugins as needed.
-    // @param task_results: A vector of tuples containing task IDs and their corresponding results.
-    // @return: An Option<bool> indicating if the logger is loaded (Some(true)) or not (None).
+    /// Handles the result of a task execution, including processing the result message, submitting any next tasks, and logging relevant information.
     fn handle_result(&mut self , task_result: (u64 , res::Result)) {
-        // Iterate over each task result and process it.
+        
         let result = task_result.1;
 
-        // If the task result includes a next task to be executed, submit it to the thread pool.
+        // If the result contains a next task to be executed, submit it to the plugin manager's thread pool for execution.
         if let Some(next_task) = result.next_task{
             self.plugin_manager.threadpool.submit_task(next_task);
         }
 
-        // Forward a notification indicating that the task has finished.
         let finished_notif = Log::log(format!("Finished Task ID: {}." , task_result.0) , "Main");
         self.obs_manager.forward_notif(finished_notif);
 
-        // If the task result includes a message to be logged, forward it to the appropriate observer.
-        // The message will be logged to the file specified in the task result.
+        
+        // Process the result message and log it to the appropriate logfile, as specified in the result.
         let task_res_message = result.message;
         let log_file = result.log_msg_to_file.inner();
         if task_res_message != "".to_string(){
             let finished_notif = Log::log(task_res_message , log_file);
             self.obs_manager.forward_notif(finished_notif);
         }
-
-        // If the result type is "Fin", finalize the engine.
+        
+        // If the result indicates a call for shutdown (either successfully or with an error) and the engine is not already marked for exit, call the `finalize` method to begin shutdown procedures.
         let res_type = result.result_type.inner().to_lowercase();
         if (res_type == "fin" || res_type == "finerr") && !self.exit_flag {
             self.finalize();

@@ -1,3 +1,6 @@
+//! This module defines the `PluginManager` struct, which is responsible for managing plugins in the engine.
+//! It provides functionality to load plugins, retrieve plugin names, and finalize the plugin manager by cleaning up resources and finalizing the thread pool.
+
 use crossbeam::channel::Sender;
 
 use tabamt_utils::bases::plugin::Plugin;
@@ -11,21 +14,18 @@ use tabamt_utils::threadpool::ThreadPool;
 
 use std::{collections::HashMap, sync::Arc};
 
-// Manages plugins and their interactions with the system.
-// Handles loading and finalizing plugins.
-// Ensures that plugins can be accessed and managed based on their type.
-// It stores Plugins in a HashMap for efficient access.
-// This makes the engine modular, but still capable of directly accessing public facing functions of the Plugins if needed.
+/// Takes a hashmap of plugin types to their corresponding `Plugin` instances and manages a thread pool for processing tasks.
+/// It provides methods to load plugins, retrieve plugin names, and finalize the plugin manager by cleaning up resources and finalizing the thread pool.
+/// The thread pool is created with a number of workers specified in the configuration.
+/// It uses a [tabamt_utils::queues::priority_queue::PQChild] queue for managing tasks.
 pub struct PluginManager {
-    plugins: HashMap<NamedInput , Plugin>,      // Key: Plugin type specified by the developer, Value: Plugin   | read only
-    pub threadpool: ThreadPool<PQChild<Task> , Task>,                     // Manages a pool of threads for executing tasks.           | Read Only.
-    packet_handle: PacketHandle,                            // Used to send notifications to the ObserverManager            | read only
+    plugins: HashMap<NamedInput , Plugin>,      
+    pub threadpool: ThreadPool<PQChild<Task> , Task>,                     
+    packet_handle: PacketHandle,                            
 }
 
 impl PluginManager{
-    // Creates a new PluginManager with an empty plugin list and a packet handle for communication with the ObserverManager.
-    // @param tx: The PacketHandle used for sending notifications to the ObserverManager.
-    // @return: A new instance of PluginManager.
+    /// Creates the manager of plugins with the provided `ctx` and Crossbeam channel.
     pub fn new(ctx: &Ctx , res_tx: Sender<(u64 , res::Result)>) -> Self{
         let queue = PQChild::new(&ctx.config, ctx.packet_handle());
         let mut num_workers = 0;
@@ -36,14 +36,12 @@ impl PluginManager{
 
         PluginManager{
             plugins: HashMap::new(),
-            threadpool: ThreadPool::new(num_workers , queue , ctx.packet_handle() , Some(Arc::new(res_tx))),     // Default to 4 threads in the pool.
+            threadpool: ThreadPool::new(num_workers , queue , ctx.packet_handle() , Some(Arc::new(res_tx))),     
             packet_handle: ctx.packet_handle(),
         }
     }
 
-    // Retrieves a list of all plugin types currently loaded in the manager.
-    // This is useful for managing and interacting with the available plugins.
-    // @return: A vector containing references to the types of all loaded plugins.
+    /// Returns a vector of references to `NamedInput` representing the names of the loaded plugins (the keys of the hashmap).
     pub fn plugin_names(&self) -> Vec<&NamedInput>{
         let mut vector: Vec<&NamedInput> = Vec::new();
         for plugin in self.plugins.keys(){
@@ -52,31 +50,22 @@ impl PluginManager{
 
         vector
     }
-
-    // Checks if a plugin of the specified type exists in the manager.
-    // @param plugin_type: The type of the plugin to check for.
-    // @return: true if the plugin exists, false otherwise.
-    // fn check_plugin(&self , plugin_type: &NamedInput) -> bool{
-    //     if self.plugins.contains_key(plugin_type) {
-    //         return true;
-    //     }
-    //     return false;
-    // }
-
-    // Loads a new plugin into the manager.
-    // This allows the system to dynamically add plugins at runtime.
-    // @param plugin: The plugin to be loaded.
+    
+    /// Creates a task to initialize the given `plugin` and sends the task to the engine using the `packet_handle`.
+    /// It then inserts the `plugin` into the `plugins` hashmap with its type as the key.
     pub fn load_plugin(&mut self , mut plugin: Plugin){
         let task_init = Task::new("Init", 0, plugin.initial_fn_to_run());
         self.packet_handle.send_task(task_init);
         self.plugins.insert(NamedInput::new(plugin.plg_type.inner()) , plugin);
     }
 
-    // Finalizes the plugin manager by clearing all plugins and sending a final notification.
-    // This is typically called during system shutdown to ensure that resources are cleaned up properly.
+    /// Is responsible for cleaning up resources used by the `PluginManager` and finalizing the thread pool.
     pub fn finalize(&mut self) {
+        // Finalize the thread pool, which will clean up worker threads and any resources associated with it.
         self.threadpool.finalize_plg();
         
+        // Clean up each plugin by calling their `clean_up` method.
+        // It should handle any necessary resource deallocation or finalization logic specific to the plugin.
         for (_ , plugin) in self.plugins.drain(){
             plugin.clean_up();
         }

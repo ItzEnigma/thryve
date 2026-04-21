@@ -1,7 +1,6 @@
 // re-export all crates to be used by the devs.
 pub use tabamt_run::run;
 
-
 pub mod utils {
     pub mod traits{
         pub use tabamt_utils::traits::observer_logic::ObsLogic;

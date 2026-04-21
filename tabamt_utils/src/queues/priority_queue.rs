@@ -1,5 +1,5 @@
-// This file has the task priority queue that will notify the threadpools of tasks.
-// It is part of the threadpool system.
+//! This module has the task priority queue that will notify the threadpools of tasks.
+//! It is part of the Threadpool system.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{ Arc, Condvar, Mutex };
@@ -14,14 +14,17 @@ use crate::bases::queue::QueueBase;
 use crate::traits::queue::Queue;
 use crate::res::Result;
 
-// The task queue struct that will hold the tasks and notify the threads when a task is available.
+/// The priority queue for tasks.
+/// It uses a `SkipMap` to maintain the order of tasks based on their priority, aging, and Task id.
 pub type PQChild<T> = QueueBase<SkipMap<Priority , AtomicCell<Option<EnqueuedTask>>> , T>;
 
+/// A wrapper for a task that includes the time it was enqueued, used for aging.
 pub struct EnqueuedTask{
     pub (crate) task: Task,
     enq_at: Instant,
 }
 
+/// The priority of a Task, which is determined by its base priority and how long it has been waiting in the queue (aging).
 pub struct Priority{
     task_config: Arc<TaskConfig>,
     base_priority: u8,
@@ -30,25 +33,28 @@ pub struct Priority{
 }
 
 impl Queue<Task> for PQChild<Task> {
-    // Push a task to the priority queue and notify one thread that a task is available.
-    // @param task: The task to push to the priority queue.
+    /// Pushes a given Task into the priority queue, calculating its priority based on its base priority and the time it has been waiting (aging).
     fn push(&self , task: Task) {
+
+        // Wrap the task in an `EnqueuedTask` to track when it was enqueued for aging purposes.
         let mut enq_task = EnqueuedTask{task, enq_at: Instant::now() };
         enq_task.task.check_task_priority(self.task_config.clone().unwrap().max_priority);
 
+        // Create a `Priority` struct for the task, which will be used to determine its position in the queue.
         let priority = Priority{task_config: self.task_config.clone().unwrap() , base_priority: enq_task.task.base_priority , enq_at: enq_task.enq_at , task_id: enq_task.task.id};
 
+        // Insert the task into the `SkipMap` with its calculated priority. The `AtomicCell` allows for safe concurrent access to the task.
         self.main_queue.insert(priority, AtomicCell::new(Some(enq_task)));
 
+        // Notify one waiting thread that a new task has been added to the queue, so it can wake up and process the task.
         if self.pause_flag.load(Ordering::SeqCst) == false{
             self.condition_var.notify_one();
         }
     }
 
-    // Pop a task from the priority queue.
-    // If the queue is empty, wait until a task is available or the queue is finalized.
-    // If the queue is finalized, return a special task that will indicate to the thread that it should exit.
-    // @return The task popped from the priority queue.
+    /// Pops the highest priority task from the queue, waiting if necessary until a task is available or the queue is finalized.
+    /// If there are aged tasks, they will be prioritized over newer tasks, even if newer tasks have a higher base priority.
+    /// This is to prevent starvation of lower priority tasks.
     fn pop(&self) -> Task {
         // loop until a task is available or the queue is finalized.
         // The loop is necessary because the condition variable can be notified spuriously, meaning that it sometimes can be notified even if no task is available.
@@ -84,49 +90,41 @@ impl Queue<Task> for PQChild<Task> {
         
     }
 
-    // Finalize the task queue.
-    // This will clear the priority queue, set the exit flag to true and notify all threads waiting on the condition variable.
+    
+    /// Finalizes the queue by clearing all tasks and setting the exit flag.
     fn finalize(&self , _: Option<Arc<Observer>>) {
         {
             self.main_queue.clear();
             self.exit_flag.store(true, Ordering::SeqCst);
 
             self.condition_var.notify_all();
-
-            // Send a notification to the engine that the queue is finalized.
+            
             let notif = Log::log("Task Queue Finalized".to_string() , "Main");
             self.packet_handle.send_notification(notif);
         }
     }
 
-    // A function to pause the task queue.
-    // This will set the pause flag to true and stop notifying threads of new tasks.
+    
+    /// Pauses the queue by setting the pause flag and notifying all waiting threads that the queue is paused.
     fn pause(&self) {
-        // Set the pause flag to true to stop processing tasks.
         self.pause_flag.store(true, Ordering::SeqCst);
 
-        // Send a notification to the engine that the queue is paused.
         let notif = Log::log("Task Queue Paused".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 
-    // A function to continue the task queue.
-    // This will set the pause flag to false and notify all threads waiting on the condition variable.
+    
+    /// Resumes the queue by clearing the pause flag and notifying all waiting threads that the queue is resuming.
     fn resume(&self) {
-        // Set the pause flag to false to continue processing tasks.
         self.pause_flag.store(false, Ordering::SeqCst);
         
-        // Send a notification to the engine that the queue is continuing.
         let notif = Log::log("Task Queue continuing".to_string() , "Main");
         self.packet_handle.send_notification(notif);
     }
 }
 
 impl PQChild<Task> {
-    // Create a new TaskQueue with the given PacketHandle.
-    // In this struct, for now, the PacketHandle is only used to send a notification when the queue is finalized.
-    // @param packet_handle: The PacketHandle that will be used to send notifications to the engine.
-    // @return A new TaskQueue with the given PacketHandle.
+    /// Creates a new priority queue with the given Config and PacketHandle.
     pub fn new(config: &Config, packet_handle: PacketHandle) -> Self{
         Self {
             task_config: Some(Arc::new(config.tasks)),
@@ -142,9 +140,7 @@ impl PQChild<Task> {
 }
 
 impl Priority {
-    // Calculate the effective priority of the task based on its base priority and the time it has been waiting.
-    // The effective priority increases by 1 for every AGING_INTERVAL the task has been waiting.
-    // @return The effective priority of the task.
+    /// Calculates the effective priority of a task by combining its base priority with an aging boost based on how long it has been waiting in the queue.
     pub (crate) fn effective_priority(&self) -> u8 {
         let waited = self.enq_at.elapsed();
         let aging_boost = (waited.as_secs_f64() / Duration::from_secs(self.task_config.aging_interval).as_secs_f64()) as u8;
@@ -154,10 +150,6 @@ impl Priority {
 }
 
 impl PartialEq for Priority {
-    // Two tasks are equal if they have the same priority.
-    // This is used to prioritize tasks in the thread pool.
-    // @param other: The other task to compare to.
-    // @return true if the tasks have the same priority, false otherwise.
     fn eq(&self, other: &Self) -> bool {
         self.base_priority == other.base_priority
             && self.enq_at == other.enq_at
@@ -167,12 +159,6 @@ impl PartialEq for Priority {
 impl Eq for Priority {}
 
 impl Ord for Priority {
-    // Imagine task "Self" has priority 4 and task "Other" has priority 2.
-    // Then "Self" is greater than "Other" because it has a higher priority.
-    // If both tasks have the same priority, then the one that was enqueued earlier is greater.
-    // If both tasks have the same priority and were enqueued at the same time, then the one with the lower id is greater.
-    // @param other: The other task to compare to.
-    // @return An Ordering indicating the relative priority of the tasks.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         if other.base_priority >= (self.task_config.max_priority as f32 * 0.8) as u8{
             return std::cmp::Ordering::Greater
@@ -186,10 +172,6 @@ impl Ord for Priority {
 }
 
 impl PartialOrd for Priority {
-    // This is needed to implement Ord.
-    // It simply calls the cmp function.
-    // @param other: The other task to compare to.
-    // @return An Option containing the Ordering indicating the relative priority of the tasks.
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }

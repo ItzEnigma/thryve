@@ -1,5 +1,4 @@
 .vscode
-.gitignore
 
 todo
 log
@@ -7,4 +6,4 @@ plugins
 target
 Cargo.lock
 
-.\tabamt_utils\src\debug_logging.rs
+tabamt_utils/src/debug_logging.rs

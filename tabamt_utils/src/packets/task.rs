@@ -1,3 +1,10 @@
+//! This module defines what a `Task` is and how it works.
+//! A `Task` is a packet that can be sent to the engine to be executed.
+//! It has a name, a priority, and a function to execute.
+//! The function to execute is a `TaskJob`, which is a type alias for a function that takes no arguments and returns a `res::Result`.
+//! An `id` is also generated for each task to be able to track it and get the result of the task when it is executed.
+//! The `Task` struct implements the `Packet` trait, which means that it can be processed by the engine when it is received through the task channel.
+
 use std::sync::atomic::{AtomicU64 , Ordering};
 
 use crate::extras::{named_input::NamedInput , jobs::TaskJob};
@@ -9,21 +16,17 @@ use crate::res;
 // It starts at 1 and increments by 1 for each new task.
 static COUNTER: AtomicU64 = AtomicU64::new(1);
 
-// A Task is a unit of work that can be executed by the thread pool.
-// This will be the object that will be sent to the thread pool.
-// No other object should be sent to the thread pool.
+
+
+/// Represents a task that can be sent to the Engine to be executed.
 pub struct Task{
-    pub id: u64,                    // Unique identifier for the task.                                          | read only.
-    pub task_name: NamedInput,   // The name of the task.                                                    | read only.
-    pub base_priority: u8,          // The priority of the task. 0-4 (0 is the lowest, 4 is the highest).       | read write.
-    job: TaskJob                        // The function that will be executed by the thread pool.                   | no permissions.
+    pub id: u64,                    
+    pub task_name: NamedInput,   
+    pub base_priority: u8,          
+    job: TaskJob                        
 }
 
 impl Packet for Task {
-    // Run the task and return the result.
-    // This will execute the function that was passed to the task.
-    // It will also create a ResultBullitinContainer with the result of the function and the id of the task.
-    // @return A ResultBullitinContainer with the result of the function and the id of the task.
     fn process(self) -> Option<(u64 , res::Result)>{
         let id = self.id;
         Some((id , (self.job)()))
@@ -31,12 +34,7 @@ impl Packet for Task {
 }
 
 impl Task {
-    // Create a new Task with the given parameters.
-    // The priority is clamped between 0 and 4.
-    // @param task_name: The name of the task.
-    // @param task_priority: The priority of the task.
-    // @param function_to_exec: The function that will be executed by the thread pool.
-    // @return A new Task with the given parameters.
+    /// Creates a new task with the given name, priority, and function to execute.
     pub fn new(task_name: &str , task_priority: u8 , function_to_exec: TaskJob) -> Self {
         Task{ 
             id: next_id(),
@@ -48,6 +46,8 @@ impl Task {
 }
 
 impl Task {
+    /// Checks if the task's priority is higher than the maximum allowed priority.
+    /// If so, it sets the task's priority to the maximum allowed priority.
     pub fn check_task_priority(&mut self , max_task_priority: u8){
         if self.base_priority > max_task_priority {
             self.base_priority = max_task_priority;
@@ -55,9 +55,9 @@ impl Task {
     }
 }
 
-// Generate a new unique id for a task.
-// This uses an atomic counter to ensure that the id is unique across threads.
-// @return A new unsigned long unique id for a task.
+/// Generates a unique id for each task by incrementing the global atomic counter.
+/// This function is thread-safe and can be called from multiple threads without any issues.
+/// No locks are needed because the `fetch_add` method of `AtomicU64` is atomic and guarantees that each call will return a unique value.
 fn next_id() -> u64 {
     // Get the current value of the counter and increment it by 1.
     COUNTER.fetch_add(1, Ordering::Relaxed)

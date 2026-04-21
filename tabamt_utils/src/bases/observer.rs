@@ -1,5 +1,11 @@
-// Implementation for the observer pattern.
-// Observers can be loggers, audits, email sendings, etc.... Each needs to be implemented alone.
+//! This module contains the `Observer` struct, which is the core of the observer system in TabAMT.
+//! The `Observer` struct holds information about an observer,
+//! including its name, type, queue, core logic, exit flag, and the function to run.
+//! 
+//! The function that will run is typically a closure that runs in a loop, processing notifications until it exits.
+//! 
+//! The `Observer` can be gracefully shut down by setting the exit flag.
+//! This will signal the loop to exit and clean up resources.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +16,8 @@ use crate::queues::seg_queue::QChild;
 use crate::traits::observer_logic::{ObsB , ObsLogic};
 use crate::traits::queue::Queue;
 
+/// `Observer` is the observer struct that holds information about an observer.
+/// Any struct that implements `ObsLogic` can be used as the core of an `Observer`.
 pub struct Observer {
     pub obs_name: String,
     pub obs_type: NamedInput,
@@ -23,6 +31,7 @@ pub struct Observer {
 impl ObsB for Observer{}
 
 impl Observer {
+    /// Creates a new `Observer` struct with the given `Observer` name, `Observer` type, core logic of the `Observer`, function to run, and PacketHandle for sending notifications.
     pub fn new(obs_name: &str , obs_type: &str , obs_core: Arc<dyn ObsLogic>, func: ObsJob , tx: PacketHandle) -> Self{
         Self {
             obs_name: obs_name.to_string(),
@@ -35,6 +44,8 @@ impl Observer {
         }
     }
 
+    /// Shuts down the `Observer` gracefully.
+    /// It sets the exit flag, calls the core logic's clean_up method, and finalizes the queue.
     pub fn clean_up(self: &Arc<Self>) {
         self.exit_flag.store(true, Ordering::Relaxed);
         self.obs_core.clean_up(self.clone());

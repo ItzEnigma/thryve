@@ -1,16 +1,23 @@
+//! This module contains the `Notif` struct, which is the core of the notification system in TabAMT.
+//! 
+//! The `Notif` struct holds information about a notification,
+//! including its type, receiver, core logic, and timestamp.
+//! 
+//! Any struct that implements the NotifLogic trait can be used as the core of a `Notif`,
+//! allowing for flexible and extensible notification handling.
+
 use crate::impl_as_any;
-use crate::packets::task::Task;
 use crate::traits::notif_logic::NotifLogic;
 use crate::extras::named_input::NamedInput;
 use std::time::SystemTime;
 
+/// Holds information about a notification.
+/// Any struct that implements NotifLogic can be used as the core of a `Notif`.
 pub struct Notif{
-    pub notif_type: NamedInput,              // The type of event                        | Read Only
-    pub notif_receiver: NamedInput,                 // The module to send the notification to   | Read Only
+    pub notif_type: NamedInput,              
+    pub notif_receiver: NamedInput,                 
     pub notif_core: Box<dyn NotifLogic>,
-    pub timestamp: SystemTime,                  // The time the event was created           | Read Only
-    task: Option<Task>,                     // The task associated with the log         | Read Only
-    notification: Option<Box<Notif>>,    // An optional nested notification          | Read Only
+    pub timestamp: SystemTime,  
 }
 
 impl NotifLogic for Notif {
@@ -18,26 +25,13 @@ impl NotifLogic for Notif {
 }
 
 impl Notif {
+    /// Creates a new `Notif` struct with the given notification type, notification receiver, and core logic of the notification.
     pub fn new(notif_type: &str , notif_receiver: &str , notif_core: Box<dyn NotifLogic>) -> Self {
         Self {
             notif_type: NamedInput::new(notif_type),
             notif_receiver: NamedInput::new(notif_receiver),
             notif_core,
             timestamp: SystemTime::now(),
-            task: None,
-            notification: None
         }
-    }
-
-    // Function to get the task.
-    // @return a reference to an Option<Task>.
-    pub fn task(&self) -> &Option<Task>{
-        &self.task
-    }
-
-    // Function to get the notification.
-    // @return a reference to an Option<Box<Log>>.
-    pub fn notification(&self) -> &Option<Box<Notif>>{
-        &self.notification
     }
 }

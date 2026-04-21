@@ -1,43 +1,43 @@
-// This file handles the logic behind results returned by tasks.
-// Results can be of different types and can contain different data.
+//! This module handles the logic behind results returned by Tasks.
+//! Results can be of different types and can contain different data.
 
 use std::fmt::Display;
 
 use crate::bases::plugin::Plugin;
-// This is just a struct that has results returned by executed tasks.
+
 use crate::extras::named_input::NamedInput;
 use crate::bases::observer::Observer;
 use crate::packets::task::Task;
 
-// The struct that will hold the results returned by tasks.
-// It can hold different types of data depending on the type of result.
+
+/// Represents the result of a Task.
+/// Any task job that runs must return a `Result`, which can be used to determine the next steps in the execution flow.
+/// Think of Tasks as nodes of a graph of operations.
+/// `Result`s are the edges that connect these nodes, and they can contain information about which node to execute next.
+/// Tasks in the `next_task` field can be from the same plugin or from a different plugin.
+/// This gives developers the ability to seperate the logic into multiple plugins and connect them together in a flexible manner.
 pub struct Result {
-    pub result_type: NamedInput,             // The type of result.                                                          | Take Ownership.
-    pub message: String,                        // A message associated with the result.                                        | Take Ownership.
-    pub log_msg_to_file: NamedInput,         // The module type that will be used to name the log file.                      | Take Ownership.
-    pub next_task: Option<Task>,                // An optional task that can be executed after the result is handled.           | Take Ownership.
-    pub observer: Option<Observer>,    // An optional observer that can be registered after the result is handled.     | Take Ownership.
-    pub plugin: Option<Plugin>,        // An optional plugin that can be registered after the result is handled.       | Take Ownership.
+    pub result_type: NamedInput,             
+    pub message: String,                        
+    pub log_msg_to_file: NamedInput,         
+    pub next_task: Option<Task>,                
+    pub observer: Option<Observer>,    
+    pub plugin: Option<Plugin>,        
 }
 
-// Implement Display for Result so that it can be printed easily.
 impl Display for Result {
-    // Implement the fmt function to format the result as a string.
-    // This will just print the message associated with the result.
-    // @param f: The formatter to use.
-    // @return A result indicating whether the formatting was successful.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f , "{}", format!("Message: {}" , self.message))
     }
 }
 
 impl Result {
-    // Create a new Result with the given parameters.
-    // This regular constructor is used for results that do not need to return a task, observer or plugin.
-    // @param res_type: The type of result.
-    // @param msg: The message associated with the result.
-    // @param logging_file: The module type that will be used to name the log file.
-    // @return A new Result with the given parameters.
+    /// Creates a new `Result` with the given result type, message, and logging file.
+    /// This regular constructor is used for results that do not need to return a Task.
+    /// This effectively means that the previous Task that ran is a leaf node in the graph of operations. 
+    /// The execution flow for a specific Plugin will end after this result is returned.
+    /// Note: If Plugins are connected, some tasks may call for the execution of a Task from another Plugin.
+    /// In this case, the result of the first Plugin's Task will be a `Result` that contains the next Task to be executed in the second Plugin.
     pub fn new(res_type: &str , msg: String , logging_file: &str) -> Self{
         Result {
             result_type: NamedInput::new(res_type),
@@ -49,13 +49,10 @@ impl Result {
         }
     }
 
-    // Create a new Result with the given parameters.
-    // This constructor is used for results that need to return a task to be executed after the result is handled.
-    // @param res_type: The type of result.
-    // @param msg: The message associated with the result.
-    // @param logging_file: The module type that will be used to name the log file.
-    // @param next_task: An optional task that can be executed after the result is handled
-    // @return A new Result with the given parameters.
+    /// Creates a new `Result` with the given parameters, including a next Task.
+    /// This constructor is used for results that need to return a Task, allowing for the chaining of operations.
+    /// This effectively means that the `Result` is an edge in the graph of operations.
+    /// It should connect to the next Task that needs to be executed in the flow of operations.
     pub fn new_tasked_res(res_type: &str , msg: String , logging_file: &str , next_task: Option<Task>) -> Self{
         Result {
             result_type: NamedInput::new(res_type),
