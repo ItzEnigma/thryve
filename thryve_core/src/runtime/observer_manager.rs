@@ -1,7 +1,23 @@
-//! This module defines the `ObserverManager` struct, which is responsible for managing observers and their associated threads in the engine.
-//! It provides functionality to load observers, forward notifications to the appropriate observer queues, and finalize the observer manager during engine shutdown.
-//! The `ObserverManager` maintains a mapping of observer types to their corresponding `Observer` instances and manages a thread pool for processing notifications.
-
+//! Observer manager for the Thryve runtime.
+//!
+//! This module provides the [`ObserverManager`] struct, which is responsible
+//! for managing observers and their associated threads in the engine. It
+//! provides functionality to load observers, forward notifications to the
+//! appropriate observer queues, and finalize the observer manager during
+//! engine shutdown.
+//!
+//! # Architecture
+//!
+//! The observer manager maintains:
+//! - A mapping of observer types to their instances
+//! - A thread pool for processing notifications
+//! - A sorter thread that routes notifications to correct observers
+//!
+//! # Thread Pool
+//!
+//! The thread pool has a minimum of 2 workers and a maximum equal to
+//! the number of observers plus 2. The minimum accounts for the sorter
+//! thread and the logging observer thread.
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::ctx::Ctx;
@@ -16,24 +32,58 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::{collections::HashMap};
 
-/// Takes a hashmap of observer types to their corresponding `Observer` instances
-/// It manages a thread pool for processing notifications.
-/// It provides methods to load observers, forward notifications to the appropriate observer queues, and finalize the observer manager.
-/// The `threadpool` has a minimum of 2 workers and a maximum equal to the number of observers plus 2.
-/// The minimum of 2 workers is there because of the sorter thread, see [ObserverManager::init_obs_sorter_thread], and the logging observer thread.
-/// This sorter thread is responsible for sorting incoming notifications and forwarding them to the correct observer queues.
+/// Manager for observers in the Thryve runtime.
+///
+/// The `ObserverManager` is responsible for managing observers and their
+/// associated threads. It maintains a mapping of observer types to their
+/// instances and manages a thread pool for processing notifications.
+///
+/// # Fields
+///
+/// - `observers`: Mapping of observer types to instances
+/// - `threadpool`: Thread pool for processing notifications
+///
+/// # Thread Pool Sizing
+///
+/// The thread pool has a minimum of 2 workers and a maximum equal to
+/// the number of observers plus 2. The minimum accounts for the sorter
+/// thread and the logging observer thread.
+///
+/// # Example
+///
+/// ```no_run
+/// let manager = ObserverManager::new(&ctx);
+/// manager.load_observer(observer);
+/// manager.forward_notif(notification);
+/// ```
 pub struct ObserverManager {
-    observers: HashMap<NamedInput , Arc<Observer>>,     
-    pub threadpool: ThreadPool<QChild , Notif>,
+    /// Mapping of observer types to instances.
+    observers: HashMap<NamedInput, Arc<Observer>>,
+    /// Thread pool for processing notifications.
+    pub threadpool: ThreadPool<QChild, Notif>,
 }
 
 impl ObserverManager {
-    
-    /// Creates the manager of observers with the provided `Ctx`, initializing its components.
-    /// The `ObserverManager` is initialized with the provided context, which contains configuration and communication channels.
-    /// The thread pool is created with a number of workers equal to the number of observers plus 2.
-    /// It uses a `QChild` queue for managing notifications.
-    pub fn new(ctx: &Ctx) -> Self{
+    /// Creates a new observer manager.
+    ///
+    /// Initializes a new observer manager with the given context.
+    /// The thread pool is created with a number of workers equal to
+    /// the number of observers plus 2.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context
+    ///
+    /// # Returns
+    ///
+    /// A new `ObserverManager` instance.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let manager = ObserverManager::new(&ctx);
+    /// ```
+    pub fn new(ctx: &Ctx) -> Self {
         let queue = QChild::new(ctx.packet_handle());
         let num_workers = ctx.observers.len() + 2;
 
@@ -43,104 +93,186 @@ impl ObserverManager {
         }
     }
 
-    /// Initializes the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
-    /// The thread will exit gracefully when the engine signals for shutdown by setting the exit flag.
+    /// Initializes the observer sorter thread.
+    ///
+    /// Spawns a thread responsible for sorting incoming notifications
+    /// and forwarding them to the correct observer queues based on
+    /// the notification's receiver type. The thread exits gracefully
+    /// when the engine signals for shutdown.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// manager.init_obs_sorter_thread();
+    /// // Sorter thread now routing notifications
+    /// ```
     pub fn init_obs_sorter_thread(&self) {
-        if let Some(pool) = self.threadpool.main_pool(){
-            let mut arc_observers: HashMap<NamedInput , Arc<Observer>> = HashMap::new();
+        if let Some(pool) = self.threadpool.main_pool() {
+            let mut arc_observers: HashMap<NamedInput, Arc<Observer>> = HashMap::new();
             let queue = Arc::clone(&self.threadpool.main_queue);
             let exit_flag = Arc::clone(&self.threadpool.pool_exit_flag());
-            
-            // Populate the `arc_observers` hashmap with the observer types and their corresponding `Arc<Observer>` instances for use in the sorter thread.
-            for (_ , observer) in &self.observers{
-                arc_observers.insert(NamedInput::new(observer.obs_type.inner()) ,Arc::clone(observer));
+
+            for (_, observer) in &self.observers {
+                arc_observers.insert(NamedInput::new(observer.obs_type.inner()), Arc::clone(observer));
             }
 
-            // Spawn the sorter thread in the thread pool
-            // It will continuously check for new notifications and forward them to the appropriate observer queues until the exit flag is set to true.
             pool.spawn(move || {
                 loop {
-                    
-                    // Check if the exit flag is set to true, indicating that the engine is shutting down.
-                    // If so, log a message and break the loop to exit the thread gracefully.
                     if exit_flag.load(Ordering::SeqCst) == true {
                         let notif = Log::log("Obs Sorter Thread Finalized...".to_string(), "Main");
-                        arc_observers.get(&NamedInput::new("Logging")).unwrap().obs_queue.push(notif);
-                        break
+                        arc_observers
+                            .get(&NamedInput::new("Logging"))
+                            .unwrap()
+                            .obs_queue
+                            .push(notif);
+                        break;
                     }
 
-                    
-                    // Check for new notifications in the main queue and forward them to the appropriate observer queues based on the notification's receiver type.
                     let obj = queue.pop();
-                    let _ = arc_observers.get(&obj.notif_receiver).unwrap().obs_queue.push(obj);
-
+                    let _ = arc_observers
+                        .get(&obj.notif_receiver)
+                        .unwrap()
+                        .obs_queue
+                        .push(obj);
                 }
             });
         }
     }
 
-    /// Checks if an observer of the specified `obs_type` exists in the `observers` hashmap.
-    fn check_observer(&self , obs_type: &NamedInput) -> bool{
-        if self.observers.contains_key(obs_type) {
-            return true;
-        }
-        return false;
+    /// Checks if an observer of the specified type exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `obs_type` - The observer type to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if an observer of the given type exists.
+    fn check_observer(&self, obs_type: &NamedInput) -> bool {
+        self.observers.contains_key(obs_type)
     }
-    
-    /// Forwards a given `Notif` to the main queue of the thread pool.
-    /// It first checks if the observer specified in the notification's receiver field exists in the `observers` hashmap.
-    /// If the observer exists, it pushes the notification to the main queue of the thread pool for processing by the sorter thread.
-    /// If the observer does not exist, it panics with an error message indicating that the observer manager cannot find the requested observer.
-    pub fn forward_notif(&mut self , notif: Notif) {
-        assert!(self.check_observer(&notif.notif_receiver), "Observer Manager Cannot Find Requested Observer. Got {}" , &notif.notif_receiver);
+
+    /// Forwards a notification to the main queue.
+    ///
+    /// Validates that the target observer exists, then pushes the
+    /// notification to the main queue for processing by the sorter
+    /// thread.
+    ///
+    /// # Arguments
+    ///
+    /// * `notif` - The notification to forward
+    ///
+    /// # Panics
+    ///
+    /// Panics if the target observer does not exist.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// manager.forward_notif(notification);
+    /// ```
+    pub fn forward_notif(&mut self, notif: Notif) {
+        assert!(
+            self.check_observer(&notif.notif_receiver),
+            "Observer Manager Cannot Find Requested Observer. Got {}",
+            &notif.notif_receiver
+        );
 
         self.threadpool.main_queue.push(notif);
     }
 
-    /// Is a helper method that allows the engine to log error messages to the logging observer's queue.
-    /// It pushes a log notification with the error `message`.
-    pub fn notif_err(&mut self , message: &str){
+    /// Sends an error notification to the logging observer.
+    ///
+    /// Convenience method for logging error messages directly to
+    /// the logging observer's queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The error message
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// manager.notif_err("Something went wrong");
+    /// ```
+    pub fn notif_err(&mut self, message: &str) {
         self.threadpool.main_queue.push(Log::err(message.to_string()));
     }
 
-    /// Loads a new `Observer` into the `ObserverManager`, starting its associated thread and adding it to the `observers` hashmap.
-    pub fn load_observer(&mut self , observer: Observer){
+    /// Loads a new observer into the manager.
+    ///
+    /// Starts the observer's thread and adds it to the observers
+    /// hashmap, keyed by its type.
+    ///
+    /// # Arguments
+    ///
+    /// * `observer` - The observer to load
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// manager.load_observer(observer);
+    /// ```
+    pub fn load_observer(&mut self, observer: Observer) {
         let x = Arc::new(observer);
         self.threadpool.run_thread_obs(Arc::clone(&x));
-        self.observers.insert(NamedInput::new(x.obs_type.inner()) , x);
+        self.observers.insert(NamedInput::new(x.obs_type.inner()), x);
     }
-    
-    
-    /// Finalizes the observer manager by setting the exit flag, finalizing the thread pool, processing any remaining notifications, and cleaning up resources.
-    /// It returns an `Arc<Observer>` instance of the logging observer to log the final messages from the engine shutdown process.
-    pub fn finalize(&mut self) -> Arc<Observer>{
+
+    /// Finalizes the observer manager.
+    ///
+    /// Sets the exit flag, finalizes the thread pool, processes
+    /// any remaining notifications, and cleans up all observers.
+    /// Returns the logger observer for final logging.
+    ///
+    /// # Returns
+    ///
+    /// The logger observer for final logging operations.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let logger = manager.finalize();
+    /// logger.obs_queue.push(final_notification);
+    /// ```
+    pub fn finalize(&mut self) -> Arc<Observer> {
         let logger = self.observers.remove(&NamedInput::new("Logging")).unwrap();
         self.threadpool.finalize_obs(logger.clone());
-        
-        // Clean up all remaining observers by draining the `observers` hashmap and calling the `clean_up` method on each observer instance.
-        if !self.observers.is_empty(){
-            for (_ , observer) in self.observers.drain(){
+
+        if !self.observers.is_empty() {
+            for (_, observer) in self.observers.drain() {
                 observer.clean_up();
             }
         }
-        
-        let notif = Log::log("Observer manager Finalized".to_string() , "Main");
+
+        let notif = Log::log("Observer manager Finalized".to_string(), "Main");
         logger.obs_queue.push(notif);
-        
-            
+
         logger
     }
 }
 
-
 impl ObserverManager {
     /// Returns a vector of all observer names.
-    pub fn observer_names(&self) -> Vec<&str>{
+    ///
+    /// # Returns
+    ///
+    /// A vector of string slices representing observer names.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let names = manager.observer_names();
+    /// for name in names {
+    ///     println!("Observer: {}", name);
+    /// }
+    /// ```
+    pub fn observer_names(&self) -> Vec<&str> {
         let mut vector: Vec<&str> = Vec::new();
-        for obs in self.observers.keys(){
+        for obs in self.observers.keys() {
             vector.push(obs.inner());
         }
-    
+
         vector
     }
 }

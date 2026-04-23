@@ -1,5 +1,39 @@
-//! This module contains all the logic related to the service itself.
-//! It serves as the ground basis that will instanciate the service, initialize it, manage it, and finalize it.
+//! Windows service implementation for the Thryve engine.
+//!
+//! This module provides the core functionality for running the Thryve engine as a
+//! Windows service, enabling background execution with system-level integration.
+//!
+//! # Overview
+//!
+//! The [`Thryve`] struct encapsulates a Windows service instance and manages its
+//! lifecycle, including start, stop, pause, and resume operations. It coordinates
+//! with the Thryve engine to process tasks and notifications while responding to
+//! service control manager commands.
+//!
+//! # Service Lifecycle
+//!
+//! 1. **Creation**: A new [`Thryve`] instance is created with a [`Config`]
+//! 2. **Registration**: The service registers with the Windows Service Control Manager
+//! 3. **Execution**: The service listens for commands and manages the engine lifecycle
+//! 4. **Termination**: The service gracefully shuts down the engine on stop commands
+//!
+//! # Supported Commands
+//!
+//! - **Start**: Initializes and runs the engine in a dedicated thread
+//! - **Stop**: Gracefully shuts down the engine and terminates the service
+//! - **Pause**: Suspends engine processing while maintaining state
+//! - **Resume**: Resumes engine processing after a pause
+//!
+//! # Example
+//!
+//! ```no_run
+//! use thryve_utils::cfg::config::Config;
+//! use thryve_run::service::service::Thryve;
+//!
+//! let config = Config::default();
+//! let (mut service, ctx) = Thryve::new(config);
+//! service.run_service(ctx);
+//! ```
 
 use windows_services::{ Command, Service};
 use crossbeam::channel::bounded;
@@ -11,21 +45,74 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 
 use crate::init::init::init_engine;
 
-/// Holds the service instance and service information.
+/// A Windows service wrapper for the Thryve engine.
+///
+/// This struct encapsulates a Windows service instance and manages the lifecycle
+/// of the Thryve engine when running as a service. It handles service control
+/// commands (start, stop, pause, resume) and coordinates engine execution.
+///
+/// # Fields
+///
+/// - `is_running`: Atomic flag indicating whether the service is currently running
+/// - `is_paused`: Atomic flag indicating whether the service is currently paused
+/// - `service_instance`: The underlying Windows service instance
+///
+/// # Lifetime Parameter
+///
+/// - `'a`: The lifetime of the service instance, tied to the Windows service handle
+///
+/// # Example
+///
+/// ```no_run
+/// use thryve_utils::cfg::config::Config;
+/// use thryve_run::service::service::Thryve;
+///
+/// let config = Config::default();
+/// let (mut service, ctx) = Thryve::new(config);
+/// service.run_service(ctx);
+/// ```
 pub struct Thryve <'a>{
-    is_running: Arc<AtomicBool>,        
-    is_paused: Arc<AtomicBool>,         
-    service_instance: Service<'a>,      
+    is_running: Arc<AtomicBool>,
+    is_paused: Arc<AtomicBool>,
+    service_instance: Service<'a>,
 }
 
 
 
 impl <'a> Thryve <'a> {
 
-    /// Creates a new service instance with the given Config.
-    /// It initializes the necessary channels for communication between the service and the engine.
-    /// It also sets up the Ctx that will be used by the engine.
-    /// It returns a tuple containing the service instance and the Ctx.
+    /// Creates a new Thryve service instance with the given configuration.
+    ///
+    /// This constructor initializes the Windows service with the specified capabilities
+    /// (pause/stop) based on the configuration, creates the communication channels
+    /// for task and notification pipes, and returns both the service instance and
+    /// the context required for engine execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The configuration containing service capabilities and pipe settings
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// - A new [`Thryve`] service instance configured with the specified capabilities
+    /// - A [`Ctx`] instance with initialized communication channels
+    ///
+    /// # Service Capabilities
+    ///
+    /// The service capabilities are configured based on the `config.service` settings:
+    /// - If `can_pause` is true, the service supports pause/resume commands
+    /// - If `can_stop` is true, the service supports stop commands
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_utils::cfg::config::Config;
+    /// use thryve_run::service::service::Thryve;
+    ///
+    /// let config = Config::default();
+    /// let (service, ctx) = Thryve::new(config);
+    /// ```
     pub fn new(config: Config) -> (Self , Ctx)  {
         
         // Create the channels that will be used to send tasks and notifications to the engine.
@@ -55,8 +142,55 @@ impl <'a> Thryve <'a> {
         (svc , ctx)
     }
 
-    /// Starts the service and manages its execution.
-    /// This function listens for commands from the service control manager (like start, stop, pause, resume) and acts accordingly.
+    /// Runs the Thryve service and manages its execution lifecycle.
+    ///
+    /// This is the primary entry point for service execution. It registers the service
+    /// with the Windows Service Control Manager and begins listening for control commands.
+    /// The engine runs in a dedicated thread to ensure the service remains responsive
+    /// to control commands at all times.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The context containing configuration, observers, plugins, and communication channels
+    ///
+    /// # Behavior
+    ///
+    /// The service responds to the following commands:
+    ///
+    /// - **Start**: Spawns the engine in a dedicated thread, loads observers and plugins,
+    ///   and begins processing tasks and notifications
+    /// - **Stop**: Signals the engine to shut down, waits for the engine thread to complete,
+    ///   and performs cleanup
+    /// - **Pause**: Sets the pause flag, causing the engine to suspend processing
+    /// - **Resume**: Clears the pause flag, allowing the engine to resume processing
+    ///
+    /// # Engine Lifecycle
+    ///
+    /// On start, the engine:
+    /// 1. Initializes with the provided context
+    /// 2. Loads all configured observers
+    /// 3. Loads all configured plugins
+    /// 4. Starts the observer sorter thread
+    /// 5. Enters the main processing loop
+    ///
+    /// On stop, the engine:
+    /// 1. Exits the main processing loop
+    /// 2. Performs finalization and cleanup
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Start command is received more than once without a corresponding Stop.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_utils::cfg::config::Config;
+    /// use thryve_run::service::service::Thryve;
+    ///
+    /// let config = Config::default();
+    /// let (mut service, ctx) = Thryve::new(config);
+    /// service.run_service(ctx);
+    /// ```
     pub fn run_service(&mut self , ctx: Ctx){
         
         // Cloneing the atomic flags for running and paused states to be used in the service command handling.
@@ -93,7 +227,7 @@ impl <'a> Thryve <'a> {
                     let mut state: u8 = 0;
                     let mut eng_paused = false;
 
-                    // The engine will run in a loop until the is_running flag is set to false. 
+                    // The engine will run in a loop until the is_running flag is set to false.
                     while is_running_clone.load(Ordering::SeqCst) {
                         
                         // Check the pause flag and pause or resume the engine accordingly.
@@ -106,7 +240,7 @@ impl <'a> Thryve <'a> {
                         }
                         
                         // If the pause flag is loaded and the engine is not paused, we pause the engine.
-                        if is_pause_flag_loaded{    
+                        if is_pause_flag_loaded{
                             eng.pause();
                             eng_paused = true;
                         }
@@ -115,9 +249,9 @@ impl <'a> Thryve <'a> {
                         else if eng_paused {
                             eng.resume();
                             eng_paused = false;
-                        } 
+                        }
                         
-                        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.                        
+                        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
                         eng.run_once();
 
                         // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
@@ -130,7 +264,7 @@ impl <'a> Thryve <'a> {
                                     eng.obs_manager.load_observer(obs);
                                 }
                             }
- 
+  
                             // Load the plugins into the engine if there are any specified in the context.
                             if len_plugin_tasks > 0 {
                                 for plugin in ctx.plugins(){
@@ -157,7 +291,7 @@ impl <'a> Thryve <'a> {
             }
             
             // When the stop command is received, the is_running flag is set to false to signal the engine to stop running and finalize itself.
-            Command::Stop => {     
+            Command::Stop => {
                 // Set the is_running flag to false to signal the engine to stop running and finalize itself.
                 is_running.store(false, Ordering::SeqCst);
 

@@ -1,7 +1,25 @@
-//! This module contains the `ThreadPool` struct, which is responsible for managing a pool of worker threads that process tasks from a queue.
-//! There are two main types of `ThreadPool`s in the engine: one for processing Plugin Tasks and one for processing Observer Notifs.
-//! The `ThreadPool` struct is generic over the type of queue it uses and the type of packets it processes.
-//! This allows for flexibility in how tasks and notifications are managed and processed.
+//! Thread pool for task and notification processing.
+//!
+//! This module provides the [`ThreadPool`] struct, which manages a pool
+//! of worker threads that process items from a queue. The thread pool
+//! is generic over both the queue type and the packet type, enabling
+//! a single implementation to handle both plugin tasks and observer
+//! notifications.
+//!
+//! # Architecture
+//!
+//! The thread pool uses Rayon for thread management and supports:
+//! - Configurable number of worker threads
+//! - Pause/resume functionality
+//! - Graceful shutdown via exit flags
+//! - Result channel for task completion reporting
+//!
+//! # Usage
+//!
+//! Two main thread pools exist in the engine:
+//! 1. Plugin thread pool: Processes tasks using [`PQChild`](crate::queues::priority_queue::PQChild)
+//! 2. Observer thread pool: Processes notifications using [`QChild`](crate::queues::seg_queue::QChild)
+
 use rayon;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,34 +27,98 @@ use std::marker::PhantomData;
 use crossbeam::channel::Sender;
 
 use crate::bases::observer::Observer;
-use crate::packets::{notif_log::Log , packet_handle::PacketHandle};
-use crate::traits::{packets::Packet , queue::Queue};
+use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
+use crate::traits::{packets::Packet, queue::Queue};
 use crate::res;
 
-/// The `ThreadPool` struct manages a pool of worker threads that process tasks from a queue.
-pub struct ThreadPool <Q , P> {
-    main_pool: Option<rayon::ThreadPool>,                   
-    pool_exit_flag: Arc<AtomicBool>,                      
-    pool_pause_flag: Arc<AtomicBool>,                     
-    pub main_queue: Arc<Q>,                     
-    res_tx: Option<Arc<Sender<(u64 , res::Result)>>>,          
-    packet_handle: PacketHandle,                     
-
-    _marker: PhantomData<P>
+/// Thread pool for processing tasks and notifications.
+///
+/// The `ThreadPool` struct manages a pool of worker threads that
+/// process items from a queue. It is generic over both the queue
+/// type and packet type, enabling a single implementation to
+/// handle both plugin tasks and observer notifications.
+///
+/// # Type Parameters
+///
+/// - `Q`: The queue type (e.g., [`PQChild`](crate::queues::priority_queue::PQChild) or [`QChild`](crate::queues::seg_queue::QChild))
+/// - `P`: The packet type (e.g., [`Task`](crate::packets::task::Task) or [`Notif`](crate::bases::notif::Notif))
+///
+/// # Fields
+///
+/// - `main_pool`: The Rayon thread pool (optional)
+/// - `pool_exit_flag`: Flag for graceful shutdown
+/// - `pool_pause_flag`: Flag for pause/resume
+/// - `main_queue`: The queue being processed
+/// - `res_tx`: Optional result sender for task completion
+/// - `packet_handle`: Handle for sending notifications
+///
+/// # Example
+///
+/// ```no_run
+/// // Thread pools are typically created by the engine
+/// let pool = ThreadPool::new(worker_count, queue, packet_handle, result_sender);
+/// pool.run_threads_plugins(); // For plugin tasks
+/// // or
+/// pool.run_thread_obs(observer); // For observers
+/// ```
+pub struct ThreadPool<Q, P> {
+    /// The Rayon thread pool (optional).
+    main_pool: Option<rayon::ThreadPool>,
+    /// Flag for graceful shutdown.
+    pool_exit_flag: Arc<AtomicBool>,
+    /// Flag for pause/resume.
+    pool_pause_flag: Arc<AtomicBool>,
+    /// The queue being processed.
+    pub main_queue: Arc<Q>,
+    /// Optional result sender for task completion.
+    res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
+    /// Handle for sending notifications.
+    packet_handle: PacketHandle,
+    /// Phantom data for the packet type.
+    _marker: PhantomData<P>,
 }
 
-impl <Q , P: Packet> ThreadPool<Q , P> 
+impl<Q, P: Packet> ThreadPool<Q, P>
 where
-    Q: Queue<P>
+    Q: Queue<P>,
 {
-    /// Creates a new `ThreadPool` with the specified number of worker threads, a queue for tasks, a `PacketHandle` for communication, and an optional result sender for sending results back to the engine.
-    pub fn new(num_workers: usize , queue: Q , packet_handle: PacketHandle , res_tx: Option<Arc<Sender<(u64 , res::Result)>>>) -> Self {
+    /// Creates a new thread pool.
+    ///
+    /// Initializes a new thread pool with the specified number of
+    /// worker threads, queue, packet handle, and optional result
+    /// sender. If `num_workers` is 0, no thread pool is created.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_workers` - Number of worker threads (0 disables the pool)
+    /// * `queue` - The queue to process
+    /// * `packet_handle` - Handle for sending notifications
+    /// * `res_tx` - Optional result sender for task completion
+    ///
+    /// # Returns
+    ///
+    /// A new `ThreadPool` instance.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// // Thread pools are typically created by the engine
+    /// let pool = ThreadPool::new(4, queue, packet_handle, result_sender);
+    /// ```
+    pub fn new(
+        num_workers: usize,
+        queue: Q,
+        packet_handle: PacketHandle,
+        res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
+    ) -> Self {
         let mut pool: Option<rayon::ThreadPool> = None;
         if num_workers != 0 {
-            pool = Some(rayon::ThreadPoolBuilder::new()
-                .num_threads(num_workers)
-                .build()
-                .unwrap());
+            pool = Some(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(num_workers)
+                    .build()
+                    .unwrap(),
+            );
         }
 
         Self {
@@ -46,100 +128,201 @@ where
             main_queue: Arc::new(queue),
             res_tx: res_tx,
             packet_handle: packet_handle,
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 
-    /// Submits a task to the thread pool by pushing it into the main queue.
-    pub fn submit_task(&self , obj: P) {
+    /// Submits a packet to the thread pool.
+    ///
+    /// Pushes the given packet into the main queue for processing
+    /// by worker threads.
+    ///
+    /// # Arguments
+    ///
+    /// * `obj` - The packet to submit
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.submit_task(my_task);
+    /// ```
+    pub fn submit_task(&self, obj: P) {
         self.main_queue.push(obj);
     }
 
-    /// Runs the worker threads for processing Plugin Tasks.
-    /// Each worker thread continuously pops Tasks from the main queue and processes them until the `pool_exit_flag` is set.
-    /// If a Task produces a result, it is sent back to the engine using the `res_tx`.
+    /// Starts worker threads for processing plugin tasks.
+    ///
+    /// Spawns worker threads that continuously pop tasks from the
+    /// main queue and process them. Each task's result is sent
+    /// back through the result channel. Threads exit when the
+    /// pool exit flag is set.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.run_threads_plugins();
+    /// // Worker threads now processing tasks
+    /// ```
     pub fn run_threads_plugins(&self) {
         let queue = Arc::clone(&self.main_queue);
         let res_tx = self.res_tx.clone().expect("Result Sender Has to be Present!");
         let exit_flag = Arc::clone(&self.pool_exit_flag);
         let tx = self.packet_handle.clone();
-        
-        // Spawn threads in the pool.
-        // The spawn_broadcast method will spawn a copy of the closure in each thread in the pool.
-        // Rayon's thread pool will manage the threads and scheduling and ensure they are running. 
-        if let Some(pool) = &self.main_pool{
+
+        if let Some(pool) = &self.main_pool {
             pool.spawn_broadcast(move |_| {
                 loop {
-                    // Check if the exit flag is set.
-                    // If it is, break the loop and exit the thread.
                     if exit_flag.load(Ordering::SeqCst) == true {
                         let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
                         tx.send_notification(notif);
-                        break
+                        break;
                     }
-    
-                    // Check the queue for new tasks.
-                    // If a task is found, execute it and store the result in the result bullitin.
+
                     let obj = queue.pop();
-    
-                    // If the code reaches here, it means either the queue has been finalized, or a task was captured.                
+
                     if let Some(res_container) = obj.process().take() {
                         let _ = res_tx.send(res_container);
-                    }                    
+                    }
                 }
             });
         }
     }
 
-    /// Runs the worker thread for processing Observer Notifs.
-    /// This method runs the same base logic for all observers to initialize them.
-    /// It then calls the given observer's main function that should contain the main loop for the observer's thread.
-    pub fn run_thread_obs(&self , obs: Arc<Observer>) {
+    /// Starts a worker thread for processing an observer.
+    ///
+    /// Spawns a single thread that runs the given observer's
+    /// initialization function. This function typically starts
+    /// the observer's main notification processing loop.
+    ///
+    /// # Arguments
+    ///
+    /// * `obs` - The observer to run
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.run_thread_obs(logger_observer);
+    /// // Observer thread now processing notifications
+    /// ```
+    pub fn run_thread_obs(&self, obs: Arc<Observer>) {
         let arc_obs = Arc::clone(&obs);
 
-        if let Some(pool) = &self.main_pool{
+        if let Some(pool) = &self.main_pool {
             pool.spawn(move || {
                 (arc_obs.fn_to_run)(arc_obs.clone());
             });
-        }        
+        }
     }
 
-    /// Returns a reference to the main thread pool, if it exists.
+    /// Returns a reference to the main thread pool.
+    ///
+    /// # Returns
+    ///
+    /// An optional reference to the Rayon thread pool.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// if let Some(rayon_pool) = pool.main_pool() {
+    ///     // Access Rayon pool
+    /// }
+    /// ```
     pub fn main_pool(&self) -> &Option<rayon::ThreadPool> {
         &self.main_pool
     }
 
-    /// Returns a clone of the `pool_exit_flag`, which is an `Arc<AtomicBool>` that indicates whether the thread pool should exit.
+    /// Returns a clone of the pool exit flag.
+    ///
+    /// # Returns
+    ///
+    /// An `Arc<AtomicBool>` indicating whether the pool should exit.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let exit_flag = pool.pool_exit_flag();
+    /// if exit_flag.load(Ordering::SeqCst) {
+    ///     // Pool is shutting down
+    /// }
+    /// ```
     pub fn pool_exit_flag(&self) -> Arc<AtomicBool> {
         self.pool_exit_flag.clone()
     }
 
-    /// finalizes the plugin thread pool by setting the exit flag and finalizing the main queue.
+    /// Finalizes the plugin thread pool.
+    ///
+    /// Sets the exit flag, finalizes the main queue, and sends
+    /// a notification indicating completion. This should be called
+    /// during engine shutdown.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.finalize_plg();
+    /// // Worker threads will exit gracefully
+    /// ```
     pub fn finalize_plg(&mut self) {
         self.pool_exit_flag.store(true, Ordering::SeqCst);
         self.main_queue.finalize(None);
-        
-        let notif = Log::log("ThreadPool Finalized".to_string() , "Main");
+
+        let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
         self.packet_handle.send_notification(notif);
     }
 
-    /// finalizes the observer thread pool by setting the exit flag and finalizing the main queue.
-    pub fn finalize_obs(&mut self , logger: Arc<Observer>){
+    /// Finalizes the observer thread pool.
+    ///
+    /// Sets the exit flag, finalizes the main queue with the
+    /// logger, and sends a notification. This should be called
+    /// during engine shutdown.
+    ///
+    /// # Arguments
+    ///
+    /// * `logger` - The logger observer for draining notifications
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.finalize_obs(logger.clone());
+    /// // Observer threads will exit gracefully
+    /// ```
+    pub fn finalize_obs(&mut self, logger: Arc<Observer>) {
         self.pool_exit_flag.store(true, Ordering::SeqCst);
         self.main_queue.finalize(Some(logger.clone()));
-        
-        let notif = Log::log("ThreadPool Finalized".to_string() , "Main");
+
+        let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
         logger.obs_queue.push(notif);
     }
 
-    /// Pauses the thread pool by setting the `pool_pause_flag` and pausing the main queue.
-    pub fn pause(&mut self){
+    /// Pauses the thread pool.
+    ///
+    /// Sets the pause flag and pauses the main queue, causing
+    /// worker threads to block until resumed.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.pause();
+    /// // Worker threads block
+    /// pool.resume();
+    /// // Worker threads continue
+    /// ```
+    pub fn pause(&mut self) {
         self.pool_pause_flag.store(true, Ordering::SeqCst);
         self.main_queue.pause();
     }
 
-    /// Resumes the thread pool by clearing the `pool_pause_flag` and resuming the main queue.
-    pub fn resume(&mut self){
+    /// Resumes the thread pool.
+    ///
+    /// Clears the pause flag and resumes the main queue,
+    /// unblocking worker threads.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// pool.resume();
+    /// // Worker threads continue
+    /// ```
+    pub fn resume(&mut self) {
         self.pool_pause_flag.store(false, Ordering::SeqCst);
         self.main_queue.resume();
     }
