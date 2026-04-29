@@ -225,34 +225,28 @@ impl <'a> Thryve <'a> {
                     let mut eng = init_engine(&ctx);
                     
                     let mut state: u8 = 0;
-                    let mut eng_paused = false;
 
                     // The engine will run in a loop until the is_running flag is set to false.
                     while is_running_clone.load(Ordering::SeqCst) {
-                        
                         // Check the pause flag and pause or resume the engine accordingly.
+                        let engine_is_paused = eng.pause_flag;
                         let is_pause_flag_loaded = pause_flag_clone.load(Ordering::SeqCst);
                         
                         // If the engine is already paused and the pause flag is still loaded, we just wait and continue the loop without calling run_once.
-                        if eng_paused && is_pause_flag_loaded{
+                        if engine_is_paused && is_pause_flag_loaded{
                             thread::sleep(Duration::from_millis(500));
                             continue;
                         }
                         
-                        // If the pause flag is loaded and the engine is not paused, we pause the engine.
-                        if is_pause_flag_loaded{
+                        // If the pause flag is loaded and the engine is not paused, the engine gets paused.
+                        if is_pause_flag_loaded && !engine_is_paused{
                             eng.pause();
-                            eng_paused = true;
                         }
 
-                        // If the pause flag is not loaded and the engine is paused, we resume the engine.
-                        else if eng_paused {
+                        // If the pause flag is not loaded and the engine is paused, the engine gets resumed.
+                        else if !is_pause_flag_loaded && engine_is_paused {
                             eng.resume();
-                            eng_paused = false;
                         }
-                        
-                        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
-                        eng.run_once();
 
                         // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
                         if state == 0 {
@@ -280,8 +274,11 @@ impl <'a> Thryve <'a> {
                                 thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
                             }
                         }
-                    }
 
+                        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
+                        eng.run_once();
+                    }
+                    
                     // Finalize the engine by performing any necessary cleanup operations before shutting down.
                     eng.finalize();
                 });

@@ -89,7 +89,7 @@ impl PacketHandle {
             notif_tx: notif_tx,
         }
     }
-
+ 
     /// Sends a task to the engine.
     ///
     /// Transmits the given task through the task channel to the engine
@@ -111,9 +111,10 @@ impl PacketHandle {
     /// })));
     /// ```
     pub fn send_task(&self, task: Task) {
-        let _ = self.task_tx.send(task);
+        let _ = self.task_tx.send(task)
+        .unwrap_or_else(|e| panic!("Failed to send task to engine: {}" , e));
     }
-
+ 
     /// Sends a notification to the engine.
     ///
     /// Transmits the given notification through the notification channel
@@ -132,6 +133,7 @@ impl PacketHandle {
     /// handle.send_notification(Log::log("Hello".to_string(), "Main"));
     /// ```
     pub fn send_notification(&self, notif: Notif) {
-        let _ = self.notif_tx.send(notif);
+        let _ = self.notif_tx.send(notif)
+        .unwrap_or_else(|e| panic!("Failed to send notification to engine: {}", e));
     }
 }

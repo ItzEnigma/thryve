@@ -12,3 +12,4 @@
     windows = { version = "0.62.2", features = ["Win32_System_Services", "Win32_Foundation"] }
     windows-services = { workspace = true }
     crossbeam = { workspace = true }
+    chrono = { workspace = true }

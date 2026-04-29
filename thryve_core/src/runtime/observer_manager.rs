@@ -15,9 +15,9 @@
 //!
 //! # Thread Pool
 //!
-//! The thread pool has a minimum of 2 workers and a maximum equal to
-//! the number of observers plus 2. The minimum accounts for the sorter
-//! thread and the logging observer thread.
+//! The thread pool is sized to `ctx.observers.len() + 2`, accounting
+//! for the sorter thread and the logging observer thread in addition
+//! to one thread per observer.
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::ctx::Ctx;
@@ -30,6 +30,7 @@ use thryve_utils::traits::queue::Queue;
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::thread;
 use std::{collections::HashMap};
 
 /// Manager for observers in the Thryve runtime.
@@ -45,9 +46,9 @@ use std::{collections::HashMap};
 ///
 /// # Thread Pool Sizing
 ///
-/// The thread pool has a minimum of 2 workers and a maximum equal to
-/// the number of observers plus 2. The minimum accounts for the sorter
-/// thread and the logging observer thread.
+/// The thread pool is sized to `ctx.observers.len() + 2`, accounting
+/// for the sorter thread and the logging observer thread in addition
+/// to one thread per observer.
 ///
 /// # Example
 ///
@@ -67,8 +68,9 @@ impl ObserverManager {
     /// Creates a new observer manager.
     ///
     /// Initializes a new observer manager with the given context.
-    /// The thread pool is created with a number of workers equal to
-    /// the number of observers plus 2.
+    /// The thread pool is created with `ctx.observers.len() + 2` workers,
+    /// accounting for the sorter thread, logging observer thread, and
+    /// one thread per observer.
     ///
     /// # Arguments
     ///
@@ -106,17 +108,18 @@ impl ObserverManager {
     /// manager.init_obs_sorter_thread();
     /// // Sorter thread now routing notifications
     /// ```
-    pub fn init_obs_sorter_thread(&self) {
-        if let Some(pool) = self.threadpool.main_pool() {
-            let mut arc_observers: HashMap<NamedInput, Arc<Observer>> = HashMap::new();
-            let queue = Arc::clone(&self.threadpool.main_queue);
-            let exit_flag = Arc::clone(&self.threadpool.pool_exit_flag());
+    pub fn init_obs_sorter_thread(&mut self) {
+        let mut arc_observers: HashMap<NamedInput, Arc<Observer>> = HashMap::new();
+        let queue = Arc::clone(&self.threadpool.main_queue);
+        let exit_flag = Arc::clone(&self.threadpool.pool_exit_flag());
 
-            for (_, observer) in &self.observers {
-                arc_observers.insert(NamedInput::new(observer.obs_type.inner()), Arc::clone(observer));
-            }
+        for (_, observer) in &self.observers {
+            arc_observers.insert(NamedInput::new(observer.obs_type.inner()), Arc::clone(observer));
+        }
 
-            pool.spawn(move || {
+        let handle = thread::Builder::new()
+            .name("ObsSorterThread".to_string())
+            .spawn(move || {
                 loop {
                     if exit_flag.load(Ordering::SeqCst) == true {
                         let notif = Log::log("Obs Sorter Thread Finalized...".to_string(), "Main");
@@ -135,8 +138,11 @@ impl ObserverManager {
                         .obs_queue
                         .push(obj);
                 }
-            });
-        }
+            }
+        )
+        .unwrap_or_else(|e| panic!("Failed to spawn observer sorter thread: {}", e));
+
+        self.threadpool.add_worker(handle);
     }
 
     /// Checks if an observer of the specified type exists.
@@ -174,7 +180,8 @@ impl ObserverManager {
     pub fn forward_notif(&mut self, notif: Notif) {
         assert!(
             self.check_observer(&notif.notif_receiver),
-            "Observer Manager Cannot Find Requested Observer. Got {}",
+            "Observer Manager Cannot Find Requested Observer: {}.
+            Check that the receiver of the notification is written correctly.",
             &notif.notif_receiver
         );
 

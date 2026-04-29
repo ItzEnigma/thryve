@@ -27,14 +27,14 @@
 //! try_run_as_service(service, ctx);
 //! ```
 
-use crate::service::service::Thryve;
-use thryve_utils::cfg::{config::Config, ctx::Ctx};
+use crate::{init::init, service::service::Thryve};
+use thryve_utils::{cfg::{config::Config, ctx::Ctx}, extras};
 
 /// Creates a new Thryve service instance with the provided configuration.
 ///
 /// This function constructs and initializes a [`Thryve`] service ready for execution
 /// as a Windows service. It packages the service instance together with the context
-/// required for its operation.
+/// required for its operation. Required directories are created.
 ///
 /// # Arguments
 ///
@@ -56,7 +56,11 @@ use thryve_utils::cfg::{config::Config, ctx::Ctx};
 /// let (service, ctx) = create_service(config);
 /// ```
 pub fn create_service<'a> (config: Config) -> (Thryve<'a> , Ctx) {
-    Thryve::new(config)
+    let (svc, mut ctx) = Thryve::new(config);
+    init::init_directories(&mut ctx);
+    extras::panic_hook::init_panic_hook();
+
+    (svc , ctx)
 }
 
 /// Runs the Thryve service with the provided context.

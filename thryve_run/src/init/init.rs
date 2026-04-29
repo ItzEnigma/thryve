@@ -19,9 +19,12 @@
 //! let engine = init_engine(&ctx);
 //! ```
 
-use thryve_core::runtime::engine::Engine;
+use std::{collections::HashMap, env::current_exe, fs::{File, OpenOptions, create_dir_all}, sync::Arc, time::SystemTime};
 
-use thryve_utils::extras::named_input::NamedInput;
+use chrono::{ DateTime , Local };
+
+use thryve_core::runtime::engine::Engine;
+use thryve_utils::{cfg::{dir_data::DirData, meta_data::MetaData}, extras::named_input::NamedInput};
 use thryve_utils::cfg::ctx::Ctx;
 use thryve_observers::logger::LoggerObserver;
 
@@ -61,7 +64,7 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
     eng.plugin_manager.threadpool.run_threads_plugins();
 
     // Initialize the logger observer with the specified log file names.
-    init_logger(ctx, &mut eng, ctx.logging_file_names.clone());
+    init_logger(ctx, &mut eng);
 
     eng
 }
@@ -85,24 +88,129 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 ///
 /// init_logger(&ctx, &mut engine, vec!["Main".to_string(), "Error".to_string()]);
 /// ```
-pub fn init_logger(ctx: &Ctx, eng: &mut Engine, mut file_names: Vec<String>) {
-    let mut file_names_checked = vec![];
-
-    // Convert the vector of log file names from `String` to `NamedInput` and
-    // store them in a new vector for use in the logger observer.
-    while !file_names.is_empty() {
-        file_names_checked.push(NamedInput::new(
-            file_names[file_names.len() - 1].as_str(),
-        ));
-        file_names.pop();
-    }
-
+pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
     // Create a new instance of the `LoggerObserver` struct, passing the
     // checked log file names and the packet handle from the context for
     // communication.
-    let logger = LoggerObserver::new(file_names_checked, ctx.packet_handle());
+    let logger = LoggerObserver::new(ctx);
 
     // Load the logger observer into the engine's observer manager to make it
     // available for handling notifications and logging messages.
     eng.obs_manager.load_observer(logger);
+}
+
+/// Initializes the directory structure and log files for the Thryve system.
+///
+/// Creates the necessary directory structure and log files required for the
+/// system to operate. This includes:
+///
+/// 1. Determining the executable directory
+/// 2. Creating a timestamped log directory
+/// 3. Creating Main.log and Error.log files
+/// 4. Creating additional log files based on configuration
+/// 5. Storing the directory data in the context
+///
+/// # Arguments
+///
+/// * `ctx` - Mutable reference to the application context to store metadata
+///
+/// # Directory Structure
+///
+/// Creates the following structure:
+///
+/// ```text
+/// <exe_dir>/
+///   log/
+///     <timestamp>/
+///       Main.log
+///       Error.log
+///       <Module>.log  (for each configured module)
+/// ```
+///
+/// # Log Files Created
+///
+/// - `Main.log`: General log messages
+/// - `Error.log`: Error messages
+/// - `<Module>.log`: Module-specific logs for each name in `ctx.logging_file_names`
+///
+/// # Panics
+///
+/// Panics if:
+/// - Cannot determine the executable path
+/// - Cannot create the log directory
+/// - Cannot create any of the log files
+///
+/// # Example
+///
+/// ```no_run
+/// use thryve_run::init::init_directories;
+///
+/// init_directories(&mut ctx);
+/// ```
+pub fn init_directories(ctx: &mut Ctx) {
+    // Get the current executable's directory to create the log directory there.
+    let exe_dir = current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+ 
+    // Create a log directory with a timestamp to store the log files.
+    let datetime: DateTime<Local> = SystemTime::now().clone().into();
+    let log_dir_path = exe_dir
+        .join("log")
+        .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
+    create_dir_all(&log_dir_path).unwrap();
+ 
+    // Create log files for each module type and store them in a hashmap for easy access.
+    let mut temp_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+ 
+    // Create a main log file and an error log file for general logging and
+    // error logging respectively.
+    let log_file_path_main = log_dir_path.join("Main.log");
+    temp_hash_map.insert(
+        NamedInput::new("Main"),
+        Arc::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_path_main)
+                .unwrap(),
+        ),
+    );
+ 
+    let log_file_path_err = log_dir_path.join("Error.log");
+    temp_hash_map.insert(
+        NamedInput::new("Error"),
+        Arc::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_path_err)
+                .unwrap(),
+        ),
+    );
+ 
+    let file_names = ctx.logging_file_names.clone();
+ 
+    // Create log files for each supplied file name and store them in the hashmap.
+    for name in file_names {
+        let log_file_path = log_dir_path.join(format!("{}.log", name));
+ 
+        temp_hash_map.insert(
+            NamedInput::new(name.as_str()),
+            Arc::new(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_file_path)
+                    .unwrap(),
+            ),
+        );
+    }
+ 
+    let dir_data = DirData::new(exe_dir, log_dir_path, temp_hash_map);
+    let meta_data = MetaData::new(datetime, dir_data);
+ 
+    ctx.meta_data = meta_data;
 }

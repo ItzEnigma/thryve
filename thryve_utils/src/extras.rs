@@ -180,3 +180,60 @@ pub mod jobs {
     /// - `Sync`: Can be shared between threads
     pub type ObsJob = Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>;
 }
+
+pub mod panic_hook{
+    use std::panic;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::time::SystemTime;
+    use chrono::{DateTime, Local};
+
+    use crate::cfg::dir_data::DirData;
+
+    /// Initializes a custom panic hook that writes panic information to the Error.log file.
+    ///
+    /// This should be called after `init_directories()` has been called, so that
+    /// the panic hook can access the log directory path. The panic hook writes
+    /// directly to the Error.log file in the same directory as the logger observer,
+    /// ensuring that panics are captured even when running as a Windows service.
+    pub fn init_panic_hook() {
+        panic::set_hook(Box::new(|panic_info| {
+            // Format panic message
+            let message = panic_info.payload().downcast_ref::<&str>()
+                .map(|s| *s)
+                .or_else(|| panic_info.payload().downcast_ref::<String>()
+                    .map(|s| s.as_str()))
+                .unwrap_or("Unknown panic");
+            
+            // Format location
+            let location = panic_info.location()
+                .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+                .unwrap_or_else(|| "unknown location".to_string());
+            
+            // Format timestamp
+            let timestamp: DateTime<Local> = SystemTime::now().into();
+
+            // Get the log directory path from the static
+            let log_dir = match DirData::get_log_dir_path() {
+                Some(path) => path,
+                None => return, // Log directory not initialized yet, skip file logging
+            };
+            
+            // Open Error.log for appending
+            let error_file_path = log_dir.join("Error.log");
+            
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&error_file_path)
+            {   
+                // Write to file
+                let _ = writeln!(file, "[PANIC] {}: {} at {}", timestamp.format("%Y-%m-%d %H:%M:%S%.6f"), message, location);
+                let _ = file.flush();
+            }
+            
+            // Also print to stderr (for non-service mode debugging)
+            eprintln!("[PANIC] {}: {} at {}", timestamp.format("%Y-%m-%d %H:%M:%S%.6f"), message, location);
+        }));
+    }
+}

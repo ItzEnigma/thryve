@@ -72,7 +72,7 @@ pub struct Engine {
     /// Indicates whether the engine should shut down.
     pub exit_flag: bool,
     /// Indicates whether the engine is paused.
-    pause_flag: bool,
+    pub pause_flag: bool,
 }
 
 impl Engine {

@@ -8,7 +8,7 @@
 //!
 //! # Architecture
 //!
-//! The thread pool uses Rayon for thread management and supports:
+//! The thread pool uses std::thread for persistent worker threads and supports:
 //! - Configurable number of worker threads
 //! - Pause/resume functionality
 //! - Graceful shutdown via exit flags
@@ -20,10 +20,10 @@
 //! 1. Plugin thread pool: Processes tasks using [`PQChild`](crate::queues::priority_queue::PQChild)
 //! 2. Observer thread pool: Processes notifications using [`QChild`](crate::queues::seg_queue::QChild)
 
-use rayon;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::marker::PhantomData;
+use std::thread::{self, JoinHandle};
 use crossbeam::channel::Sender;
 
 use crate::bases::observer::Observer;
@@ -45,7 +45,7 @@ use crate::res;
 ///
 /// # Fields
 ///
-/// - `main_pool`: The Rayon thread pool (optional)
+/// - `num_workers`: Number of worker threads to spawn
 /// - `pool_exit_flag`: Flag for graceful shutdown
 /// - `pool_pause_flag`: Flag for pause/resume
 /// - `main_queue`: The queue being processed
@@ -62,8 +62,10 @@ use crate::res;
 /// pool.run_thread_obs(observer); // For observers
 /// ```
 pub struct ThreadPool<Q, P> {
-    /// The Rayon thread pool (optional).
-    main_pool: Option<rayon::ThreadPool>,
+    /// Number of worker threads to spawn.
+    num_workers: usize,
+    /// Collection of worker thread handles for lifecycle management.
+    workers: Vec<JoinHandle<()>>,
     /// Flag for graceful shutdown.
     pool_exit_flag: Arc<AtomicBool>,
     /// Flag for pause/resume.
@@ -111,18 +113,9 @@ where
         packet_handle: PacketHandle,
         res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
     ) -> Self {
-        let mut pool: Option<rayon::ThreadPool> = None;
-        if num_workers != 0 {
-            pool = Some(
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(num_workers)
-                    .build()
-                    .unwrap(),
-            );
-        }
-
         Self {
-            main_pool: pool,
+            num_workers,
+            workers: Vec::new(),
             pool_exit_flag: Arc::new(AtomicBool::new(false)),
             pool_pause_flag: Arc::new(AtomicBool::new(false)),
             main_queue: Arc::new(queue),
@@ -163,28 +156,34 @@ where
     /// pool.run_threads_plugins();
     /// // Worker threads now processing tasks
     /// ```
-    pub fn run_threads_plugins(&self) {
-        let queue = Arc::clone(&self.main_queue);
-        let res_tx = self.res_tx.clone().expect("Result Sender Has to be Present!");
-        let exit_flag = Arc::clone(&self.pool_exit_flag);
-        let tx = self.packet_handle.clone();
+    pub fn run_threads_plugins(&mut self) {        
+        for i in 0..self.num_workers {
+            let queue = Arc::clone(&self.main_queue);
+            let res_tx = self.res_tx.clone().expect("Result Sender Has to be Present!");
+            let exit_flag = Arc::clone(&self.pool_exit_flag);
+            let tx = self.packet_handle.clone();
 
-        if let Some(pool) = &self.main_pool {
-            pool.spawn_broadcast(move |_| {
-                loop {
-                    if exit_flag.load(Ordering::SeqCst) == true {
-                        let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                        tx.send_notification(notif);
-                        break;
+            let thread_name = format!("plugin-worker-{}", i);
+            let handle = thread::Builder::new()
+                .name(thread_name)
+                .spawn(move || {
+                    loop {
+                        if exit_flag.load(Ordering::SeqCst) == true {
+                            let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
+                            tx.send_notification(notif);
+                            break;
+                        }
+
+                        let obj = queue.pop();
+
+                        if let Some(res_container) = obj.process().take() {
+                            let _ = res_tx.send(res_container);
+                        }
                     }
+                })
+                .unwrap_or_else(|e| panic!("Failed to spawn plugin worker thread: {}" , e));
 
-                    let obj = queue.pop();
-
-                    if let Some(res_container) = obj.process().take() {
-                        let _ = res_tx.send(res_container);
-                    }
-                }
-            });
+            self.workers.push(handle);
         }
     }
 
@@ -204,31 +203,52 @@ where
     /// pool.run_thread_obs(logger_observer);
     /// // Observer thread now processing notifications
     /// ```
-    pub fn run_thread_obs(&self, obs: Arc<Observer>) {
+    pub fn run_thread_obs(&mut self, obs: Arc<Observer>) {
         let arc_obs = Arc::clone(&obs);
 
-        if let Some(pool) = &self.main_pool {
-            pool.spawn(move || {
+        let handle = thread::Builder::new()
+            .name(format!("{}" , obs.obs_type))
+            .spawn(move || {
                 (arc_obs.fn_to_run)(arc_obs.clone());
-            });
-        }
+            })
+            .unwrap_or_else(|e| panic!("Failed to spawn observer worker thread: {}", e));
+
+        self.workers.push(handle);
     }
 
-    /// Returns a reference to the main thread pool.
+    /// Returns the number of worker threads.
     ///
     /// # Returns
     ///
-    /// An optional reference to the Rayon thread pool.
+    /// The number of worker threads configured for this pool.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// if let Some(rayon_pool) = pool.main_pool() {
-    ///     // Access Rayon pool
-    /// }
+    /// let worker_count = pool.num_workers();
+    /// println!("Pool has {} workers", worker_count);
     /// ```
-    pub fn main_pool(&self) -> &Option<rayon::ThreadPool> {
-        &self.main_pool
+    pub fn num_workers(&self) -> usize {
+        self.num_workers
+    }
+
+    /// Adds a worker thread handle to the internal collection.
+    ///
+    /// Stores the provided `JoinHandle` in the workers vector for
+    /// later lifecycle management (e.g., joining during shutdown).
+    ///
+    /// # Arguments
+    ///
+    /// * `thread_handle` - The join handle of the spawned thread
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let handle = std::thread::spawn(|| { /* work */ });
+    /// pool.add_worker(handle);
+    /// ```
+    pub fn add_worker(&mut self, thread_handle: JoinHandle<()>) {
+        self.workers.push(thread_handle);
     }
 
     /// Returns a clone of the pool exit flag.

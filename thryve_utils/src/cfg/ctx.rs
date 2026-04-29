@@ -28,6 +28,7 @@ use crate::bases::notif::Notif;
 use crate::bases::plugin::Plugin;
 use crate::cfg::config::Config;
 use crate::bases::observer::Observer;
+use crate::cfg::meta_data::MetaData;
 use crate::packets::{packet_handle::PacketHandle, task::Task};
 
 /// Central context structure for the Thryve application.
@@ -70,6 +71,8 @@ pub struct Ctx {
     pub plugins: Vec<Plugin>,
     /// Log file names for the logger observer.
     pub logging_file_names: Vec<String>,
+    /// Data collected for proper initalization.
+    pub meta_data: MetaData,
 }
 
 impl Ctx {
@@ -104,6 +107,7 @@ impl Ctx {
             observers: vec![],
             plugins: vec![],
             logging_file_names: vec![],
+            meta_data: MetaData::default(),
         }
     }
 

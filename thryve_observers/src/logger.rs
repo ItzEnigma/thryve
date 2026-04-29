@@ -39,13 +39,11 @@
 //! let logger = LoggerObserver::new(file_names, packet_handle);
 //! ```
 
-use std::{collections::HashMap, env::current_exe, fs::{File, OpenOptions, create_dir_all}, sync::{Arc, atomic::Ordering}, time::SystemTime};
+use std::{collections::HashMap, fs::File, io::Write, sync::{Arc, atomic::Ordering}};
 
-use chrono::{ DateTime , Local };
-
-use thryve_utils::{bases::notif::Notif, impl_as_any};
+use thryve_utils::{bases::notif::Notif, cfg::ctx::Ctx, impl_as_any};
 use thryve_utils::bases::observer::Observer;
-use thryve_utils::packets::{notif_log::Log , packet_handle::PacketHandle};
+use thryve_utils::packets::notif_log::Log;
 use thryve_utils::extras::{jobs::ObsJob, named_input::NamedInput};
 use thryve_utils::traits::{observer_logic::ObsLogic , queue::Queue};
 
@@ -102,6 +100,10 @@ impl ObsLogic for LoggerObserver {
             let notif = observer.obs_queue.pop();
             self.handle_log(notif);
         };
+
+        for (_ , mut file) in self.files.clone() {
+            file.flush().unwrap()
+        }
     }
 
     impl_as_any!(LoggerObserver);
@@ -138,71 +140,14 @@ impl LoggerObserver {
     /// let file_names = vec![NamedInput::new("Main"), NamedInput::new("Error")];
     /// let logger = LoggerObserver::new(file_names, packet_handle);
     /// ```
-    pub fn new(file_names: Vec<NamedInput>, tx: PacketHandle) -> Observer {
-        // Get the current executable's directory to create the log directory there.
-        let exe_dir = current_exe()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-
-        // Create a log directory with a timestamp to store the log files.
-        let datetime: DateTime<Local> = SystemTime::now().clone().into();
-        let log_dir_path = exe_dir
-            .join("log")
-            .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
-        create_dir_all(&log_dir_path).unwrap();
-
-        // Create log files for each module type and store them in a hashmap for easy access.
-        let mut temp_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
-
-        // Create a main log file and an error log file for general logging and
-        // error logging respectively.
-        let log_file_path_main = log_dir_path.join("Main.log");
-        temp_hash_map.insert(
-            NamedInput::new("Main"),
-            Arc::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_file_path_main)
-                    .unwrap(),
-            ),
-        );
-
-        let log_file_path_err = log_dir_path.join("Error.log");
-        temp_hash_map.insert(
-            NamedInput::new("Error"),
-            Arc::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_file_path_err)
-                    .unwrap(),
-            ),
-        );
-
-        // Create log files for each supplied file name and store them in the hashmap.
-        for name in file_names {
-            let log_file_path = log_dir_path.join(format!("{}.log", name.inner()));
-
-            temp_hash_map.insert(
-                name,
-                Arc::new(
-                    OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(log_file_path)
-                        .unwrap(),
-                ),
-            );
-        }
+    pub fn new(ctx: &Ctx) -> Observer {
+        let dir_data = ctx.meta_data.dir_data.clone();
 
         // Create an instance of the `LoggerObserver` struct with the initialized
         // log files and return an `Observer` instance that encapsulates its logic.
         let logger = Arc::new(LoggerObserver {
-            _currentdir: exe_dir.file_name().unwrap().to_string_lossy().to_string(),
-            files: temp_hash_map,
+            _currentdir: dir_data.exe_dir.file_name().unwrap().to_string_lossy().to_string(),
+            files: dir_data.log_hash_map,
         });
 
         let logger_core: ObsJob = Box::new(move |logger: Arc<Observer>| {
@@ -213,7 +158,7 @@ impl LoggerObserver {
         });
 
         // Return a new observer instance with the specified type and name.
-        Observer::new("Logger", "Logging", logger, logger_core, tx)
+        Observer::new("Logger", "Logging", logger, logger_core, ctx.packet_handle())
     }
 
     /// Main processing loop for the logger observer.

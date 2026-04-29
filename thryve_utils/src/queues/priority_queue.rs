@@ -247,14 +247,24 @@ impl Ord for Priority {
     /// Orders priorities with starvation prevention.
     ///
     /// Tasks that have aged to 80% of max priority or higher are
-    /// prioritized over newer tasks, preventing starvation.
+    /// prioritized over newer tasks (more like realtime tasks).
+    /// There are also checks made that prevent starvation.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Starvation prevention: aged tasks jump ahead.
-        if other.base_priority >= (self.task_config.max_priority as f32 * 0.8) as u8 {
+        let threshold = (self.task_config.max_priority as f32 * 0.8) as u8;
+        
+        let self_is_realtime = self.base_priority >= threshold;
+        let other_is_realtime = other.base_priority >= threshold;
+        
+        // Realtime tasks come first
+        if self_is_realtime && !other_is_realtime {
+            return std::cmp::Ordering::Less;
+        }
+        if other_is_realtime && !self_is_realtime {
             return std::cmp::Ordering::Greater;
         }
-        other.effective_priority()
-            .cmp(&self.effective_priority())
+        
+        // Normal ordering
+        other.effective_priority().cmp(&self.effective_priority())
             .then_with(|| self.enq_at.cmp(&other.enq_at))
             .then_with(|| self.task_id.cmp(&other.task_id))
     }

@@ -30,11 +30,12 @@
 //! ```
 
 use crossbeam::channel::bounded;
+use thryve_utils::extras;
 
 use std::{thread, time::Duration};
 use thryve_utils::cfg::{config::Config, ctx::Ctx};
 use thryve_utils::packets::packet_handle::PacketHandle;
-use crate::init::init::init_engine;
+use crate::init::init::{self, init_engine};
 
 /// Runs the Thryve engine in interactive mode.
 ///
@@ -90,8 +91,6 @@ pub fn run_interactive(mut ctx: Ctx) {
     // The loop also handles the initial setup of the logger observer and the observer sorter thread during the first iteration.
     // During the first iteration, it loads the observers and plugins into the engine, initializes the observer sorter thread, and handles any debugging wait time if specified in the configuration.
     while eng.exit_flag == false {
-        eng.run_once();
-
         // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
         if state == 0{
             state += 1;
@@ -118,6 +117,8 @@ pub fn run_interactive(mut ctx: Ctx) {
                 thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
             }
         }
+
+        eng.run_once();
     }
 
     // Finalize the engine by performing any necessary cleanup operations before shutting down.
@@ -160,5 +161,9 @@ pub fn summon_requirements(config: Config) -> Ctx{
     let (task_tx , task_rx) = bounded(config.pipes.task_pipe_capacity);
     let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
     
-    Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx))
+    let mut ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx));
+    init::init_directories(&mut ctx);
+    extras::panic_hook::init_panic_hook();
+
+    ctx
 }
