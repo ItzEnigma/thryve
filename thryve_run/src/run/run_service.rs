@@ -56,17 +56,14 @@ use thryve_utils::{cfg::{config::Config, ctx::Ctx}, extras};
 /// let (service, ctx) = create_service(config);
 /// ```
 pub fn create_service<'a> (config: Config) -> (Thryve<'a> , Ctx) {
-    let (svc, mut ctx) = Thryve::new(config);
-    init::init_directories(&mut ctx);
-    extras::panic_hook::init_panic_hook();
-
-    (svc , ctx)
+    Thryve::new(config)
 }
 
 /// Runs the Thryve service with the provided context.
 ///
 /// This is the primary entry point for executing the application as a Windows service.
-/// The function delegates the actual service execution to the provided [`Thryve`] instance.
+/// The function Initializes the logging directories and panic hook with the provided `ctx`.
+/// It also delegates the actual service execution to the provided [`Thryve`] instance.
 ///
 /// # Arguments
 ///
@@ -83,6 +80,9 @@ pub fn create_service<'a> (config: Config) -> (Thryve<'a> , Ctx) {
 /// let (service, ctx) = create_service(config);
 /// try_run_as_service(service, ctx);
 /// ```
-pub fn try_run_as_service(mut svc: Thryve, ctx: Ctx){
+pub fn try_run_as_service(mut svc: Thryve, mut ctx: Ctx){
+    init::init_directories(&mut ctx);
+    extras::panic_hook::init_panic_hook();
+
     svc.run_service(ctx);
 }

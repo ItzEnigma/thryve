@@ -44,11 +44,12 @@ use crate::init::init::{self, init_engine};
 ///
 /// The function performs the following operations:
 ///
-/// 1. Initializes the engine with the provided context
-/// 2. Loads all configured observers and plugins
-/// 3. Starts the observer sorter thread for notification routing
-/// 4. Enters the main processing loop until shutdown is signaled
-/// 5. Performs cleanup operations before exiting
+/// 1. Initializes the logging directories and panic hook with the provided context
+/// 2. Initializes the engine with the provided context
+/// 3. Loads all configured observers and plugins
+/// 4. Starts the observer sorter thread for notification routing
+/// 5. Enters the main processing loop until shutdown is signaled
+/// 6. Performs cleanup operations before exiting
 ///
 /// # Arguments
 ///
@@ -79,6 +80,10 @@ use crate::init::init::{self, init_engine};
 pub fn run_interactive(mut ctx: Ctx) {
     println!("Running manually (double-click, cmd, etc.)");
     println!("Hello from the interactive mode!");
+
+    // Initialize the logging directories and panic hook.
+    init::init_directories(&mut ctx);
+    extras::panic_hook::init_panic_hook();
 
     // Initialize the engine by creating a new instance of the engine struct and setting up the logger observer.
     let mut eng = init_engine(&ctx);
@@ -161,9 +166,5 @@ pub fn summon_requirements(config: Config) -> Ctx{
     let (task_tx , task_rx) = bounded(config.pipes.task_pipe_capacity);
     let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
     
-    let mut ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx));
-    init::init_directories(&mut ctx);
-    extras::panic_hook::init_panic_hook();
-
-    ctx
+    Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx))
 }
