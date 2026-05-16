@@ -8,7 +8,7 @@ pub mod utils {
         pub use thryve_utils::traits::notif_logic::NotifLogic;
     }
     pub mod cfg{
-        pub use thryve_utils::cfg::config::{load_config_from_file , load_def_config};
+        pub use thryve_utils::cfg::config::Config;
         pub use thryve_utils::cfg::ctx;
     }
     pub mod packets{

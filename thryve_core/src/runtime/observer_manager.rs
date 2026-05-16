@@ -283,3 +283,155 @@ impl ObserverManager {
         vector
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thryve_utils::cfg::ctx::Ctx;
+    use thryve_utils::cfg::config::Config;
+    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::task::Task;
+    use thryve_utils::bases::notif::Notif;
+    use thryve_utils::packets::notif_log::Log;
+    use thryve_utils::traits::observer_logic::ObsLogic;
+    use crossbeam::channel::bounded;
+
+    // Test implementation of ObsLogic
+    struct TestObsLogic;
+    impl ObsLogic for TestObsLogic {
+        thryve_utils::impl_as_any!(TestObsLogic);
+        fn clean_up(&self, _observer: Arc<Observer>) {}
+    }
+
+    fn create_test_ctx() -> Ctx {
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        Ctx::new(config, task_rx, notif_rx, packet_handle)
+    }
+
+    #[test]
+    fn test_observer_manager_new_creates_manager() {
+        // Arrange
+        let ctx = create_test_ctx();
+
+        // Act
+        let manager = ObserverManager::new(&ctx);
+
+        // Assert
+        assert!(manager.observer_names().is_empty());
+    }
+
+    #[test]
+    fn test_observer_manager_observer_names_returns_empty_when_no_observers() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let manager = ObserverManager::new(&ctx);
+
+        // Act
+        let names = manager.observer_names();
+
+        // Assert
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_observer_manager_load_observer() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+        
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new(
+            "test_observer",
+            "testType",
+            obs_core,
+            fn_to_run,
+            ctx.packet_handle(),
+        );
+
+        // Act
+        manager.load_observer(observer);
+
+        // Assert
+        let names = manager.observer_names();
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0], "testType");
+    }
+
+    #[test]
+    fn test_observer_manager_load_multiple_observers() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        // Load first observer
+        let obs_core1 = Arc::new(TestObsLogic);
+        let fn_to_run1: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer1 = Observer::new("observer1", "type1", obs_core1, fn_to_run1, ctx.packet_handle().clone());
+
+        // Load second observer
+        let obs_core2 = Arc::new(TestObsLogic);
+        let fn_to_run2: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer2 = Observer::new("observer2", "type2", obs_core2, fn_to_run2, ctx.packet_handle().clone());
+
+        // Act
+        manager.load_observer(observer1);
+        manager.load_observer(observer2);
+
+        // Assert
+        let names = manager.observer_names();
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn test_observer_manager_notif_err() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        // Act & Assert - should not panic
+        manager.notif_err("Test error message");
+    }
+
+    #[test]
+    fn test_observer_manager_forward_notif_requires_loaded_observer() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        // Load a logging observer first (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        manager.load_observer(observer);
+
+        // Create a notification for the Logging observer
+        let notif = Log::log("test message".to_string(), "Main");
+
+        // Act & Assert - should not panic since Logging observer exists
+        // This test demonstrates the validation behavior
+        manager.forward_notif(notif);
+    }
+
+    #[test]
+    fn test_observer_manager_finalize() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        // Load a logging observer (required for finalize)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        manager.load_observer(logger);
+
+        // Act
+        let returned_logger = manager.finalize();
+
+        // Assert - should return the logger observer
+        assert_eq!(returned_logger.obs_name, "logger");
+    }
+}

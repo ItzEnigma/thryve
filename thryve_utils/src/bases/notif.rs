@@ -18,7 +18,7 @@
 //! Any struct implementing the [`NotifLogic`] trait can serve as the core
 //! of a notification, enabling flexible and extensible notification handling
 //! throughout the system.
-
+ 
 use crate::impl_as_any;
 use crate::traits::notif_logic::NotifLogic;
 use crate::extras::named_input::NamedInput;
@@ -86,5 +86,138 @@ impl Notif {
             notif_core,
             timestamp: SystemTime::now(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test implementation of NotifLogic
+    struct TestNotifLogic {
+        _data: String,
+    }
+
+    impl NotifLogic for TestNotifLogic {
+        impl_as_any!(TestNotifLogic);
+    }
+
+    #[test]
+    fn test_notif_new_creates_notification() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act
+        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+
+        // Assert
+        assert_eq!(notif.notif_type.inner(), "TestType");
+        assert_eq!(notif.notif_receiver.inner(), "TestReceiver");
+    }
+
+    #[test]
+    fn test_notif_new_with_numbers_in_names() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act
+        let notif = Notif::new("Type123", "Receiver456", notif_core);
+
+        // Assert
+        assert_eq!(notif.notif_type.inner(), "Type123");
+        assert_eq!(notif.notif_receiver.inner(), "Receiver456");
+    }
+
+    #[test]
+    fn test_notif_new_with_mixed_case() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act
+        let notif = Notif::new("MixedCase", "AnotherMixedCase", notif_core);
+
+        // Assert
+        assert_eq!(notif.notif_type.inner(), "MixedCase");
+        assert_eq!(notif.notif_receiver.inner(), "AnotherMixedCase");
+    }
+
+    #[test]
+    fn test_notif_timestamp_is_set() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+        let before = SystemTime::now();
+
+        // Act
+        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+
+        // Assert - timestamp should be >= before (no time travel)
+        assert!(notif.timestamp >= before || notif.timestamp.duration_since(before).is_err());
+    }
+
+    #[test]
+    #[should_panic(expected = "must be alphanumeric")]
+    fn test_notif_new_with_hyphen_in_type_panics() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act & Assert
+        let _notif = Notif::new("Test-Type", "TestReceiver", notif_core);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be alphanumeric")]
+    fn test_notif_new_with_underscore_in_receiver_panics() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act & Assert
+        let _notif = Notif::new("TestType", "Test_Receiver", notif_core);
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput cannot be empty")]
+    fn test_notif_new_with_empty_type_panics() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act & Assert
+        let _notif = Notif::new("", "TestReceiver", notif_core);
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput cannot be empty")]
+    fn test_notif_new_with_empty_receiver_panics() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act & Assert
+        let _notif = Notif::new("TestType", "", notif_core);
+    }
+
+    #[test]
+    fn test_notif_with_single_character_names() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act
+        let notif = Notif::new("A", "B", notif_core);
+
+        // Assert
+        assert_eq!(notif.notif_type.inner(), "A");
+        assert_eq!(notif.notif_receiver.inner(), "B");
+    }
+
+    #[test]
+    fn test_notif_with_long_names() {
+        // Arrange
+        let long_name = "A".repeat(100);
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+
+        // Act
+        let notif = Notif::new(&long_name, &long_name, notif_core);
+
+        // Assert
+        assert_eq!(notif.notif_type.inner().len(), 100);
+        assert_eq!(notif.notif_receiver.inner().len(), 100);
     }
 }

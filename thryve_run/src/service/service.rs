@@ -263,7 +263,7 @@ impl <'a> Thryve <'a> {
                             // Load the plugins into the engine if there are any specified in the context.
                             if len_plugin_tasks > 0 {
                                 for plugin in ctx.plugins(){
-                                    eng.plugin_manager.load_plugin(plugin);
+                                    eng.plugin_manager.load_plugin(&ctx.config , plugin);
                                 }
                             }
                             

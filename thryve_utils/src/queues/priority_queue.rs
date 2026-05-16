@@ -91,7 +91,7 @@ impl Queue<Task> for PQChild<Task> {
     fn push(&self, task: Task) {
         // Wrap the task to track enqueue time for aging.
         let mut enq_task = EnqueuedTask { task, enq_at: Instant::now() };
-        enq_task.task.check_task_priority(self.task_config.clone().unwrap().max_priority);
+        enq_task.task.clamp_task_priority(self.task_config.clone().unwrap().max_priority);
 
         // Create priority struct for ordering.
         let priority = Priority {
@@ -273,5 +273,229 @@ impl Ord for Priority {
 impl PartialOrd for Priority {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packets::packet_handle::PacketHandle;
+    use crate::packets::task::Task;
+    use crate::bases::notif::Notif;
+    use crate::cfg::config::Config;
+    use crossbeam::channel::bounded;
+
+    #[test]
+    fn test_priority_queue_new_creates_queue() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+
+        // Act
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Assert
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == false);
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+        assert!(queue.task_config.is_some());
+    }
+
+    #[test]
+    fn test_priority_queue_push_and_pop() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+        let task = Task::new("testTask", 5, Box::new(|| Result::new("OK", "success".to_string(), "Main")));
+
+        // Act - push task
+        queue.push(task);
+
+        // Act - pop task
+        let popped = queue.pop();
+
+        // Assert
+        assert_eq!(popped.task_name.inner(), "testTask");
+    }
+
+    #[test]
+    fn test_priority_queue_pop_returns_fin_task_when_exit_flag_set() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Set exit flag
+        queue.exit_flag.store(true, Ordering::SeqCst);
+
+        // Act
+        let task = queue.pop();
+
+        // Assert
+        assert_eq!(task.task_name.inner(), "fin");
+    }
+
+    #[test]
+    fn test_priority_queue_pause_sets_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Assert initially not paused
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+
+        // Act
+        queue.pause();
+
+        // Assert
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == true);
+    }
+
+    #[test]
+    fn test_priority_queue_resume_clears_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Pause first
+        queue.pause();
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == true);
+
+        // Act
+        queue.resume();
+
+        // Assert
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+    }
+
+    #[test]
+    fn test_priority_queue_finalize_sets_exit_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Assert initially not exiting
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == false);
+
+        // Act
+        queue.finalize(None);
+
+        // Assert
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == true);
+    }
+
+    #[test]
+    fn test_priority_queue_push_higher_priority_first() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+
+        // Push tasks with different priorities (lower number = higher priority)
+        let task_low = Task::new("lowPriority", 1, Box::new(|| Result::new("OK", "low".to_string(), "Main")));
+        let task_high = Task::new("highPriority", 10, Box::new(|| Result::new("OK", "high".to_string(), "Main")));
+
+        // Act - push in reverse order
+        queue.push(task_low);
+        queue.push(task_high);
+
+        // Act - pop should return higher priority first
+        let first = queue.pop();
+        let second = queue.pop();
+
+        // Assert
+        assert_eq!(first.task_name.inner(), "highPriority");
+        assert_eq!(second.task_name.inner(), "lowPriority");
+    }
+
+    #[test]
+    fn test_priority_effective_priority_calculation() {
+        // Arrange
+        let task_config = Arc::new(TaskConfig::default());
+        let base_priority: u8 = 2;
+        let enq_at = Instant::now();
+        let task_id: u64 = 1;
+        let max_priority = task_config.max_priority; // Store before moving
+
+        let priority = Priority {
+            task_config,
+            base_priority,
+            enq_at,
+            task_id,
+        };
+
+        // Act
+        let effective = priority.effective_priority();
+
+        // Assert - effective priority should be at least base priority
+        assert!(effective >= base_priority);
+        // Effective priority should not exceed max_priority
+        assert!(effective <= max_priority);
+    }
+
+    #[test]
+    fn test_priority_eq() {
+        // Arrange
+        let task_config = Arc::new(TaskConfig::default());
+        let enq_at = Instant::now();
+        let task_id: u64 = 1;
+
+        let priority1 = Priority {
+            task_config: task_config.clone(),
+            base_priority: 5,
+            enq_at,
+            task_id,
+        };
+
+        let priority2 = Priority {
+            task_config,
+            base_priority: 5,
+            enq_at,
+            task_id,
+        };
+
+        // Act & Assert - use PartialEq directly
+        assert!(priority1 == priority2);
+    }
+
+    #[test]
+    fn test_priority_ord_higher_base_priority_first() {
+        // Arrange
+        let task_config = Arc::new(TaskConfig::default());
+        let enq_at = Instant::now();
+
+        let priority_low = Priority {
+            task_config: task_config.clone(),
+            base_priority: 1,
+            enq_at,
+            task_id: 1,
+        };
+
+        let priority_high = Priority {
+            task_config,
+            base_priority: 10,
+            enq_at,
+            task_id: 2,
+        };
+
+        // Act & Assert - higher priority (higher number) should come first (Less in ordering)
+        assert!(priority_high.cmp(&priority_low) == std::cmp::Ordering::Less);
     }
 }

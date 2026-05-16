@@ -145,10 +145,10 @@ impl Task {
     ///     // ...
     /// }));
     ///
-    /// task.check_task_priority(4); // Priority clamped to 4
+    /// task.clamp_task_priority(4); // Priority clamped to 4
     /// assert_eq!(task.base_priority, 4);
     /// ```
-    pub fn check_task_priority(&mut self, max_task_priority: u8) {
+    pub fn clamp_task_priority(&mut self, max_task_priority: u8) {
         if self.base_priority > max_task_priority {
             self.base_priority = max_task_priority;
         }
@@ -166,4 +166,189 @@ impl Task {
 /// A unique ID that has not been used by any previous task.
 fn next_id() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::packets::Packet;
+
+    #[test]
+    fn test_task_new_creates_task_with_unique_id() {
+        // Arrange
+        let task_name = "TestTask";
+        let priority = 5;
+        
+        // Act
+        let task1 = Task::new(task_name, priority, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        
+        let task2 = Task::new(task_name, priority, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        
+        // Assert
+        assert_ne!(task1.id, task2.id);
+        assert_eq!(task1.task_name.inner(), "TestTask");
+        assert_eq!(task1.base_priority, 5);
+    }
+
+    #[test]
+    fn test_task_new_with_zero_priority() {
+        // Arrange & Act
+        let task = Task::new("LowPriority", 0, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        
+        // Assert
+        assert_eq!(task.base_priority, 0);
+    }
+
+    #[test]
+    fn test_task_new_with_max_u8_priority() {
+        // Arrange & Act
+        let task = Task::new("MaxPriority", u8::MAX, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        
+        // Assert
+        assert_eq!(task.base_priority, u8::MAX);
+    }
+
+    #[test]
+    fn test_task_process_executes_job() {
+        // Arrange
+        let task = Task::new("ProcessTest", 1, Box::new(|| {
+            res::Result::new("Success", "Processed".to_string(), "Main")
+        }));
+        let task_id = task.id;
+        
+        // Act
+        let result = task.process();
+        
+        // Assert
+        assert!(result.is_some());
+        let (id, res_result) = result.unwrap();
+        assert_eq!(id, task_id);
+        assert_eq!(res_result.result_type.inner(), "Success");
+        assert_eq!(res_result.message, "Processed");
+    }
+
+    #[test]
+    fn test_task_clamp_task_priority_clamps_high_priority() {
+        // Arrange
+        let mut task = Task::new("HighPriority", 10, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let max_priority = 4u8;
+        
+        // Act
+        task.clamp_task_priority(max_priority);
+        
+        // Assert
+        assert_eq!(task.base_priority, 4);
+    }
+
+    #[test]
+    fn test_task_clamp_task_priority_keeps_valid_priority() {
+        // Arrange
+        let mut task = Task::new("ValidPriority", 3, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let max_priority = 4u8;
+        
+        // Act
+        task.clamp_task_priority(max_priority);
+        
+        // Assert
+        assert_eq!(task.base_priority, 3);
+    }
+
+    #[test]
+    fn test_task_clamp_task_priority_at_boundary() {
+        // Arrange
+        let mut task = Task::new("BoundaryPriority", 4, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let max_priority = 4u8;
+        
+        // Act
+        task.clamp_task_priority(max_priority);
+        
+        // Assert
+        assert_eq!(task.base_priority, 4);
+    }
+
+    #[test]
+    fn test_task_clamp_task_priority_with_zero_max() {
+        // Arrange
+        let mut task = Task::new("AnyPriority", 100, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let max_priority = 0u8;
+        
+        // Act
+        task.clamp_task_priority(max_priority);
+        
+        // Assert
+        assert_eq!(task.base_priority, 0);
+    }
+
+    #[test]
+    fn test_task_unique_ids_are_sequential() {
+        // Arrange & Act
+        let task1 = Task::new("T1", 1, Box::new(|| res::Result::new("Ok", "".to_string(), "Main")));
+        let task2 = Task::new("T2", 1, Box::new(|| res::Result::new("Ok", "".to_string(), "Main")));
+        let task3 = Task::new("T3", 1, Box::new(|| res::Result::new("Ok", "".to_string(), "Main")));
+        
+        // Assert
+        assert_eq!(task2.id, task1.id + 1);
+        assert_eq!(task3.id, task2.id + 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput cannot be empty")]
+    fn test_task_with_empty_name() {
+        // Arrange & Act & Assert - empty name should panic
+        let _task = Task::new("", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+    }
+
+    #[test]
+    fn test_task_with_numbers_in_name() {
+        // Arrange & Act
+        let task = Task::new("Task123", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        
+        // Assert
+        assert_eq!(task.task_name.inner(), "Task123");
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput must be alphanumeric")]
+    fn test_task_with_invalid_name_panics() {
+        // Arrange & Act
+        let _ = Task::new("Invalid-Name", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+    }
+
+    #[test]
+    fn test_task_process_returns_correct_id() {
+        // Arrange
+        let task = Task::new("IdTest", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let expected_id = task.id;
+        
+        // Act
+        let result = task.process();
+        
+        // Assert
+        let (returned_id, _) = result.unwrap();
+        assert_eq!(returned_id, expected_id);
+    }
 }

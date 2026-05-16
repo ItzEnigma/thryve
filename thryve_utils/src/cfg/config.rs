@@ -83,6 +83,63 @@ impl Default for Config {
     }
 }
 
+impl Config{
+    /// Loads the default configuration.
+    ///
+    /// Returns a `Config` instance with all fields set to their default
+    /// values. This is useful when no external configuration file is
+    /// available or desired.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_utils::cfg::Config;
+    ///
+    /// let config = Config::load_def_config();
+    /// ```
+    pub fn load_def_config() -> Config {
+        let config: Config = Default::default();
+        config
+    }
+    
+    /// Loads configuration from a TOML file.
+    ///
+    /// Attempts to parse the specified file as TOML configuration. If the
+    /// file cannot be read or parsed, returns the default configuration
+    /// instead of failing.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the TOML configuration file
+    ///
+    /// # Returns
+    ///
+    /// A `Config` instance loaded from the file, or defaults on error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_priority` exceeds 15, as this would break internal
+    /// assumptions about priority encoding.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_utils::cfg::config::Config;
+    ///
+    /// let config = Config::load_config_from_file("config.toml");
+    /// ```
+    pub fn load_config_from_file(path: &str) -> Config {
+        let config = match read_config_file(path) {
+            Ok(cfg) => cfg,
+            Err(_) => Config::load_def_config(),
+        };
+    
+        assert!(config.tasks.max_priority < 15, "Maximum Task Priority cannot exceed 15");
+    
+        config
+    }
+}
+
 /// Service behavior configuration.
 ///
 /// Controls whether the service can be stopped or paused during runtime.
@@ -303,61 +360,6 @@ impl Default for DebugConfig {
     }
 }
 
-/// Loads the default configuration.
-///
-/// Returns a `Config` instance with all fields set to their default
-/// values. This is useful when no external configuration file is
-/// available or desired.
-///
-/// # Example
-///
-/// ```no_run
-/// use thryve_utils::cfg::config::load_def_config;
-///
-/// let config = load_def_config();
-/// ```
-pub fn load_def_config() -> Config {
-    let config: Config = Default::default();
-    config
-}
-
-/// Loads configuration from a TOML file.
-///
-/// Attempts to parse the specified file as TOML configuration. If the
-/// file cannot be read or parsed, returns the default configuration
-/// instead of failing.
-///
-/// # Arguments
-///
-/// * `path` - Path to the TOML configuration file
-///
-/// # Returns
-///
-/// A `Config` instance loaded from the file, or defaults on error.
-///
-/// # Panics
-///
-/// Panics if `max_priority` exceeds 15, as this would break internal
-/// assumptions about priority encoding.
-///
-/// # Example
-///
-/// ```no_run
-/// use thryve_utils::cfg::config::load_config_from_file;
-///
-/// let config = load_config_from_file("config.toml");
-/// ```
-pub fn load_config_from_file(path: &str) -> Config {
-    let config = match read_config_file(path) {
-        Ok(cfg) => cfg,
-        Err(_) => load_def_config(),
-    };
-
-    assert!(config.tasks.max_priority < 15, "Maximum Task Priority cannot exceed 15");
-
-    config
-}
-
 /// Reads and parses a TOML configuration file.
 ///
 /// Internal helper that reads the file contents and deserializes them
@@ -375,4 +377,292 @@ fn read_config_file(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
     let contents = fs::read_to_string(path)?;
     let config: Config = toml::from_str(&contents)?;
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for Config
+    #[test]
+    fn test_config_default_values() {
+        // Arrange & Act
+        let config = Config::default();
+        
+        // Assert - verify all default values
+        assert_eq!(config.service.can_stop, true);
+        assert_eq!(config.service.can_pause, true);
+        assert_eq!(config.engine.sleep_tick_rate, 4);
+        assert_eq!(config.threads.worker_count, 4);
+        assert_eq!(config.pipes.task_pipe_capacity, 1024);
+        assert_eq!(config.pipes.notif_pipe_capacity, 1024);
+        assert_eq!(config.pipes.res_pipe_capacity, 1024);
+        assert_eq!(config.tasks.max_priority, 4);
+        assert_eq!(config.tasks.aging_interval, 3);
+        assert_eq!(config.debugging.is_debugging, false);
+        assert_eq!(config.debugging.wait_before_execution, 10);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        // Arrange
+        let config1 = Config::default();
+        
+        // Act
+        let config2 = config1.clone();
+        
+        // Assert
+        assert_eq!(config1.service.can_stop, config2.service.can_stop);
+        assert_eq!(config1.engine.sleep_tick_rate, config2.engine.sleep_tick_rate);
+    }
+
+    // Tests for SerivceConfig
+    #[test]
+    fn test_service_config_default() {
+        // Arrange & Act
+        let config = SerivceConfig::default();
+        
+        // Assert
+        assert_eq!(config.can_stop, true);
+        assert_eq!(config.can_pause, true);
+    }
+
+    #[test]
+    fn test_service_config_clone() {
+        // Arrange
+        let config1 = SerivceConfig { can_stop: false, can_pause: true };
+        
+        // Act
+        let config2 = config1.clone();
+        
+        // Assert
+        assert_eq!(config1.can_stop, config2.can_stop);
+        assert_eq!(config1.can_pause, config2.can_pause);
+    }
+
+    // Tests for EngineConfig
+    #[test]
+    fn test_engine_config_default() {
+        // Arrange & Act
+        let config = EngineConfig::default();
+        
+        // Assert
+        assert_eq!(config.sleep_tick_rate, 4);
+    }
+
+    #[test]
+    fn test_engine_config_with_custom_value() {
+        // Arrange & Act
+        let config = EngineConfig { sleep_tick_rate: 10 };
+        
+        // Assert
+        assert_eq!(config.sleep_tick_rate, 10);
+    }
+
+    // Tests for ThreadConfig
+    #[test]
+    fn test_thread_config_default() {
+        // Arrange & Act
+        let config = ThreadConfig::default();
+        
+        // Assert
+        assert_eq!(config.worker_count, 4);
+    }
+
+    #[test]
+    fn test_thread_config_with_zero_workers() {
+        // Arrange & Act
+        let config = ThreadConfig { worker_count: 0 };
+        
+        // Assert
+        assert_eq!(config.worker_count, 0);
+    }
+
+    // Tests for PipeConfig
+    #[test]
+    fn test_pipe_config_default() {
+        // Arrange & Act
+        let config = PipeConfig::default();
+        
+        // Assert
+        assert_eq!(config.task_pipe_capacity, 1024);
+        assert_eq!(config.notif_pipe_capacity, 1024);
+        assert_eq!(config.res_pipe_capacity, 1024);
+    }
+
+    #[test]
+    fn test_pipe_config_with_custom_values() {
+        // Arrange & Act
+        let config = PipeConfig {
+            task_pipe_capacity: 2048,
+            notif_pipe_capacity: 512,
+            res_pipe_capacity: 256,
+        };
+        
+        // Assert
+        assert_eq!(config.task_pipe_capacity, 2048);
+        assert_eq!(config.notif_pipe_capacity, 512);
+        assert_eq!(config.res_pipe_capacity, 256);
+    }
+
+    // Tests for TaskConfig
+    #[test]
+    fn test_task_config_default() {
+        // Arrange & Act
+        let config = TaskConfig::default();
+        
+        // Assert
+        assert_eq!(config.max_priority, 4);
+        assert_eq!(config.aging_interval, 3);
+    }
+
+    #[test]
+    fn test_task_config_with_min_priority() {
+        // Arrange & Act
+        let config = TaskConfig { max_priority: 0, aging_interval: 3 };
+        
+        // Assert
+        assert_eq!(config.max_priority, 0);
+    }
+
+    #[test]
+    fn test_task_config_with_max_valid_priority() {
+        // Arrange & Act
+        let config = TaskConfig { max_priority: 14, aging_interval: 3 };
+        
+        // Assert
+        assert_eq!(config.max_priority, 14);
+    }
+
+    // Tests for DebugConfig
+    #[test]
+    fn test_debug_config_default() {
+        // Arrange & Act
+        let config = DebugConfig::default();
+        
+        // Assert
+        assert_eq!(config.is_debugging, false);
+        assert_eq!(config.wait_before_execution, 10);
+    }
+
+    #[test]
+    fn test_debug_config_enabled() {
+        // Arrange & Act
+        let config = DebugConfig {
+            is_debugging: true,
+            wait_before_execution: 30,
+        };
+        
+        // Assert
+        assert_eq!(config.is_debugging, true);
+        assert_eq!(config.wait_before_execution, 30);
+    }
+
+    // Tests for load_def_config
+    #[test]
+    fn test_load_def_config_returns_defaults() {
+        // Arrange & Act
+        let config = Config::load_def_config();
+        
+        // Assert
+        assert_eq!(config.threads.worker_count, 4);
+        assert_eq!(config.engine.sleep_tick_rate, 4);
+    }
+
+    // Tests for load_config_from_file
+    #[test]
+    fn test_load_config_from_file_nonexistent_returns_defaults() {
+        // Arrange
+        let nonexistent_path = "/nonexistent/path/config.toml";
+        
+        // Act
+        let config = Config::load_config_from_file(nonexistent_path);
+        
+        // Assert - should return defaults
+        assert_eq!(config.threads.worker_count, 4);
+    }
+
+    #[test]
+    fn test_load_config_from_file_with_valid_content() {
+        // Arrange - create a temp file
+        use std::fs::File;
+        use std::io::Write;
+        
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_config.toml");
+        
+        let toml_content = r#"
+            [threads]
+            worker_count = 8
+            
+            [engine]
+            sleep_tick_rate = 10
+        "#;
+        
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+        
+        // Act
+        let config = Config::load_config_from_file(file_path.to_str().unwrap());
+        
+        // Assert
+        assert_eq!(config.threads.worker_count, 8);
+        assert_eq!(config.engine.sleep_tick_rate, 10);
+        
+        // Cleanup
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_load_config_from_file_partial_content_uses_defaults() {
+        // Arrange - create a temp file with partial config
+        use std::fs::File;
+        use std::io::Write;
+        
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_config_partial.toml");
+        
+        let toml_content = r#"
+            [threads]
+            worker_count = 16
+        "#;
+        
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+        
+        // Act
+        let config = Config::load_config_from_file(file_path.to_str().unwrap());
+        
+        // Assert - specified value used, others default
+        assert_eq!(config.threads.worker_count, 16);
+        assert_eq!(config.engine.sleep_tick_rate, 4); // default
+        
+        // Cleanup
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    #[should_panic(expected = "Maximum Task Priority cannot exceed 15")]
+    fn test_load_config_from_file_invalid_priority_panics() {
+        // Arrange - create a temp file with invalid priority
+        use std::fs::File;
+        use std::io::Write;
+        
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join("test_config_invalid.toml");
+        
+        let toml_content = r#"
+            [tasks]
+            max_priority = 20
+        "#;
+        
+        let mut file = File::create(&file_path).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+        
+        // Act & Assert - should panic
+        let _ = Config::load_config_from_file(file_path.to_str().unwrap());
+        
+        // Cleanup
+        let _ = std::fs::remove_file(&file_path);
+    }
 }

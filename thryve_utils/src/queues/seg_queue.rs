@@ -153,3 +153,220 @@ impl QChild {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packets::packet_handle::PacketHandle;
+    use crate::packets::task::Task;
+    use crate::packets::notif_log::Log;
+    use crate::bases::observer::Observer;
+    use crate::traits::observer_logic::ObsLogic;
+    use crossbeam::channel::bounded;
+
+    // Test implementation of ObsLogic
+    struct TestObsLogic;
+    impl ObsLogic for TestObsLogic {
+        crate::impl_as_any!(TestObsLogic);
+        fn clean_up(&self, _observer: Arc<Observer>) {
+            // No-op for testing
+        }
+    }
+
+    #[test]
+    fn test_seg_queue_new_creates_queue() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+
+        // Act
+        let queue = QChild::new(packet_handle);
+
+        // Assert
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == false);
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+        assert!(queue.task_config.is_none());
+    }
+
+    #[test]
+    fn test_seg_queue_push_and_pop() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+        let notif = Log::log("test message".to_string(), "Main");
+
+        // Act - push notification
+        queue.push(notif);
+
+        // Act - pop notification
+        let popped = queue.pop();
+        
+        // Attempt to downcast the notification's core logic to a `Log` type
+        // to access its specific fields and functionality.
+        let notif_as_any = popped.notif_core.as_any();
+        let notif_casted = notif_as_any.downcast_ref::<Log>();
+
+        // Assert
+        assert_eq!(notif_casted.unwrap().message, "test message");
+    }
+
+    #[test]
+    fn test_seg_queue_push_multiple_pop_multiple() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+        let mut count = 5;
+
+        // Act - push multiple notifications
+        for i in 0..count {
+            let notif = Log::log(format!("message {}", i), "Main");
+            queue.push(notif);
+        }
+
+        // Act - pop all notifications
+        loop {
+            if count == 0 {
+                queue.exit_flag.store(true, Ordering::SeqCst);
+            }
+            
+            let notif = queue.pop();
+
+
+            if queue.exit_flag.load(Ordering::SeqCst) == true {
+                // Attempt to downcast the notification's core logic to a `Log` type
+                // to access its specific fields and functionality.
+                let notif_as_any = notif.notif_core.as_any();
+                let notif_casted = notif_as_any.downcast_ref::<Log>();
+
+                if notif_casted.unwrap().message == "Exit Flag Detected! Obs Thread Exiting..."{
+                    break;
+                }
+            }
+            count -= 1;
+        }
+
+        // Assert
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_seg_queue_pause_sets_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+
+        // Assert initially not paused
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+
+        // Act
+        queue.pause();
+
+        // Assert
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == true);
+    }
+
+    #[test]
+    fn test_seg_queue_resume_clears_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+
+        // Pause first
+        queue.pause();
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == true);
+
+        // Act
+        queue.resume();
+
+        // Assert
+        assert!(queue.pause_flag.load(Ordering::SeqCst) == false);
+    }
+
+    #[test]
+    fn test_seg_queue_finalize_sets_exit_flag() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+
+        // Create a mock logger observer
+        let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
+        let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
+        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx);
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: crate::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let logger = Arc::new(Observer::new(
+            "logger",
+            "loggertype",
+            obs_core,
+            fn_to_run,
+            logger_packet_handle,
+        ));
+
+        // Assert initially not exiting
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == false);
+
+        // Act
+        queue.finalize(Some(logger));
+
+        // Assert
+        assert!(queue.exit_flag.load(Ordering::SeqCst) == true);
+    }
+
+    #[test]
+    fn test_seg_queue_pop_returns_exit_notification_when_exit_flag_set() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+
+        // Set exit flag
+        queue.exit_flag.store(true, Ordering::SeqCst);
+
+        // Act
+        let notif = queue.pop();
+
+        // Attempt to downcast the notification's core logic to a `Log` type
+        // to access its specific fields and functionality.
+        let notif_as_any = notif.notif_core.as_any();
+        let notif_casted = notif_as_any.downcast_ref::<Log>();
+
+        // Assert
+        assert_eq!(notif_casted.unwrap().message, "Exit Flag Detected! Obs Thread Exiting...");
+    }
+
+    #[test]
+    fn test_seg_queue_push_notifies_condition_var() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let queue = QChild::new(packet_handle);
+        let notif = Log::log("test".to_string(), "Main");
+
+        // Act - push should notify (queue not paused)
+        queue.push(notif);
+
+        // pop to verify notification was queued
+        let popped = queue.pop();
+
+        // Attempt to downcast the notification's core logic to a `Log` type
+        // to access its specific fields and functionality.
+        let notif_as_any = popped.notif_core.as_any();
+        let notif_casted = notif_as_any.downcast_ref::<Log>();
+
+        // Assert
+        assert_eq!(notif_casted.unwrap().message, "test");
+    }
+}

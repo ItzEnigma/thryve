@@ -5,5 +5,8 @@
 
 [dependencies]
     # Internal Dependencies
-    chrono = { workspace = true }
     thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
+    
+    # External Dependencies
+    chrono = { workspace = true }
+    crossbeam = { workspace = true }

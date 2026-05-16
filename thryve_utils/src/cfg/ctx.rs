@@ -20,7 +20,7 @@
 //! - Packet handle for engine communication
 //! - Collections for observers and plugins during initialization
 //! - Log file names for the logger observer
-
+ 
 use std::sync::Arc;
 use crossbeam::channel::Receiver;
 
@@ -71,7 +71,7 @@ pub struct Ctx {
     pub plugins: Vec<Plugin>,
     /// Log file names for the logger observer.
     pub logging_file_names: Vec<String>,
-    /// Data collected for proper initalization.
+    /// Data collected for proper initialization.
     pub meta_data: MetaData,
 }
 
@@ -173,5 +173,125 @@ impl Ctx {
     /// ```
     pub fn packet_handle(&self) -> PacketHandle {
         self.packet_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossbeam::channel::bounded;
+
+    // Test implementation of ObsLogic
+    struct TestObsLogic;
+    impl crate::traits::observer_logic::ObsLogic for TestObsLogic {
+        crate::impl_as_any!(TestObsLogic);
+        fn clean_up(&self, _observer: Arc<Observer>) {}
+    }
+
+    // Test implementation of PlgLogic
+    struct TestPlgLogic;
+    impl crate::traits::plugin_logic::PlgLogic for TestPlgLogic {
+        crate::impl_as_any!(TestPlgLogic);
+        fn clean_up(&self) {}
+    }
+
+    #[test]
+    fn test_ctx_new_creates_context() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+
+        // Act
+        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+
+        // Assert
+        assert!(ctx.observers.is_empty());
+        assert!(ctx.plugins.is_empty());
+        assert!(ctx.logging_file_names.is_empty());
+    }
+
+    #[test]
+    fn test_ctx_observers_returns_and_clears() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        
+        // Add a dummy observer
+        ctx.observers.push(Observer::new(
+            "TestObs",
+            "TestType",
+            Arc::new(TestObsLogic),
+            Box::new(|_| {}),
+            ctx.packet_handle(),
+        ));
+
+        // Act
+        let observers = ctx.observers();
+
+        // Assert
+        assert_eq!(observers.len(), 1);
+        assert!(ctx.observers.is_empty()); // Cleared after take
+    }
+
+    #[test]
+    fn test_ctx_plugins_returns_and_clears() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        
+        // Add a dummy plugin
+        ctx.plugins.push(Plugin::new(
+            "TestPlg",
+            "TestType",
+            Arc::new(TestPlgLogic),
+            ctx.packet_handle(),
+            Box::new(|| crate::res::Result::new("Ok", "Done".to_string(), "Main")),
+        ));
+
+        // Act
+        let plugins = ctx.plugins();
+
+        // Assert
+        assert_eq!(plugins.len(), 1);
+        assert!(ctx.plugins.is_empty()); // Cleared after take
+    }
+
+    #[test]
+    fn test_ctx_packet_handle_returns_clone() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+
+        // Act
+        let handle1 = ctx.packet_handle();
+        let handle2 = ctx.packet_handle();
+
+        // Assert - both calls return valid handles (can send)
+        drop(handle1);
+        drop(handle2);
+        // If we get here without panic, handles are valid
+    }
+
+    #[test]
+    fn test_ctx_with_custom_config() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+
+        // Act
+        let ctx = Ctx::new(config.clone(), task_rx, notif_rx, packet_handle);
+
+        // Assert
+        assert_eq!(ctx.config.service.can_stop, config.service.can_stop);
     }
 }

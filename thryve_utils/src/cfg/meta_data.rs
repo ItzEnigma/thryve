@@ -100,3 +100,78 @@ impl MetaData {
         Self { datetime, dir_data }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_meta_data_default() {
+        // Arrange & Act
+        let meta_data = MetaData::default();
+        
+        // Assert
+        assert!(meta_data.datetime <= chrono::Local::now());
+        assert!(meta_data.dir_data.exe_dir.as_os_str().is_empty());
+        assert!(meta_data.dir_data.log_dir_path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_meta_data_new() {
+        // Arrange
+        let datetime = chrono::Local::now();
+        let dir_data = DirData::default();
+        
+        // Act
+        let meta_data = MetaData::new(datetime, dir_data.clone());
+        
+        // Assert
+        assert_eq!(meta_data.datetime, datetime);
+        assert_eq!(meta_data.dir_data.exe_dir, dir_data.exe_dir);
+    }
+
+    #[test]
+    fn test_meta_data_clone() {
+        // Arrange
+        let datetime = chrono::Local::now();
+        let dir_data = DirData::default();
+        let meta_data1 = MetaData::new(datetime, dir_data);
+        
+        // Act
+        let meta_data2 = meta_data1.clone();
+        
+        // Assert
+        assert_eq!(meta_data1.datetime, meta_data2.datetime);
+        assert_eq!(meta_data1.dir_data.exe_dir, meta_data2.dir_data.exe_dir);
+    }
+
+    #[test]
+    fn test_meta_data_with_custom_dir_data() {
+        // Arrange
+        let datetime = chrono::Local::now();
+        let exe_dir = std::path::PathBuf::from("/custom/exe");
+        let log_dir = std::path::PathBuf::from("/custom/logs");
+        let dir_data = DirData::new(exe_dir.clone(), log_dir.clone(), std::collections::HashMap::new());
+        
+        // Act
+        let meta_data = MetaData::new(datetime, dir_data.clone());
+        
+        // Assert
+        assert_eq!(meta_data.dir_data.exe_dir, exe_dir);
+        assert_eq!(meta_data.dir_data.log_dir_path, log_dir);
+    }
+
+    #[test]
+    fn test_meta_data_datetime_is_current() {
+        // Arrange
+        let before = chrono::Local::now();
+        
+        // Act
+        let meta_data = MetaData::default();
+        
+        // Assert
+        let after = chrono::Local::now();
+        assert!(meta_data.datetime >= before);
+        assert!(meta_data.datetime <= after);
+    }
+}

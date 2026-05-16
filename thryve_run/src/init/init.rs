@@ -208,9 +208,120 @@ pub fn init_directories(ctx: &mut Ctx) {
             ),
         );
     }
- 
+  
     let dir_data = DirData::new(exe_dir, log_dir_path, temp_hash_map);
     let meta_data = MetaData::new(datetime, dir_data);
- 
+  
     ctx.meta_data = meta_data;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thryve_utils::cfg::config::Config;
+    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::task::Task;
+    use thryve_utils::bases::notif::Notif;
+    use crossbeam::channel::bounded;
+
+    fn create_test_ctx() -> Ctx {
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        Ctx::new(config, task_rx, notif_rx, packet_handle)
+    }
+
+    #[test]
+    fn test_init_directories_creates_log_structure() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+
+        // Act
+        init_directories(&mut ctx);
+
+        // Assert
+        assert!(ctx.meta_data.dir_data.log_dir_path.exists());
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key(&NamedInput::new("Main")));
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key(&NamedInput::new("Error")));
+    }
+
+    #[test]
+    fn test_init_directories_creates_custom_log_files() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+        ctx.logging_file_names.push("Custom".to_string());
+
+        // Act
+        init_directories(&mut ctx);
+
+        // Assert
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key(&NamedInput::new("Custom")));
+    }
+
+    #[test]
+    fn test_init_directories_sets_exe_dir() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+
+        // Act
+        init_directories(&mut ctx);
+
+        // Assert
+        assert!(ctx.meta_data.dir_data.exe_dir.exists());
+    }
+
+    #[test]
+    fn test_init_directories_sets_datetime() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+
+        // Act
+        init_directories(&mut ctx);
+
+        // Assert
+        assert!(ctx.meta_data.datetime.to_string().len() > 0);
+    }
+
+    #[test]
+    fn test_init_logger_creates_and_loads_observer() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+        init_directories(&mut ctx);
+        let mut engine = Engine::new(&ctx);
+
+        // Act
+        init_logger(&ctx, &mut engine);
+
+        // Assert - observer should be loaded (no panic means success)
+        // The logger observer is loaded into the engine's observer manager
+    }
+
+    #[test]
+    fn test_init_engine_creates_engine_with_logger() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+        init_directories(&mut ctx);
+
+        // Act
+        let engine = init_engine(&ctx);
+
+        // Assert
+        assert!(!engine.exit_flag);
+        assert!(!engine.pause_flag);
+    }
+
+    #[test]
+    fn test_init_engine_with_custom_config() {
+        // Arrange
+        let mut ctx = create_test_ctx();
+        init_directories(&mut ctx);
+        ctx.config.engine.sleep_tick_rate = 100;
+
+        // Act
+        let engine = init_engine(&ctx);
+
+        // Assert
+        assert_eq!(engine.sleep_tick_rate, 100);
+    }
 }

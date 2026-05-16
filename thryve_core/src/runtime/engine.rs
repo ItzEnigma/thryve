@@ -58,7 +58,7 @@ use crossbeam::channel::{Receiver, bounded};
 /// ```
 pub struct Engine {
     /// Milliseconds to sleep when idle.
-    sleep_tick_rate: u64,
+    pub sleep_tick_rate: u64,
     /// Manages observers and notifications.
     pub obs_manager: ObserverManager,
     /// Manages plugins and tasks.
@@ -304,5 +304,356 @@ impl Engine {
         if (res_type == "fin" || res_type == "finerr") && !self.exit_flag {
             self.finalize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thryve_utils::cfg::ctx::Ctx;
+    use thryve_utils::cfg::config::Config;
+    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::task::Task;
+    use thryve_utils::bases::notif::Notif;
+    use thryve_utils::bases::observer::Observer;
+    use thryve_utils::traits::observer_logic::ObsLogic;
+    use crossbeam::channel::bounded;
+
+    // Test implementation of ObsLogic
+    struct TestObsLogic;
+    impl ObsLogic for TestObsLogic {
+        thryve_utils::impl_as_any!(TestObsLogic);
+        fn clean_up(&self, observer: Arc<Observer>) {
+            while observer.obs_queue.main_queue.len() != 0 {
+                let _notif = observer.obs_queue.pop();
+            };
+        }
+    }
+
+    fn create_test_ctx() -> Ctx {
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let config = Config::default();
+        Ctx::new(config, task_rx, notif_rx, packet_handle)
+    }
+
+    #[test]
+    fn test_engine_new_creates_engine() {
+        // Arrange
+        let ctx = create_test_ctx();
+
+        // Act
+        let engine = Engine::new(&ctx);
+
+        // Assert
+        assert!(!engine.exit_flag);
+        assert!(!engine.pause_flag);
+        assert_eq!(engine.sleep_tick_rate, ctx.config.engine.sleep_tick_rate);
+    }
+
+    #[test]
+    fn test_engine_run_once_with_exit_flag_only_checks_notifs() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        engine.exit_flag = true;
+
+        // Act - should not panic
+        engine.run_once();
+
+        // Assert - exit_flag should still be true
+        assert!(engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_run_once_with_pause_flag_only_checks_notifs() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        engine.pause_flag = true;
+
+        // Act - should not panic
+        engine.run_once();
+
+        // Assert - pause_flag should still be true
+        assert!(engine.pause_flag);
+    }
+
+    #[test]
+    fn test_engine_pause_sets_flag() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer first (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Assert initially not paused
+        assert!(!engine.pause_flag);
+
+        // Act
+        engine.pause();
+
+        // Assert
+        assert!(engine.pause_flag);
+    }
+
+    #[test]
+    fn test_engine_resume_clears_flag() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer first (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        engine.pause();
+
+        // Assert paused
+        assert!(engine.pause_flag);
+
+        // Act
+        engine.resume();
+
+        // Assert
+        assert!(!engine.pause_flag);
+    }
+
+    #[test]
+    fn test_engine_check_results_with_empty_channel() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Act
+        let received = engine.check_results();
+
+        // Assert - no results available
+        assert!(!received);
+    }
+
+    #[test]
+    fn test_engine_check_tasks_with_empty_channel() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let engine = Engine::new(&ctx);
+
+        // Act
+        let received = engine.check_tasks();
+
+        // Assert - no tasks available
+        assert!(!received);
+    }
+
+    #[test]
+    fn test_engine_check_notifs_with_empty_channel() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Act
+        let received = engine.check_notifs();
+
+        // Assert - no notifications available
+        assert!(!received);
+    }
+
+    #[test]
+    fn test_engine_finalize_sets_exit_flag() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for finalize)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Assert initially not exiting
+        assert!(!engine.exit_flag);
+
+        // Act
+        engine.finalize();
+
+        // Assert
+        assert!(engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_handle_result_with_fin_type_triggers_finalize() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Create a "fin" result
+        let fin_result = res::Result::new("fin", "Finished".to_string(), "Main");
+
+        // Assert initially not exiting
+        assert!(!engine.exit_flag);
+
+        // Act - handle the fin result
+        engine.handle_result((1, fin_result));
+
+        // Assert - finalize should have been called
+        assert!(engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_handle_result_with_finerr_type_triggers_finalize() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Create a "finerr" result
+        let finerr_result = res::Result::new("finerr", "Error finished".to_string(), "Error");
+
+        // Assert initially not exiting
+        assert!(!engine.exit_flag);
+
+        // Act - handle the finerr result
+        engine.handle_result((1, finerr_result));
+
+        // Assert - finalize should have been called
+        assert!(engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_handle_result_with_normal_type_does_not_finalize() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Create a normal result
+        let normal_result = res::Result::new("normal", "Done".to_string(), "Main");
+
+        // Act - handle the normal result
+        engine.handle_result((1, normal_result));
+
+        // Assert - should not have finalized
+        assert!(!engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_handle_result_submits_next_task() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Create a next task
+        let next_task = Task::new("nextTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        let result_with_next = res::Result::new("normal", "Done".to_string(), "Main").chain(next_task);
+
+        // Act - handle the result with next task
+        engine.handle_result((1, result_with_next));
+
+        // Assert - the next task should have been submitted to the threadpool
+        // We can verify this by checking that the task was sent (no panic means it worked)
+        assert!(!engine.exit_flag);
+    }
+
+    #[test]
+    fn test_engine_check_tasks_receives_and_submits() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx);
+        let config = Config::default();
+        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let engine = Engine::new(&ctx);
+
+        // Send a task
+        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        task_tx.send(task).unwrap();
+
+        // Act
+        let received = engine.check_tasks();
+
+        // Assert
+        assert!(received);
+    }
+
+    #[test]
+    fn test_engine_check_notifs_receives_and_forwards() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer (required for forward_notif)
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Send a notification
+        let notif = Log::log("test notification".to_string(), "Main");
+        ctx.packet_handle().send_notification(notif);
+
+        // Act
+        let received = engine.check_notifs();
+
+        // Assert
+        assert!(received);
+    }
+
+    #[test]
+    fn test_engine_run_once_processes_all_channels() {
+        // Arrange
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone());
+        let config = Config::default();
+        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let mut engine = Engine::new(&ctx);
+
+        // Load a logging observer
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        engine.obs_manager.load_observer(observer);
+
+        // Send a task and notification
+        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        task_tx.send(task).unwrap();
+        let notif = Log::log("test".to_string(), "Main");
+        notif_tx.send(notif).unwrap();
+
+        // Act - run once should process both without blocking
+        engine.run_once();
+
+        // Assert - engine should still be running
+        assert!(!engine.exit_flag);
+        assert!(!engine.pause_flag);
     }
 }

@@ -118,22 +118,28 @@ impl Result {
         }
     }
 
-    /// Creates a new result with a follow-up task.
+    /// Chains a task to this result, creating a task edge in the execution graph.
     ///
-    /// Creates a result that represents an edge in the task graph,
-    /// connecting to the next task to be executed. This enables
-    /// task chaining and complex execution flows.
+    /// This method transforms a result into a task edge by attaching a
+    /// `Task` that will be executed next. It enables fluent task chaining
+    /// where the output of one task directly leads to the execution of
+    /// another, forming a directed graph of operations.
+    /// 
+    /// **Note** that only one task can be chained at a time.
+    ///
+    /// # Behavior
+    ///
+    /// - Takes ownership of `self` and the provided `task`
+    /// - Sets the `next_task` field to `Some(task)`
+    /// - Returns the modified result
     ///
     /// # Arguments
     ///
-    /// * `res_type` - Type identifier for the result
-    /// * `msg` - Human-readable result message
-    /// * `logging_file` - Log file name for the message
-    /// * `next_task` - Optional task to execute next
+    /// * `task` - The task to chain as the next execution step
     ///
     /// # Returns
     ///
-    /// A new `Result` with the specified follow-up task.
+    /// The modified `Result` with the task attached, enabling method chaining.
     ///
     /// # Example
     ///
@@ -141,26 +147,216 @@ impl Result {
     /// use thryve_utils::res::Result;
     /// use thryve_utils::packets::task::Task;
     ///
-    /// let next = Some(Task::new("FollowUp", 1, Box::new(|| {
-    ///     Result::new("Ok", "".to_string(), "Main")
-    /// })));
+    /// // Create a result and chain a follow-up task
+    /// let next_task = Task::new("FollowUp", 1, Box::new(|| {
+    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// }));
     ///
-    /// let result = Result::new_tasked_res("Chained", "Continuing".to_string(), "Main", next);
-    /// assert!(result.next_task.is_some());
+    /// let chained_result = Result::new("Step1", "First step".to_string(), "Main")
+    ///     .chain(next_task);
+    ///
+    /// assert!(chained_result.next_task.is_some());
     /// ```
-    pub fn new_tasked_res(
-        res_type: &str,
-        msg: String,
-        logging_file: &str,
-        next_task: Option<Task>,
-    ) -> Self {
-        Result {
-            result_type: NamedInput::new(res_type),
-            message: msg,
-            log_msg_to_file: NamedInput::new(logging_file),
-            next_task: next_task,
-            observer: None,
-            plugin: None,
+    /// 
+    /// ```no_run
+    /// use thryve_utils::res::Result;
+    /// use thryve_utils::packets::task::Task;
+    ///
+    /// // Create a result and chain a follow-up task
+    /// let next_task_1 = Task::new("FollowUp2", 1, Box::new(|| {
+    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// }));
+    /// 
+    ///
+    /// let next_task_2 = Task::new("FollowUp2", 1, Box::new(|| {
+    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// }));
+    ///
+    /// // A double chain should make next_task_2 overwrite next_task_1
+    /// let chained_result = Result::new("Step1", "First step".to_string(), "Main")
+    ///     .chain(next_task_1).chain(next_task_2);
+    ///
+    /// assert!(chained_result.next_task.task_name.inner() == "FollowUp2");
+    /// ```
+    pub fn chain(mut self , task: Task) -> Self {
+        self.next_task = Some(task);
+        self
+    } 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::packets::Packet;
+
+    #[test]
+    fn test_result_new_creates_regular_result() {
+        // Arrange
+        let result_type = "Success";
+        let message = "Task completed successfully".to_string();
+        let log_file = "Main";
+        
+        // Act
+        let result = Result::new(result_type, message, log_file);
+        
+        // Assert
+        assert_eq!(result.result_type.inner(), "Success");
+        assert_eq!(result.message, "Task completed successfully");
+        assert_eq!(result.log_msg_to_file.inner(), "Main");
+        assert!(result.next_task.is_none());
+        assert!(result.observer.is_none());
+        assert!(result.plugin.is_none());
+    }
+
+    #[test]
+    fn test_result_new_with_empty_message() {
+        // Arrange
+        let message = "".to_string();
+        
+        // Act
+        let result = Result::new("Ok", message, "Main");
+        
+        // Assert
+        assert_eq!(result.message, "");
+    }
+
+    #[test]
+    fn test_result_new_with_special_characters_in_message() {
+        // Arrange
+        let message = "Error: Connection failed! @#$%".to_string();
+        
+        // Act
+        let result = Result::new("Error", message, "Error");
+        
+        // Assert
+        assert_eq!(result.message, "Error: Connection failed! @#$%");
+    }
+
+    #[test]
+    fn test_result_chaining_with_task() {
+        // Arrange
+        let next_task = Task::new(
+            "FollowUpTask",
+            1,
+            Box::new(|| Result::new("Ok", "Done".to_string(), "Main"))
+        );
+        
+        // Act
+        let result = Result::new(
+            "Chained",
+            "Continuing to next task".to_string(),
+            "Main",
+        ).chain(next_task);
+        
+        // Assert
+        assert_eq!(result.result_type.inner(), "Chained");
+        assert_eq!(result.message, "Continuing to next task");
+        assert!(result.next_task.is_some());
+        assert!(result.observer.is_none());
+        assert!(result.plugin.is_none());
+        
+        // Verify the task details
+        if let Some(task) = result.next_task {
+            assert_eq!(task.task_name.inner(), "FollowUpTask");
+            assert_eq!(task.base_priority, 1);
         }
+    }
+
+    #[test]
+    fn test_result_display_impl() {
+        // Arrange
+        let result = Result::new("Test", "Display message".to_string(), "Main");
+        
+        // Act
+        let display_str = format!("{}", result);
+        
+        // Assert
+        assert_eq!(display_str, "Message: Display message");
+    }
+
+    #[test]
+    fn test_result_display_with_empty_message() {
+        // Arrange
+        let result = Result::new("Test", "".to_string(), "Main");
+        
+        // Act
+        let display_str = format!("{}", result);
+        
+        // Assert
+        assert_eq!(display_str, "Message: ");
+    }
+
+    #[test]
+    fn test_result_chaining_pattern() {
+        // Arrange & Act - Simulate a task chain
+        let task1_result = Result::new(
+            "Step1",
+            "First step done".to_string(),
+            "Main",
+        ).chain(
+            Task::new("Step2", 2, Box::new(|| {
+                Result::new(
+                    "Step2",
+                    "Second step done".to_string(),
+                    "Main"
+                ).chain(
+                    Task::new("Step3", 3, Box::new(|| {
+                        Result::new("Final", "All done".to_string(), "Main")
+                    }))
+                )
+            }))
+        );
+        
+        // Assert first result has a task
+        assert!(task1_result.next_task.is_some());
+        
+        // Execute the chained task
+        if let Some(task) = task1_result.next_task {
+            let task2_result = task.process().unwrap().1;
+            assert!(task2_result.next_task.is_some());
+            
+            // Execute the final task
+            if let Some(final_task) = task2_result.next_task {
+                let final_result = final_task.process().unwrap().1;
+                assert!(final_result.next_task.is_none());
+                assert_eq!(final_result.result_type.inner(), "Final");
+            }
+        }
+    }
+
+    #[test]
+    fn test_result_with_unicode_message() {
+        // Arrange
+        let message = "成功！Успех! Éxito!".to_string();
+        
+        // Act
+        let result = Result::new("Success", message, "Main");
+        
+        // Assert
+        assert_eq!(result.message, "成功！Успех! Éxito!");
+    }
+
+    #[test]
+    fn test_result_result_type_validation() {
+        // Arrange & Act - These should all work (alphanumeric)
+        let _r1 = Result::new("A", "msg".to_string(), "Main");
+        let _r2 = Result::new("Z123", "msg".to_string(), "Main");
+        let _r3 = Result::new("Type123", "msg".to_string(), "Main");
+        
+        // Assert - if we got here, all validations passed
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput must be alphanumeric")]
+    fn test_result_invalid_result_type_panics() {
+        // Arrange & Act - This should panic due to invalid result type
+        let _ = Result::new("Invalid-Type", "msg".to_string(), "Main");
+    }
+
+    #[test]
+    #[should_panic(expected = "NamedInput must be alphanumeric")]
+    fn test_result_invalid_log_file_panics() {
+        // Arrange & Act - This should panic due to invalid log file name
+        let _ = Result::new("Valid", "msg".to_string(), "Invalid/File");
     }
 }

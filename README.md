@@ -32,73 +32,7 @@ Thryve is designed around three main pillars:
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              SERVICE LAYER                                  │
-│ ┌────────────────────────────────────────────────────────────────────────┐  │
-│ │                         Service / RunInteractive                       │  │
-│ │  (Entry point: receives external commands, manages engine lifecycle)   │  │
-│ └───────────────────────────────────┬────────────────────────────────────┘  │
-│                                     │                                       │
-│                                     ▼                                       │
-└─────────────────────────────────────┼───────────────────────────────────────┘
-                                      │
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                            CONTEXT (Ctx)                                     │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │  Configuration │ Task Receiver │ Notif Receiver │ Packet Handle Factory│  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                        ENGINE (Core)                                         │
-│                                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                            Engine Main Loop (run_once)                                 │  │
-│  │                                                                                        │  │
-│  │    ┌──────────────┐                ┌──────────────┐               ┌──────────────┐     │  │
-│  │    │ check_tasks  │                │ check_notifs │               │check_results │     │  │
-│  │    └──────┬───────┘                └──────┬───────┘               └──────┬───────┘     │  │
-│  │           │                               │                              │             │  │
-│  │           ▼                               ▼                              ▼             │  │
-│  └───────────┼───────────────────────────────┼──────────────────────────────┼─────────────┘  │
-│              │                               │                              │                │
-│              ▼                               ▼                              ▼                │
-│  ┌─────────────────────┐  ┌─────────────────────────────────────┐ ┌─────────────────────┐    │
-│  │   PluginManager     │  │           ObserverManager           | │  handle_result()    │    │
-│  │                     │  │                                     | │  (chaining,         │    │
-│  │  ┌───────────────┐  │  │  ┌───────────────────────────────┐  | │   logging,          │    │
-│  │  │  ThreadPool   │  │  │  │          ThreadPool           |  | │   shutdown)         │    │
-│  │  │               │  │  │  │                               |  | └─────────────────────┘    │
-│  │  │  ┌─────────┐  │  │  │  │          ┌─────────┐          |  |                            │
-│  │  │  │ PQChild │  │  │  │  │          │ QChild  │          |  |                            │
-│  │  │  │ (Task   │  │  │  │  │          │ (Notif  │          |  |                            │
-│  │  │  │  Queue) │  │  │  │  │          │  Queue) │          |  |                            │
-│  │  │  └────┬────┘  │  │  │  │          └────┬────┘          |  |                            │
-│  │  │       │       │  │  │  │               │               |  |                            │
-│  │  │       ▼       │  │  │  │               ▼               |  |                            │
-│  │  │  Worker       │  │  │  │          ┌────────┐           |  |                            │
-│  │  │  Threads      │  │  │  │          │Sorter  │           |  |                            │
-│  │  │  (execute     │  │  │  │          │Thread  │           |  |                            │
-│  │  │   tasks)      │  │  │  │          └───┬────┘           |  |                            │
-│  │  │               │  │  │  │              │                |  |                            │
-│  │  └───────────────┘  │  │  │              ▼                |  |                            │
-│  │                     │  │  │  ┌─────────────────────────┐  |  |                            │
-│  │  ┌─────────────────┐│  │  │  │   Observer Threads      │  |  |                            │
-│  │  │ Plugins Map     ││  │  │  │  ┌──────────┬──────────┐│  |  |                            │
-│  │  │ (type → Plugin) ││  │  │  │  │ Logger   │  Other   ││  |  |                            │
-│  │  └─────────────────┘│  │  │  │  │ Observer │ Observers││  |  |                            │
-│  │                     │  │  │  │  └──────────┴──────────┘│  |  |                            │
-│  │                     │  │  │  └─────────────────────────┘  |  |                            │
-│  │                     │  │  │                               |  |                            │
-│  └─────────────────────┘  │  └───────────────────────────────┘  |                            │
-│                           │                                     |                            │
-│                           └─────────────────────────────────────┘                            │
-│                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+![Architecture](./md_images/Architecture.png)
 
 ### Data Flow
 
@@ -302,6 +236,7 @@ use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
 use thryve_utils::impl_as_any;
 use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::res;
 
 struct MyPlugin {
     handle: PacketHandle,
@@ -320,7 +255,7 @@ fn create_plugin(handle: PacketHandle) -> Plugin {
     
     let init_fn = Box::new(move || {
         // Initialization task
-        thryve_utils::res::Result::new("Init", "Plugin initialized".to_string(), "Main")
+        res::Result::new("Init", "Plugin initialized".to_string(), "Main")
     });
     
     Plugin::new("MyPlugin", "MyPluginType", core, handle, init_fn)
@@ -365,6 +300,58 @@ fn create_observer(handle: PacketHandle) -> Observer {
     });
     
     Observer::new("MyObserver", "MyObserverType", core, run_fn, handle)
+}
+```
+
+### Full Sample Service
+Refer to [Creating a Plugin](#creating-a-plugin) and [Creating an Observer](#creating-an-observer) sections for the `create_plugin` and `create_observer` functions respectively.
+```rust
+use thryve::run::run_service;
+use thryve::utils::cfg::Config;
+
+fn main(){
+    let config = Config::load_def_config();
+
+    let (svc , mut ctx) = run_service::create_service(config);
+
+    let test_plg = create_plugin(ctx.packet_handle())
+    let test_obs = create_observer(ctx.packet_handle())
+
+    ctx.plugins.push(test_plg);
+    ctx.observers.push(test_obs);
+    
+    // A TestFile is added to the logging files.
+    let mut extra_logging_file: String = "TestFile".to_string();
+    ctx.logging_file_names.append(&mut extra_logging_file);
+
+
+    run_service::try_run_as_service(svc , ctx);
+}
+```
+
+### Full Sample Interactive
+Refer to [Creating a Plugin](#creating-a-plugin) and [Creating an Observer](#creating-an-observer) sections for the `create_plugin` and `create_observer` functions respectively.
+```rust
+use thryve::run::run_interactive;
+use thryve::utils::cfg::Config;
+
+fn main(){
+    let config = Config::load_def_config();
+
+    let mut ctx = run_interactive::summon_requirements(config);
+
+    let test_plg = create_plugin(ctx.packet_handle())
+    let test_obs = create_observer(ctx.packet_handle())
+
+    ctx.plugins.push(test_plg);
+    ctx.observers.push(test_obs);
+    
+    // A TestFile is added to the logging files.
+    let mut extra_logging_file: String = "TestFile".to_string();
+    ctx.logging_file_names.append(&mut extra_logging_file);
+
+
+    run_service::run_interactive(ctx);
 }
 ```
 
@@ -425,8 +412,122 @@ log/
 
 ## License
 
-[License information]
+Thryve is dual-licensed under two models:
+
+### Open-Source License (AGPL-3.0)
+
+For open-source projects and personal use, Thryve is available under the **GNU Affero General Public License v3.0**.
+
+This means you can:
+- ✅ Use Thryve freely in open-source projects
+- ✅ Modify the source code
+- ✅ Distribute the software
+- ✅ Use it for learning and research
+
+Conditions:
+- 🔹 You must release your modifications under AGPL-3.0
+- 🔹 You must make source code available when distributing
+- 🔹 If used over a network (SaaS), you must make source code available to users
+
+See the [`LICENSE`](LICENSE) file for the full license text.
+
+### Commercial License
+
+For closed-source commercial projects that cannot comply with AGPL-3.0 requirements:
+
+- 🔒 Keep your source code private
+- 🔒 No requirement to disclose modifications
+- 🔒 Suitable for proprietary SaaS applications
+
+**Contact for licensing:** [Insert your email or website]
+
+See [`COMMERCIAL.md`](COMMERCIAL.md) for more information.
+
+---
+
+**Choosing a license:**
+- Open-source project? → Use **AGPL-3.0** (free)
+- Closed-source commercial product? → Need **Commercial License** (paid)
+- Unsure? → Contact us for guidance
 
 ## Contributing
 
-[Contributing guidelines]
+Contributions are welcome! This project uses a **Contributor License Agreement (CLA)** to ensure that contributors grant necessary rights for both open-source and commercial licensing.
+
+### Before You Contribute
+
+1. **Read the CLA**: By submitting a pull request, you agree to the Contributor License Agreement
+2. **Understand the architecture**: Review the [Architecture](#architecture) section
+3. **Check existing issues**: See if your feature/bug is already discussed
+
+### How to Contribute
+
+#### 1. Fork and Clone
+
+```bash
+git clone https://github.com/JoJoAbdellatif/Thryve.git
+cd Thryve
+```
+
+#### 2. Create a Branch
+
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/your-bug-fix
+```
+
+#### 3. Make Your Changes
+
+Follow Rust best practices:
+- Write clear, idiomatic Rust code
+- Add documentation comments (`///`) for public APIs
+- Ensure code is formatted: `cargo fmt`
+- Run clippy: `cargo clippy -- -D warnings`
+
+#### 4. Test Your Changes
+
+```bash
+# Run all tests
+cargo test
+
+# Run tests with coverage (if configured)
+cargo test --all-features
+```
+
+#### 5. Submit a Pull Request
+
+- Provide a clear description of changes
+- Reference related issues
+- Ensure CI passes
+- Wait for CLA verification (automated)
+- Address review feedback
+
+### CLA (Contributor License Agreement)
+
+By contributing to Thryve, you agree to:
+
+1. **Grant License**: You grant the project maintainers a perpetual, worldwide, non-exclusive, royalty-free license to use, modify, and distribute your contribution
+2. **Ownership Representation**: Your contributions are your original work or you have permission to contribute them
+3. **Patents**: You grant patent rights for your contributions
+
+The CLA ensures that:
+- Contributors retain copyright ownership
+- Maintainers can include contributions in both AGPL and Commercial licenses
+- The project can be commercially licensed without legal barriers
+
+### Code Style
+
+- Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
+- Use `cargo fmt` for formatting
+- Document public items with `///` comments
+- Use meaningful variable and function names
+
+### Questions?
+
+- Open an issue for discussions
+- Contact maintainers for architectural questions
+
+---
+
+**Thank you for contributing to Thryve!** 🚀

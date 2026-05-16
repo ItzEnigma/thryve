@@ -6,7 +6,7 @@
 //!
 //! # Architecture
 //!
-//! The `QueueBase` struct is designed to be embedded in specific queue
+//! The [`QueueBase`] struct is designed to be embedded in specific queue
 //! implementations, providing:
 //! - Task configuration for queue behavior
 //! - A main queue for storing items
@@ -16,8 +16,8 @@
 //!
 //! # Usage
 //!
-//! Queue implementations embed `QueueBase` to inherit its functionality,
-//! then implement the [`Queue`] trait to provide type-specific behavior.
+//! Queue implementations embed [`QueueBase`] to inherit its functionality,
+//! then implement the [`Queue`](Crate::traits::queue::Queue) trait to provide type-specific behavior.
 
 use std::{marker::PhantomData, sync::{Arc, Condvar, Mutex, atomic::AtomicBool}};
 
