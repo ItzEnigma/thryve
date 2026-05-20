@@ -24,6 +24,7 @@ use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginMa
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::cfg::metrics::Metrics;
 use thryve_utils::packets::{notif_log::Log, task::Task};
 use thryve_utils::res;
 use thryve_utils::traits::queue::Queue;
@@ -59,6 +60,14 @@ use crossbeam::channel::{Receiver, bounded};
 pub struct Engine {
     /// Milliseconds to sleep when idle.
     pub sleep_tick_rate: u64,
+    /// Determines if the Config debug-mode is enabled.
+    pub is_debug_enabled: bool,
+    /// Determines if metric calculation is enabled.
+    pub is_metric_calc_enabled: bool,
+    /// Determines if tasks are logged.
+    pub is_task_logging_enabled: bool,
+    /// Keeps track of the metrics only if `is_debug_enabled` and `is_metric_calc_enabled` is true.
+    pub metrics: Metrics,
     /// Manages observers and notifications.
     pub obs_manager: ObserverManager,
     /// Manages plugins and tasks.
@@ -100,6 +109,10 @@ impl Engine {
 
         Self {
             sleep_tick_rate: ctx.config.engine.sleep_tick_rate,
+            is_debug_enabled: ctx.config.debugging.is_debugging,
+            is_metric_calc_enabled: ctx.config.debugging.calculate_metrics,
+            is_task_logging_enabled: ctx.config.debugging.log_tasks,
+            metrics: ctx.meta_data.metrics.clone(),
             plugin_manager: PluginManager::new(ctx, res_tx),
             obs_manager: ObserverManager::new(ctx),
             task_rx: ctx.task_rx.clone(),
@@ -149,11 +162,16 @@ impl Engine {
     /// # Returns
     ///
     /// `true` if any tasks were received and processed.
-    fn check_tasks(&self) -> bool {
+    fn check_tasks(&mut self) -> bool {
         let mut received_tasks = false;
 
         while let Ok(task) = self.task_rx.try_recv() {
             received_tasks = true;
+            
+            if self.is_debug_enabled && self.is_metric_calc_enabled {
+                self.manage_metrics_tasks(&task);
+            }
+
             self.plugin_manager.threadpool.submit_task(task);
         }
         received_tasks
@@ -172,6 +190,11 @@ impl Engine {
 
         while let Ok(notif) = self.notif_rx.try_recv() {
             received_notifs = true;
+            
+            if self.is_debug_enabled && self.is_metric_calc_enabled {
+                self.manage_metrics_notifs(&notif);
+            }
+            
             self.obs_manager.forward_notif(notif);
         }
         received_notifs
@@ -191,10 +214,87 @@ impl Engine {
 
         while let Ok(task_result) = self.res_rx.try_recv() {
             received_results = true;
+
+            if self.is_debug_enabled && self.is_metric_calc_enabled {
+                self.manage_metrics_results(&task_result.1);
+            }
+
             self.handle_result(task_result);
         };
 
         received_results
+    }
+
+    /// Collects size metrics for an incoming task.
+    ///
+    /// Stores the task size in the metrics batch buffer. When the batch
+    /// is full (1024 entries), triggers metric calculation and sends
+    /// a debug notification with the formatted results.
+    ///
+    /// # Arguments
+    ///
+    /// * `task` - Reference to the task being processed
+    fn manage_metrics_tasks(&mut self, task: &Task) {
+        let size = task.size_in_bytes();
+        let cur_batch_size = self.metrics.cur_batch_count_task;
+
+        self.metrics.task_size_batch[cur_batch_size] = size;
+        self.metrics.cur_batch_count_task += 1;
+
+        if self.metrics.cur_batch_count_task == self.metrics.task_size_batch.len() {
+            let metrics_readable = self.metrics.calculate_metrics();
+
+            let notif = Log::log(metrics_readable, "Debug");
+            self.obs_manager.forward_notif(notif);
+        }
+    }
+
+    /// Collects size metrics for a task execution result.
+    ///
+    /// Stores the result size in the metrics batch buffer. When the
+    /// batch is full (1024 entries), triggers metric calculation and
+    /// sends a debug notification with the formatted results.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_result` - Reference to the result being processed
+    fn manage_metrics_results(&mut self, task_result: &res::Result) {
+        let size = task_result.size_in_bytes();
+        let cur_batch_size = self.metrics.cur_batch_count_res;
+
+        self.metrics.res_size_batch[cur_batch_size] = size;
+        self.metrics.cur_batch_count_res += 1;
+
+        if self.metrics.cur_batch_count_res == self.metrics.res_size_batch.len() {
+            let metrics_readable = self.metrics.calculate_metrics();
+
+            let notif = Log::log(metrics_readable, "Debug");
+            self.obs_manager.forward_notif(notif);
+        }
+    }
+
+    /// Collects size metrics for an incoming notification.
+    ///
+    /// Stores the notification size in the metrics batch buffer. When
+    /// the batch is full (1024 entries), triggers metric calculation
+    /// and sends a debug notification with the formatted results.
+    ///
+    /// # Arguments
+    ///
+    /// * `notif` - Reference to the notification being processed
+    fn manage_metrics_notifs(&mut self, notif: &Notif) {
+        let size = notif.size_in_bytes();
+        let cur_batch_size = self.metrics.cur_batch_count_notif;
+
+        self.metrics.notif_size_batch[cur_batch_size] = size;
+        self.metrics.cur_batch_count_notif += 1;
+
+        if self.metrics.cur_batch_count_notif == self.metrics.notif_size_batch.len() {
+            let metrics_readable = self.metrics.calculate_metrics();
+
+            let notif_metric = Log::log(metrics_readable, "Debug");
+            self.obs_manager.forward_notif(notif_metric);
+        }
     }
 
     /// Finalizes the engine and shuts down all components.
@@ -221,8 +321,12 @@ impl Engine {
         let notif = Log::log("Engine Finalized".to_string(), "Main");
         logger.obs_queue.push(notif);
 
-        let notif = Log::log("Service Finalized Successfully".to_string(), "Main");
-        logger.obs_queue.push(notif);
+        if self.is_debug_enabled && self.is_metric_calc_enabled {
+            let metrics_readable = self.metrics.calculate_metrics();
+            
+            let notif = Log::log(metrics_readable , "Debug");
+            logger.obs_queue.push(notif);
+        }
 
         logger.clean_up();
     }
@@ -278,7 +382,7 @@ impl Engine {
     /// Processes the result of a task execution, which may include:
     /// - Submitting follow-up tasks
     /// - Logging completion messages
-    /// - Triggering shutdown on "fin" or "finerr" results
+    /// - Triggering shutdown on "Fin" or "FinErr" results
     ///
     /// # Arguments
     ///
@@ -287,21 +391,38 @@ impl Engine {
         let result = task_result.1;
 
         if let Some(next_task) = result.next_task {
+            if self.is_debug_enabled && self.is_metric_calc_enabled {
+                self.manage_metrics_tasks(&next_task);
+            }
+
             self.plugin_manager.threadpool.submit_task(next_task);
         }
 
-        let finished_notif = Log::log(format!("Finished Task ID: {}.", task_result.0), "Main");
-        self.obs_manager.forward_notif(finished_notif);
+        if self.is_debug_enabled && self.is_task_logging_enabled{
+            let notif = Log::log(format!("Finished Task ID: {}.", task_result.0), "Main");
 
-        let task_res_message = result.message;
-        let log_file = result.log_msg_to_file.inner();
-        if task_res_message != "".to_string() {
-            let finished_notif = Log::log(task_res_message, log_file);
-            self.obs_manager.forward_notif(finished_notif);
+            if self.is_metric_calc_enabled {
+                self.manage_metrics_notifs(&notif);
+            }
+
+            self.obs_manager.forward_notif(notif);
         }
 
-        let res_type = result.result_type.inner().to_lowercase();
-        if (res_type == "fin" || res_type == "finerr") && !self.exit_flag {
+        let task_res_message = result.message;
+
+        let log_file = result.log_msg_to_file.inner();
+        if task_res_message != "".to_string() {
+            let notif = Log::log(task_res_message, log_file);
+
+            if self.is_debug_enabled && self.is_metric_calc_enabled{
+                self.manage_metrics_notifs(&notif);
+            }
+            
+            self.obs_manager.forward_notif(notif);
+        }
+
+        let res_type = result.result_type.inner();
+        if (res_type == "Fin" || res_type == "FinErr") && !self.exit_flag {
             self.finalize();
         }
     }
@@ -443,7 +564,7 @@ mod tests {
     fn test_engine_check_tasks_with_empty_channel() {
         // Arrange
         let ctx = create_test_ctx();
-        let engine = Engine::new(&ctx);
+        let mut engine = Engine::new(&ctx);
 
         // Act
         let received = engine.check_tasks();
@@ -499,13 +620,13 @@ mod tests {
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
-        // Create a "fin" result
-        let fin_result = res::Result::new("fin", "Finished".to_string(), "Main");
+        // Create a "Fin" result
+        let fin_result = res::Result::new("Fin", "Finished".to_string(), "Main");
 
         // Assert initially not exiting
         assert!(!engine.exit_flag);
 
-        // Act - handle the fin result
+        // Act - handle the Fin result
         engine.handle_result((1, fin_result));
 
         // Assert - finalize should have been called
@@ -524,13 +645,13 @@ mod tests {
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
-        // Create a "finerr" result
-        let finerr_result = res::Result::new("finerr", "Error finished".to_string(), "Error");
+        // Create a "FinErr" result
+        let finerr_result = res::Result::new("FinErr", "Error finished".to_string(), "Error");
 
         // Assert initially not exiting
         assert!(!engine.exit_flag);
 
-        // Act - handle the finerr result
+        // Act - handle the FinErr result
         engine.handle_result((1, finerr_result));
 
         // Assert - finalize should have been called
@@ -591,7 +712,7 @@ mod tests {
         let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx);
         let config = Config::default();
         let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
-        let engine = Engine::new(&ctx);
+        let mut engine = Engine::new(&ctx);
 
         // Send a task
         let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
@@ -655,5 +776,190 @@ mod tests {
         // Assert - engine should still be running
         assert!(!engine.exit_flag);
         assert!(!engine.pause_flag);
+    }
+
+    // Tests for manage_metrics_tasks
+
+    #[test]
+    fn test_manage_metrics_tasks_stores_size_in_batch() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let task = Task::new("TestTask", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let expected_size = task.size_in_bytes();
+
+        // Act
+        engine.manage_metrics_tasks(&task);
+
+        // Assert
+        assert_eq!(engine.metrics.task_size_batch[0], expected_size);
+        assert_eq!(engine.metrics.cur_batch_count_task, 1);
+    }
+
+    #[test]
+    fn test_manage_metrics_tasks_increments_batch_count() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let task1 = Task::new("Task1", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let task2 = Task::new("Task2", 2, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+
+        // Act
+        engine.manage_metrics_tasks(&task1);
+        engine.manage_metrics_tasks(&task2);
+
+        // Assert
+        assert_eq!(engine.metrics.cur_batch_count_task, 2);
+        assert_eq!(engine.metrics.task_size_batch[0], task1.size_in_bytes());
+        assert_eq!(engine.metrics.task_size_batch[1], task2.size_in_bytes());
+    }
+
+    #[test]
+    fn test_manage_metrics_tasks_does_not_trigger_calculation_before_batch_full() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let task = Task::new("TestTask", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+
+        // Act
+        engine.manage_metrics_tasks(&task);
+
+        // Assert - avg_task_size should remain 0.0 since batch is not full
+        assert_eq!(engine.metrics.avg_task_size, 0.0);
+    }
+
+    // Tests for manage_metrics_results
+
+    #[test]
+    fn test_manage_metrics_results_stores_size_in_batch() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let result = res::Result::new("Success", "Done".to_string(), "Main");
+        let expected_size = result.size_in_bytes();
+
+        // Act
+        engine.manage_metrics_results(&result);
+
+        // Assert
+        assert_eq!(engine.metrics.res_size_batch[0], expected_size);
+        assert_eq!(engine.metrics.cur_batch_count_res, 1);
+    }
+
+    #[test]
+    fn test_manage_metrics_results_increments_batch_count() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let result1 = res::Result::new("Type1", "Message1".to_string(), "Main");
+        let result2 = res::Result::new("Type2", "Message2".to_string(), "Error");
+
+        // Act
+        engine.manage_metrics_results(&result1);
+        engine.manage_metrics_results(&result2);
+
+        // Assert
+        assert_eq!(engine.metrics.cur_batch_count_res, 2);
+        assert_eq!(engine.metrics.res_size_batch[0], result1.size_in_bytes());
+        assert_eq!(engine.metrics.res_size_batch[1], result2.size_in_bytes());
+    }
+
+    #[test]
+    fn test_manage_metrics_results_does_not_trigger_calculation_before_batch_full() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let result = res::Result::new("Success", "Done".to_string(), "Main");
+
+        // Act
+        engine.manage_metrics_results(&result);
+
+        // Assert - avg_res_size should remain 0.0 since batch is not full
+        assert_eq!(engine.metrics.avg_res_size, 0.0);
+    }
+
+    // Tests for manage_metrics_notifs
+
+    #[test]
+    fn test_manage_metrics_notifs_stores_size_in_batch() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let notif = Log::log("Test notification".to_string(), "Main");
+        let expected_size = notif.size_in_bytes();
+
+        // Act
+        engine.manage_metrics_notifs(&notif);
+
+        // Assert
+        assert_eq!(engine.metrics.notif_size_batch[0], expected_size);
+        assert_eq!(engine.metrics.cur_batch_count_notif, 1);
+    }
+
+    #[test]
+    fn test_manage_metrics_notifs_increments_batch_count() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let notif1 = Log::log("Notification 1".to_string(), "Main");
+        let notif2 = Log::log("Notification 2".to_string(), "Debug");
+
+        // Act
+        engine.manage_metrics_notifs(&notif1);
+        engine.manage_metrics_notifs(&notif2);
+
+        // Assert
+        assert_eq!(engine.metrics.cur_batch_count_notif, 2);
+        assert_eq!(engine.metrics.notif_size_batch[0], notif1.size_in_bytes());
+        assert_eq!(engine.metrics.notif_size_batch[1], notif2.size_in_bytes());
+    }
+
+    #[test]
+    fn test_manage_metrics_notifs_does_not_trigger_calculation_before_batch_full() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let notif = Log::log("Test notification".to_string(), "Main");
+
+        // Act
+        engine.manage_metrics_notifs(&notif);
+
+        // Assert - avg_notif_size should remain 0.0 since batch is not full
+        assert_eq!(engine.metrics.avg_notif_size, 0.0);
+    }
+
+    // Integration test for all three manage_metrics functions
+
+    #[test]
+    fn test_all_manage_metrics_functions_work_together() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut engine = Engine::new(&ctx);
+        let task = Task::new("TestTask", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let result = res::Result::new("Success", "Done".to_string(), "Main");
+        let notif = Log::log("Test notification".to_string(), "Main");
+
+        // Act
+        engine.manage_metrics_tasks(&task);
+        engine.manage_metrics_results(&result);
+        engine.manage_metrics_notifs(&notif);
+
+        // Assert
+        assert_eq!(engine.metrics.cur_batch_count_task, 1);
+        assert_eq!(engine.metrics.cur_batch_count_res, 1);
+        assert_eq!(engine.metrics.cur_batch_count_notif, 1);
+        assert_eq!(engine.metrics.task_size_batch[0], task.size_in_bytes());
+        assert_eq!(engine.metrics.res_size_batch[0], result.size_in_bytes());
+        assert_eq!(engine.metrics.notif_size_batch[0], notif.size_in_bytes());
     }
 }
