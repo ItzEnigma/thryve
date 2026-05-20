@@ -6,4 +6,5 @@ plugins
 target
 Cargo.lock
 
+mermaid
 thryve_utils/src/debug_logging.rs

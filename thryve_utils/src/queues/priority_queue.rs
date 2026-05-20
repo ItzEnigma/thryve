@@ -118,7 +118,7 @@ impl Queue<Task> for PQChild<Task> {
     ///
     /// # Returns
     ///
-    /// The highest priority task, or a special "fin" task when
+    /// The highest priority task, or a special "Fin" task when
     /// the queue is being finalized.
     fn pop(&self) -> Task {
         loop {
@@ -146,8 +146,8 @@ impl Queue<Task> for PQChild<Task> {
             let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
         }
 
-        // Return special "fin" task on shutdown.
-        Task::new("fin", 0, Box::new(|| Result::new("fin", "".to_string(), "Main")))
+        // Return special "Fin" task on shutdown.
+        Task::new("Fin", 0, Box::new(|| Result::new("Fin", "".to_string(), "Main")))
     }
 
     /// Finalizes the queue for shutdown.
@@ -338,7 +338,7 @@ mod tests {
         let task = queue.pop();
 
         // Assert
-        assert_eq!(task.task_name.inner(), "fin");
+        assert_eq!(task.task_name.inner(), "Fin");
     }
 
     #[test]

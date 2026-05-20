@@ -124,6 +124,7 @@ pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
 ///     <timestamp>/
 ///       Main.log
 ///       Error.log
+///       Debug.log     (only if debug-mode is enabled in the Config)
 ///       <Module>.log  (for each configured module)
 /// ```
 ///
@@ -190,7 +191,22 @@ pub fn init_directories(ctx: &mut Ctx) {
                 .unwrap(),
         ),
     );
- 
+
+    // Create a debug log file if debug-mode is enabled in the Config.
+    if ctx.config.debugging.is_debugging {
+        let log_file_path_debug = log_dir_path.join("Debug.log");
+        temp_hash_map.insert(
+            NamedInput::new("Debug"),
+            Arc::new(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_file_path_debug)
+                    .unwrap(),
+            ),
+        );
+    }
+
     let file_names = ctx.logging_file_names.clone();
  
     // Create log files for each supplied file name and store them in the hashmap.

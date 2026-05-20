@@ -181,7 +181,26 @@ impl Result {
     pub fn chain(mut self , task: Task) -> Self {
         self.next_task = Some(task);
         self
-    } 
+    }
+
+    /// Returns the size of this result in bytes.
+    ///
+    /// This method returns the memory footprint of the result struct
+    /// itself, as determined by `std::mem::size_of_val`. This is
+    /// useful for metrics tracking and memory profiling.
+    ///
+    /// # Returns
+    ///
+    /// The size of the result in bytes.
+    ///
+    /// # Note
+    ///
+    /// This returns the size of the struct itself, not the heap
+    /// memory allocated by its fields (such as the `String` message
+    /// or optional `Task`, `Observer`, or `Plugin` fields).
+    pub fn size_in_bytes(&self) -> usize {
+        std::mem::size_of_val(self)
+    }
 }
 
 #[cfg(test)]
@@ -358,5 +377,61 @@ mod tests {
     fn test_result_invalid_log_file_panics() {
         // Arrange & Act - This should panic due to invalid log file name
         let _ = Result::new("Valid", "msg".to_string(), "Invalid/File");
+    }
+
+    #[test]
+    fn test_size_in_bytes_returns_struct_size() {
+        // Arrange
+        let result = Result::new("Success", "Done".to_string(), "Main");
+
+        // Act
+        let size = result.size_in_bytes();
+
+        // Assert - size should match std::mem::size_of_val
+        assert_eq!(size, std::mem::size_of_val(&result));
+        assert!(size > 0);
+    }
+
+    #[test]
+    fn test_size_in_bytes_consistent_across_instances() {
+        // Arrange
+        let result1 = Result::new("Type1", "Message1".to_string(), "Main");
+        let result2 = Result::new("Type2", "Message2".to_string(), "Error");
+
+        // Act
+        let size1 = result1.size_in_bytes();
+        let size2 = result2.size_in_bytes();
+
+        // Assert - struct size should be the same regardless of field values
+        assert_eq!(size1, size2);
+    }
+
+    #[test]
+    fn test_size_in_bytes_matches_mem_size_of() {
+        // Arrange
+        let result = Result::new("MemSizeTest", "test message".to_string(), "Main");
+
+        // Act
+        let size = result.size_in_bytes();
+
+        // Assert - should equal std::mem::size_of::<Result>()
+        assert_eq!(size, std::mem::size_of::<Result>());
+    }
+
+    #[test]
+    fn test_size_in_bytes_with_chained_result() {
+        // Arrange
+        let next_task = Task::new("NextTask", 1, Box::new(|| {
+            Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let result = Result::new("Chained", "Chained message".to_string(), "Main")
+            .chain(next_task);
+
+        // Act
+        let size = result.size_in_bytes();
+
+        // Assert - size should still match std::mem::size_of_val
+        assert_eq!(size, std::mem::size_of_val(&result));
+        assert!(size > 0);
     }
 }

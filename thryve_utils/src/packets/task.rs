@@ -123,6 +123,25 @@ impl Task {
             job: function_to_exec,
         }
     }
+
+    /// Returns the size of this task in bytes.
+    ///
+    /// This method returns the memory footprint of the task struct
+    /// itself, as determined by `std::mem::size_of_val`. This is
+    /// useful for metrics tracking and memory profiling.
+    ///
+    /// # Returns
+    ///
+    /// The size of the task in bytes.
+    ///
+    /// # Note
+    ///
+    /// This returns the size of the struct itself, not the heap
+    /// memory allocated by its fields (such as the `NamedInput` or
+    /// the closure in `TaskJob`).
+    pub fn size_in_bytes(&self) -> usize {
+        std::mem::size_of_val(self)
+    }
 }
 
 impl Task {
@@ -350,5 +369,52 @@ mod tests {
         // Assert
         let (returned_id, _) = result.unwrap();
         assert_eq!(returned_id, expected_id);
+    }
+
+    #[test]
+    fn test_size_in_bytes_returns_struct_size() {
+        // Arrange
+        let task = Task::new("SizeTest", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+
+        // Act
+        let size = task.size_in_bytes();
+
+        // Assert - size should match std::mem::size_of_val
+        assert_eq!(size, std::mem::size_of_val(&task));
+        assert!(size > 0);
+    }
+
+    #[test]
+    fn test_size_in_bytes_consistent_across_instances() {
+        // Arrange
+        let task1 = Task::new("Task1", 1, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+        let task2 = Task::new("Task2", 2, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+
+        // Act
+        let size1 = task1.size_in_bytes();
+        let size2 = task2.size_in_bytes();
+
+        // Assert - struct size should be the same regardless of field values
+        assert_eq!(size1, size2);
+    }
+
+    #[test]
+    fn test_size_in_bytes_matches_mem_size_of() {
+        // Arrange
+        let task = Task::new("MemSizeTest", 5, Box::new(|| {
+            res::Result::new("Ok", "Done".to_string(), "Main")
+        }));
+
+        // Act
+        let size = task.size_in_bytes();
+
+        // Assert - should equal std::mem::size_of::<Task>()
+        assert_eq!(size, std::mem::size_of::<Task>());
     }
 }

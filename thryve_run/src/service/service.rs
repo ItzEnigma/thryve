@@ -192,8 +192,6 @@ impl <'a> Thryve <'a> {
     /// service.run_service(ctx);
     /// ```
     pub fn run_service(&mut self , ctx: Ctx){
-        println!("CCCCCCC");
-        
         // Cloneing the atomic flags for running and paused states to be used in the service command handling.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
         let pause_flag: Arc<AtomicBool> = self.is_paused.clone();

@@ -125,9 +125,6 @@ pub fn run_interactive(mut ctx: Ctx) {
 
         eng.run_once();
     }
-
-    // Finalize the engine by performing any necessary cleanup operations before shutting down.
-    eng.finalize();
 }
 
 /// Creates the communication channels and context required for engine execution.

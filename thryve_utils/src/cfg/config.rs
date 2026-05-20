@@ -334,8 +334,8 @@ impl Default for TaskConfig {
 pub struct DebugConfig {
     /// Whether debugging mode is enabled.
     ///
-    /// When true, the engine waits before executing tasks, allowing
-    /// developers to set up monitoring or debugging tools.
+    /// When true, other attributes in the `DebugConfig` can be set
+    /// to be enabled.
     ///
     /// Default: `false`
     pub is_debugging: bool,
@@ -345,6 +345,28 @@ pub struct DebugConfig {
     ///
     /// Default: `10` seconds
     pub wait_before_execution: u64,
+    /// Whether tracking for visual graph creation is enabled.
+    /// 
+    /// When true, an observer will be loaded to keep track of
+    /// the graphs. Hash calculations and call-stack frames will
+    /// be tracked too.
+    /// 
+    /// Default: `false`
+    pub visual_graph: bool,
+    /// Whether tracking metrics is enabled.
+    /// 
+    /// When true, the engine will populate metrics arrays
+    /// to be batched for metrics calculations every few cycles.
+    /// 
+    /// Default: `false`
+    pub calculate_metrics: bool,
+    /// Whether logging task IDs is enabled.
+    /// 
+    /// When true, notifications for when tasks have finished executing
+    /// will be sent to log the finished task.
+    /// 
+    /// Default: `false`
+    pub log_tasks: bool,
 }
 
 impl Default for DebugConfig {
@@ -356,6 +378,9 @@ impl Default for DebugConfig {
         Self {
             is_debugging: false,
             wait_before_execution: 10,
+            visual_graph: false,
+            calculate_metrics: false,
+            log_tasks: false,
         }
     }
 }
@@ -401,6 +426,9 @@ mod tests {
         assert_eq!(config.tasks.aging_interval, 3);
         assert_eq!(config.debugging.is_debugging, false);
         assert_eq!(config.debugging.wait_before_execution, 10);
+        assert_eq!(config.debugging.visual_graph, false);
+        assert_eq!(config.debugging.calculate_metrics, false);
+        assert_eq!(config.debugging.log_tasks, false);
     }
 
     #[test]
@@ -543,6 +571,9 @@ mod tests {
         // Assert
         assert_eq!(config.is_debugging, false);
         assert_eq!(config.wait_before_execution, 10);
+        assert_eq!(config.visual_graph, false);
+        assert_eq!(config.calculate_metrics, false);
+        assert_eq!(config.log_tasks, false);
     }
 
     #[test]
@@ -551,11 +582,36 @@ mod tests {
         let config = DebugConfig {
             is_debugging: true,
             wait_before_execution: 30,
+            visual_graph: false,
+            calculate_metrics: false,
+            log_tasks: false,
         };
         
         // Assert
         assert_eq!(config.is_debugging, true);
         assert_eq!(config.wait_before_execution, 30);
+        assert_eq!(config.visual_graph, false);
+        assert_eq!(config.calculate_metrics, false);
+        assert_eq!(config.log_tasks, false);
+    }
+
+    #[test]
+    fn test_debug_config_all_enabled() {
+        // Arrange & Act
+        let config = DebugConfig {
+            is_debugging: true,
+            wait_before_execution: 30,
+            visual_graph: true,
+            calculate_metrics: true,
+            log_tasks: true,
+        };
+        
+        // Assert
+        assert_eq!(config.is_debugging, true);
+        assert_eq!(config.wait_before_execution, 30);
+        assert_eq!(config.visual_graph, true);
+        assert_eq!(config.calculate_metrics, true);
+        assert_eq!(config.log_tasks, true);
     }
 
     // Tests for load_def_config

@@ -20,7 +20,7 @@ use std::time::SystemTime;
  
 use chrono::{DateTime, Local};
  
-use crate::cfg::dir_data::DirData;
+use crate::cfg::{dir_data::DirData, metrics::Metrics};
  
 /// Metadata structure for the Thryve system.
 ///
@@ -47,6 +47,8 @@ pub struct MetaData {
     pub datetime: DateTime<Local>,
     /// Directory paths and log file handles.
     pub dir_data: DirData,
+    /// Metrics for debugging and calculations.
+    pub metrics: Metrics,
 }
  
 impl Default for MetaData {
@@ -69,7 +71,8 @@ impl Default for MetaData {
     fn default() -> Self {
         Self {
             datetime: SystemTime::now().into(),
-            dir_data: DirData::default()
+            dir_data: DirData::default(),
+            metrics: Metrics::default(),
         }
     }
 }
@@ -97,7 +100,9 @@ impl MetaData {
     /// let meta_data = MetaData::new(datetime, dir_data);
     /// ```
     pub fn new(datetime: DateTime<Local>, dir_data: DirData) -> Self {
-        Self { datetime, dir_data }
+        let metrics = Metrics::default();
+
+        Self { datetime, dir_data, metrics}
     }
 }
 

@@ -187,6 +187,9 @@ aging_interval = 3
 [debugging]
 is_debugging = false
 wait_before_execution = 10
+visual_graph= false
+calculate_metrics= false
+log_tasks= false
 ```
 
 ### Configuration Options
