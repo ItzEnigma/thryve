@@ -128,6 +128,18 @@ impl ObserverManager {
                             .unwrap()
                             .obs_queue
                             .push(notif);
+                        
+                        while !queue.main_queue.is_empty() {
+                            if let Some(obj) = queue.main_queue.pop(){
+                                let _ = arc_observers
+                                    .get(&obj.notif_receiver)
+                                    .unwrap()
+                                    .obs_queue
+                                    .push(obj);
+                            }
+
+                        }
+
                         break;
                     }
 
@@ -244,6 +256,8 @@ impl ObserverManager {
     /// ```
     pub fn finalize(&mut self) -> Arc<Observer> {
         let logger = self.observers.remove(&NamedInput::new("Logging")).unwrap();
+        logger.exit_flag.store(true, Ordering::SeqCst);
+        
         self.threadpool.finalize_obs(logger.clone());
 
         if !self.observers.is_empty() {
@@ -306,7 +320,7 @@ mod tests {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         Ctx::new(config, task_rx, notif_rx, packet_handle)
     }

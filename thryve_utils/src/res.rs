@@ -24,7 +24,10 @@ use std::fmt::Display;
 use crate::bases::plugin::Plugin;
 use crate::extras::named_input::NamedInput;
 use crate::bases::observer::Observer;
+use crate::extras::stack::get_task_data;
+use crate::extras::thread_local;
 use crate::packets::task::Task;
+use crate::traits::packets::Packet;
 
 /// Result of task execution.
 ///
@@ -61,6 +64,8 @@ use crate::packets::task::Task;
 /// })));
 /// let chained = Result::new_tasked_res("Chained", "Moving on".to_string(), "Main", next);
 /// ```
+/// 
+#[derive(Default)]
 pub struct Result {
     /// Type identifier for the result.
     pub result_type: NamedInput,
@@ -178,7 +183,20 @@ impl Result {
     ///
     /// assert!(chained_result.next_task.task_name.inner() == "FollowUp2");
     /// ```
-    pub fn chain(mut self , task: Task) -> Self {
+    pub fn chain(mut self , mut task: Task) -> Self {
+        if thread_local::tl_get_current_task_fingerprint() != String::default(){
+            let backtrace = backtrace::Backtrace::new();
+            let mut callsite = get_task_data(backtrace , task.task_name.to_string());
+
+            let child_fingerprint = callsite.fingerprint();
+            let current_task_fingerprint = thread_local::tl_get_current_task_fingerprint();
+
+            callsite.this_callsite_fingerprint = child_fingerprint;
+            callsite.current_executing_task_fingerprint = current_task_fingerprint;
+
+            task.set_callsite(callsite.clone());
+        }
+
         self.next_task = Some(task);
         self
     }
@@ -200,6 +218,19 @@ impl Result {
     /// or optional `Task`, `Observer`, or `Plugin` fields).
     pub fn size_in_bytes(&self) -> usize {
         std::mem::size_of_val(self)
+    }
+}
+
+impl Result {
+    pub fn fin() -> Self {
+        Result {
+            result_type: NamedInput::new("Fin"),
+            message: String::from("finishing capture: starting exit now."),
+            log_msg_to_file: NamedInput::new("Main"),
+            next_task: None,
+            observer: None,
+            plugin: None,
+        }
     }
 }
 

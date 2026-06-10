@@ -45,7 +45,7 @@ pub mod named_input {
     /// // This would panic:
     /// // let invalid = NamedInput::new("Invalid-Name!");
     /// ```
-    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    #[derive(Clone, PartialEq, Eq, Hash, Default)]
     pub struct NamedInput(String);
 
     impl NamedInput {
@@ -74,10 +74,6 @@ pub mod named_input {
         /// // let invalid = NamedInput::new("Invalid-Name");
         /// ```
         pub fn new(s: &str) -> Self {
-            assert!(
-                !s.is_empty(),
-                "NamedInput cannot be empty."
-            );
             assert!(
                 s.chars().all(|c| c.is_alphanumeric()),
                 "NamedInput must be alphanumeric. Got '{}'",
@@ -243,6 +239,180 @@ pub mod panic_hook{
     }
 }
 
+pub mod thread_local {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static CURRENT_TASK_FINGERPRINT: RefCell<String> = RefCell::new(String::default());
+    }
+
+    pub fn tl_set_current_task_fingerprint(fingerprint: String){
+        CURRENT_TASK_FINGERPRINT.with(|data| {
+            *data.borrow_mut() = fingerprint;
+        });
+    }
+
+    pub fn tl_get_current_task_fingerprint() -> String {
+        CURRENT_TASK_FINGERPRINT.with(|data| {
+            data.borrow().clone()
+        })
+    }
+}
+
+pub mod stack {
+    use std::path::PathBuf;
+
+use backtrace::Backtrace;
+    
+    use crate::graphs::callsite::TaskCallSite;
+
+    pub fn get_task_data(backtrace: Backtrace , name: String) -> TaskCallSite {
+        // println!("\n=== ALL FRAMES ===");
+        // for (i, frame) in backtrace.frames().iter().enumerate() {
+        //     println!("Frame {}: {:?}", i, frame);
+        //     if let Some(sym) = frame.symbols().first() {
+        //         if let Some(name) = sym.name() {
+        //             println!("  Symbol: {}", name);
+        //         }
+        //         if let Some(file) = sym.filename() {
+        //             println!("  File: {}", file.display());
+        //         }
+        //         if let Some(line) = sym.lineno() {
+        //             println!("  Line: {}", line);
+        //         }
+        //     }
+        // }
+        // println!("==================\n");
+
+        let mut counter: u8 = 0;
+
+        // Iterate through frames to find the actual caller
+        for frame in backtrace.frames() {
+            if counter != 4 {
+                counter += 1;
+                continue;
+            }
+
+            // Get symbol information for this frame
+            if let Some(symbol) = frame.symbols().first() {
+                if let Some(filename) = symbol.filename() {
+                    // filename is &Path, convert to string and extract just the filename
+                    let filename = PathBuf::from(filename.to_string_lossy().to_string());
+                    
+                    if let Some(line_num) = symbol.lineno() {
+                        let symbol_name = symbol.name()
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        
+                        // Parse the module path (everything before the last ::function_name)
+                        let module_path = extract_module_path(&symbol_name);
+
+                        return TaskCallSite::new(
+                            filename,
+                            module_path,
+                            line_num,
+                            name,
+                        )
+                    } 
+                }
+            }
+        }
+
+        panic!("This function: get_task_data got called in a very wrong place");
+    }
+
+    fn extract_module_path(symbol_name: &str) -> String {
+        // Remove common suffixes
+        let cleaned = symbol_name
+            .replace("::{{closure}}", "")
+            .replace("::{{closure}}::{{closure}}", "")
+            .replace("::{anonymous}", "");
+        
+        // Split by :: and take all but the last component (the function/method name)
+        let parts: Vec<&str> = cleaned.split("::").collect();
+        
+        if parts.len() > 1 {
+            parts[..parts.len() - 1].join("::")
+        } else {
+            cleaned.to_string()
+        }
+    }
+}
+
+pub mod dir_paths {
+    use std::{env::current_exe, fs::create_dir_all, path::{Path, PathBuf}, process::Command};
+
+    use crate::extras::misc::get_current_date_time;
+    
+    #[derive(Clone , PartialEq, Eq, Hash)]
+    pub enum DirName {
+        Log,
+        Topology,
+    }
+
+    pub fn get_current_exec_dir() -> PathBuf {
+        let exe_dir = current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+
+        exe_dir
+    }
+
+    pub fn create_dir(file_path: DirName) -> PathBuf{
+        let current_root_dir = get_current_exec_dir();
+        
+        match file_path {
+            DirName::Log => {
+                // Create a log directory with a timestamp to store the log files.
+                let datetime = get_current_date_time();
+                let log_dir_path = current_root_dir
+                    .join("log")
+                    .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
+                create_dir_all(&log_dir_path).unwrap();
+
+                log_dir_path
+            }
+
+            DirName::Topology => {
+                let topology_dir_path = current_root_dir
+                    .join("topology");
+                create_dir_all(&topology_dir_path).unwrap();
+
+                topology_dir_path
+            }
+        }
+    }
+
+    pub fn get_workspace_root() -> PathBuf {
+        // Look up the cargo executable used to build the project
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        
+        let output = Command::new(cargo)
+            .arg("locate-project")
+            .arg("--workspace")
+            .arg("--message-format=plain")
+            .output()
+            .expect("Failed to execute cargo command");
+
+        let stdout = str::from_utf8(&output.stdout).expect("Invalid UTF-8 output");
+        let cargo_toml_path = Path::new(stdout.trim());
+        
+        // Pop "Cargo.toml" off the path to get the root directory
+        cargo_toml_path.parent().unwrap().to_path_buf()
+    }
+}
+
+pub mod misc{
+    use std::time::SystemTime;
+    use chrono::{DateTime, Local};
+
+    pub fn get_current_date_time() -> DateTime<Local>{
+        SystemTime::now().clone().into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,16 +431,6 @@ mod tests {
             
             // Assert
             assert_eq!(result.inner(), "ValidName123");
-        }
-
-        #[test]
-        #[should_panic(expected = "NamedInput cannot be empty")]
-        fn test_named_input_new_empty_string() {
-            // Arrange
-            let empty_name = "";
-            
-            // Act & Assert - empty string should panic
-            let _result = named_input::NamedInput::new(empty_name);
         }
 
         #[test]
@@ -393,7 +553,6 @@ mod tests {
             
             // Assert
             assert_eq!(cloned.inner(), original.inner());
-            assert_eq!(cloned, original);
         }
 
         #[test]
@@ -402,10 +561,10 @@ mod tests {
             let name = named_input::NamedInput::new("DebugTest");
             
             // Act
-            let debug_str = format!("{:?}", name);
+            let debug_str = format!("{}", name.inner());
             
             // Assert
-            assert!(debug_str.contains("NamedInput"));
+            assert!(debug_str.contains("DebugTest"));
         }
 
         #[test]
@@ -416,8 +575,8 @@ mod tests {
             let name3 = named_input::NamedInput::new("Different");
             
             // Act & Assert
-            assert_eq!(name1, name2);
-            assert_ne!(name1, name3);
+            assert_eq!(name1.inner(), name2.inner());
+            assert_ne!(name1.inner(), name3.inner());
         }
 
         #[test]
@@ -491,7 +650,7 @@ mod tests {
             // Create a minimal observer for testing
             let (task_tx, _) = crossbeam::channel::unbounded::<crate::packets::task::Task>();
             let (notif_tx, _) = crossbeam::channel::unbounded::<crate::bases::notif::Notif>();
-            let packet_handle = crate::packets::packet_handle::PacketHandle::new(task_tx, notif_tx);
+            let packet_handle = crate::packets::packet_handle::PacketHandle::new(task_tx, notif_tx, false);
             
             let observer = Arc::new(crate::bases::observer::Observer::new(
                 "TestObserver",

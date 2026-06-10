@@ -97,8 +97,10 @@ impl ObsLogic for LoggerObserver {
         self.handle_log(notif);
 
         while observer.obs_queue.main_queue.len() != 0 {
-            let notif = observer.obs_queue.pop();
-            self.handle_log(notif);
+            if let Some(notif) = observer.obs_queue.main_queue.pop(){
+
+                self.handle_log(notif);
+            }
         };
 
         for (_ , mut file) in self.files.clone() {
@@ -146,7 +148,7 @@ impl LoggerObserver {
         // Create an instance of the `LoggerObserver` struct with the initialized
         // log files and return an `Observer` instance that encapsulates its logic.
         let logger = Arc::new(LoggerObserver {
-            _currentdir: dir_data.exe_dir.file_name().unwrap().to_string_lossy().to_string(),
+            _currentdir: dir_data.exe_dir.to_string_lossy().to_string(),
             files: dir_data.log_hash_map,
         });
 
@@ -182,10 +184,10 @@ impl LoggerObserver {
             // Check if the exit flag is set to true, indicating that the engine
             // is shutting down. If so, log a message and break the loop to exit
             // the thread gracefully.
-            if observer.exit_flag.load(Ordering::Relaxed) == true {
+            if observer.exit_flag.load(Ordering::SeqCst) == true {
                 let notif = Log::log("Logger Obs Thread Exited...".to_string(), "Main");
                 observer.obs_queue.push(notif);
-                break;
+                return;
             }
 
             // Pop a notification from the observer's queue and handle it by
@@ -239,6 +241,10 @@ impl LoggerObserver {
                     logfile
                 );
             }
+            
+            if notif.message == ""{
+                return;
+            }
 
             // Log the message to the appropriate file by calling the `display`
             // method of the `Log` notification.
@@ -274,7 +280,7 @@ mod tests {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         
         // Create minimal DirData and MetaData for testing
@@ -288,7 +294,7 @@ mod tests {
         let error_log = std::fs::File::create(log_dir.join("Error.log")).unwrap();
         log_hash_map.insert(NamedInput::new("Error"), Arc::new(error_log));
         
-        let dir_data = DirData::new(exe_dir, log_dir, log_hash_map);
+        let dir_data = DirData::new(exe_dir, log_hash_map);
         let datetime: DateTime<Local> = SystemTime::now().into();
         let meta_data = MetaData::new(datetime, dir_data);
         
@@ -317,7 +323,7 @@ mod tests {
         ctx.logging_file_names.push("Custom".to_string());
         
         // Add custom log file to dir_data
-        let custom_log = std::fs::File::create(ctx.meta_data.dir_data.log_dir_path.join("Custom.log")).unwrap();
+        let custom_log = std::fs::File::create(ctx.meta_data.dir_data.exe_dir.join("Custom.log")).unwrap();
         ctx.meta_data.dir_data.log_hash_map.insert(NamedInput::new("Custom"), Arc::new(custom_log));
 
         // Act
@@ -397,7 +403,7 @@ mod tests {
         let mut ctx = create_test_ctx();
         
         // Add a custom log file
-        let custom_log = std::fs::File::create(ctx.meta_data.dir_data.log_dir_path.join("Custom.log")).unwrap();
+        let custom_log = std::fs::File::create(ctx.meta_data.dir_data.exe_dir.join("Custom.log")).unwrap();
         ctx.meta_data.dir_data.log_hash_map.insert(NamedInput::new("Custom"), Arc::new(custom_log));
         
         let observer = LoggerObserver::new(&ctx);

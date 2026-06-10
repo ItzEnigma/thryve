@@ -117,9 +117,9 @@ impl Observer {
     /// This method should be called during engine shutdown to ensure proper
     /// resource cleanup and orderly termination of the observer.
     pub fn clean_up(self: &Arc<Self>) {
-        self.exit_flag.store(true, Ordering::Relaxed);
-        self.obs_core.clean_up(self.clone());
+        self.exit_flag.store(true, Ordering::SeqCst);
         self.obs_queue.finalize(Some(self.clone()));
+        self.obs_core.clean_up(self.clone());
     }
 }
 
@@ -145,7 +145,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {
             // No-op test function
@@ -171,7 +171,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -194,7 +194,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -217,7 +217,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -239,7 +239,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -266,7 +266,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -291,7 +291,7 @@ mod tests {
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -315,7 +315,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -335,7 +335,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 
@@ -355,7 +355,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
 

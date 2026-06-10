@@ -1,4 +1,5 @@
 pub mod cfg;
+pub mod graphs;
 pub mod traits;
 pub mod packets;
 pub mod queues;

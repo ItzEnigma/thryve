@@ -81,7 +81,7 @@ impl Queue<Notif> for QChild {
         }
 
         // Return exit notification on shutdown.
-        Log::log(format!("Exit Flag Detected! Obs Thread Exiting..."), "Main")
+        Log::log(format!(""), "Main")
     }
 
     /// Finalizes the queue for shutdown.
@@ -93,12 +93,6 @@ impl Queue<Notif> for QChild {
     ///
     /// * `logger` - The logger observer for draining notifications
     fn finalize(&self, logger: Option<Arc<Observer>>) {
-        // Drain remaining notifications to logger.
-        while self.main_queue.len() != 0 {
-            let notif = self.main_queue.pop().unwrap();
-            logger.as_ref().unwrap().obs_queue.push(notif);
-        }
-
         self.exit_flag.store(true, Ordering::SeqCst);
         self.condition_var.notify_all();
 
@@ -178,7 +172,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         let queue = QChild::new(packet_handle);
@@ -194,7 +188,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
         let notif = Log::log("test message".to_string(), "Main");
 
@@ -218,7 +212,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
         let mut count = 5;
 
@@ -234,18 +228,15 @@ mod tests {
                 queue.exit_flag.store(true, Ordering::SeqCst);
             }
             
-            let notif = queue.pop();
+            let _ = queue.pop();
 
 
             if queue.exit_flag.load(Ordering::SeqCst) == true {
-                // Attempt to downcast the notification's core logic to a `Log` type
-                // to access its specific fields and functionality.
-                let notif_as_any = notif.notif_core.as_any();
-                let notif_casted = notif_as_any.downcast_ref::<Log>();
-
-                if notif_casted.unwrap().message == "Exit Flag Detected! Obs Thread Exiting..."{
-                    break;
+                while !queue.main_queue.is_empty(){
+                    queue.main_queue.pop();
                 }
+                
+                break;
             }
             count -= 1;
         }
@@ -259,7 +250,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
 
         // Assert initially not paused
@@ -277,7 +268,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
 
         // Pause first
@@ -296,13 +287,13 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
 
         // Create a mock logger observer
         let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
-        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx);
+        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: crate::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
@@ -328,7 +319,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
 
         // Set exit flag
@@ -343,7 +334,7 @@ mod tests {
         let notif_casted = notif_as_any.downcast_ref::<Log>();
 
         // Assert
-        assert_eq!(notif_casted.unwrap().message, "Exit Flag Detected! Obs Thread Exiting...");
+        assert_eq!(notif_casted.unwrap().message, "");
     }
 
     #[test]
@@ -351,7 +342,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle);
         let notif = Log::log("test".to_string(), "Main");
 

@@ -165,7 +165,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| {
             res::Result::new("OK", "success".to_string(), "Main")
@@ -190,7 +190,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -213,7 +213,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -236,7 +236,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| {
             res::Result::new("OK", "success".to_string(), "Main")
@@ -272,7 +272,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -293,7 +293,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -318,7 +318,7 @@ mod tests {
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -342,7 +342,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -362,7 +362,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
@@ -382,7 +382,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 

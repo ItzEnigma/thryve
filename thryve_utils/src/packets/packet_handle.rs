@@ -19,9 +19,12 @@
 //! passed to modules. Since it only contains two channel senders,
 //! cloning is inexpensive, making it easy to distribute throughout
 //! the system.
- 
+
 use crate::bases::notif::Notif;
+use crate::extras::stack::get_task_data;
+use crate::extras::thread_local;
 use crate::packets::task::Task;
+use crate::traits::packets::Packet;
 
 use crossbeam::channel::Sender;
 
@@ -59,6 +62,8 @@ pub struct PacketHandle {
     task_tx: Sender<Task>,
     /// Sender for notifications.
     notif_tx: Sender<Notif>,
+    /// Bool for whether graph visualization is enabled or not.
+    is_graph_visualization_enabled: bool,
 }
 
 impl PacketHandle {
@@ -83,10 +88,11 @@ impl PacketHandle {
     /// // Typically created by the engine during initialization
     /// let handle = PacketHandle::new(task_sender, notif_sender);
     /// ```
-    pub fn new(task_tx: Sender<Task>, notif_tx: Sender<Notif>) -> Self {
+    pub fn new(task_tx: Sender<Task>, notif_tx: Sender<Notif>, is_graph_vis_enabled: bool) -> Self {
         Self {
             task_tx: task_tx,
             notif_tx: notif_tx,
+            is_graph_visualization_enabled: is_graph_vis_enabled
         }
     }
   
@@ -110,7 +116,21 @@ impl PacketHandle {
     ///     Ok(())
     /// }))); 
     /// ```
-    pub fn send_task(&self, task: Task) {
+    pub fn send_task(&self, mut task: Task) {
+        if self.is_graph_visualization_enabled{
+            // Capture backtrace
+            let backtrace = backtrace::Backtrace::new();
+            let mut callsite = get_task_data(backtrace , task.task_name.to_string());
+
+            let child_fingerprint = callsite.fingerprint();
+            let current_task_fingerprint = thread_local::tl_get_current_task_fingerprint();
+
+            callsite.this_callsite_fingerprint = child_fingerprint;
+            callsite.current_executing_task_fingerprint = current_task_fingerprint;
+
+            task.set_callsite(callsite.clone());
+        }
+
         let _ = self.task_tx.send(task)
         .unwrap_or_else(|e| panic!("Failed to send task to engine: {}" , e));
     }
@@ -151,7 +171,7 @@ mod tests {
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
 
         // Act
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Assert - handle is created successfully (no panic)
         drop(handle);
@@ -165,7 +185,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
         let task = Task::new("TestTask", 0, Box::new(|| Result::new("Success", "Done".to_string(), "Main")));
 
         // Act
@@ -183,7 +203,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
         let notif = Log::log("Test message".to_string(), "Main");
 
         // Act
@@ -201,7 +221,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, _) = crossbeam::channel::bounded::<Notif>(10);
-        let handle1 = PacketHandle::new(task_tx, notif_tx);
+        let handle1 = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         let handle2 = handle1.clone();
@@ -225,7 +245,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         for i in 0..5 {
@@ -247,7 +267,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         for i in 0..5 {
@@ -269,7 +289,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act - send interleaved
         handle.send_task(Task::new("T1", 0, Box::new(|| Result::new("Success", "Done".to_string(), "Main"))));
@@ -293,7 +313,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, _) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         handle.send_task(Task::new("Low", 0, Box::new(|| Result::new("Success", "Done".to_string(), "Main"))));
@@ -316,7 +336,7 @@ mod tests {
         // Arrange
         let (task_tx, _) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         let notif = Log::err("Error occurred".to_string());
@@ -333,7 +353,7 @@ mod tests {
         // Arrange
         let (task_tx, _task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, _notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act & Assert - should panic with empty name
         let task = Task::new("", 0, Box::new(|| Result::new("Success", "Done".to_string(), "Main")));
@@ -345,7 +365,7 @@ mod tests {
         // Arrange
         let (task_tx, _) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
         let notif = Log::log("Hello 世界 🌍".to_string(), "Main");

@@ -78,8 +78,7 @@ use crate::init::init::{self, init_engine};
 /// run_interactive(ctx);
 /// ```
 pub fn run_interactive(mut ctx: Ctx) {
-    println!("Running manually (double-click, cmd, etc.)");
-    println!("Hello from the interactive mode!");
+    println!("Running interactively from binary.");
 
     // Initialize the logging directories and panic hook.
     init::init_directories(&mut ctx);
@@ -163,7 +162,13 @@ pub fn summon_requirements(config: Config) -> Ctx{
     let (task_tx , task_rx) = bounded(config.pipes.task_pipe_capacity);
     let (notif_tx , notif_rx) = bounded(config.pipes.notif_pipe_capacity);
     
-    Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx))
+    if config.debugging.is_debugging{
+        Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx, config.debugging.visual_graph))
+    }
+
+    else {
+        Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx, false))
+    }
 }
 
 #[cfg(test)]

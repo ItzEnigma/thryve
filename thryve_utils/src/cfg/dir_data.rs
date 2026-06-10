@@ -19,7 +19,7 @@
  
 use std::{path::PathBuf, collections::HashMap, sync::{Arc, OnceLock}, fs::File};
  
-use crate::extras::named_input::NamedInput;
+use crate::extras::{dir_paths::DirName, named_input::NamedInput};
  
 /// Static storage for the log directory path, accessible globally.
 ///
@@ -53,7 +53,7 @@ pub struct DirData {
     /// Path to the executable directory.
     pub exe_dir: PathBuf,
     /// Path to the timestamped log directory.
-    pub log_dir_path: PathBuf,
+    pub dir_paths: HashMap<DirName , PathBuf>,
     /// HashMap mapping module types to their log file handles.
     pub log_hash_map: HashMap<NamedInput, Arc<File>>,
 }
@@ -75,7 +75,7 @@ impl Default for DirData {
     fn default() -> Self {
         Self {
             exe_dir: PathBuf::new(),
-            log_dir_path: PathBuf::new(),
+            dir_paths: HashMap::new(),
             log_hash_map: HashMap::new(),
         }
     }
@@ -107,13 +107,28 @@ impl DirData {
     /// ```
     pub fn new(
         exe_dir: PathBuf,
-        log_dir_path: PathBuf,
         log_hash_map: HashMap<NamedInput, Arc<File>>,
     ) -> Self {
-        let _ = LOG_DIR_PATH.set(log_dir_path.clone());
-        Self { exe_dir, log_dir_path, log_hash_map }
+        Self { exe_dir, dir_paths: HashMap::new(), log_hash_map }
     }
  
+    pub fn set_path(&mut self, dir_name: DirName , file_path: PathBuf) {
+        match dir_name {
+            DirName::Log => {
+                let _ = LOG_DIR_PATH.set(file_path.clone());
+                self.dir_paths.insert(DirName::Log, file_path);
+            }
+
+            DirName::Topology => {
+                self.dir_paths.insert(DirName::Topology, file_path);
+            }
+        }
+    }
+
+    pub fn get_dir_path(&self , dir_name: &DirName) -> PathBuf{
+        self.dir_paths[dir_name].clone()
+    }
+
     /// Returns the log directory path from the static storage.
     ///
     /// Provides global access to the log directory path, which is
@@ -150,7 +165,7 @@ mod tests {
         
         // Assert
         assert!(dir_data.exe_dir.as_os_str().is_empty());
-        assert!(dir_data.log_dir_path.as_os_str().is_empty());
+        assert!(dir_data.dir_paths.is_empty());
         assert!(dir_data.log_hash_map.is_empty());
     }
 
@@ -162,11 +177,12 @@ mod tests {
         let log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
         
         // Act
-        let dir_data = DirData::new(exe_dir.clone(), log_dir.clone(), log_hash_map);
+        let mut dir_data = DirData::new(exe_dir.clone(), log_hash_map);
+        dir_data.set_path(DirName::Log, log_dir.clone());
         
         // Assert
         assert_eq!(dir_data.exe_dir, exe_dir);
-        assert_eq!(dir_data.log_dir_path, log_dir);
+        assert_eq!(dir_data.dir_paths[&DirName::Log], log_dir);
         assert!(dir_data.log_hash_map.is_empty());
     }
 
@@ -178,8 +194,9 @@ mod tests {
         let log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
         
         // Act
-        let _dir_data = DirData::new(exe_dir, log_dir.clone(), log_hash_map);
-        
+        let mut dir_data = DirData::new(exe_dir, log_hash_map);
+        dir_data.set_path(DirName::Log, log_dir.clone());
+
         // Assert
         let retrieved = DirData::get_log_dir_path();
         assert!(retrieved.is_some());
@@ -209,14 +226,15 @@ mod tests {
         let temp_file = std::fs::File::create(&temp_path).unwrap();
         log_hash_map.insert(NamedInput::new("Test"), Arc::new(temp_file));
         
-        let dir_data1 = DirData::new(exe_dir.clone(), log_dir.clone(), log_hash_map.clone());
-        
+        let mut dir_data1 = DirData::new(exe_dir.clone(), log_hash_map.clone());
+        dir_data1.set_path(DirName::Log, log_dir);
+
         // Act
         let dir_data2 = dir_data1.clone();
         
         // Assert
         assert_eq!(dir_data1.exe_dir, dir_data2.exe_dir);
-        assert_eq!(dir_data1.log_dir_path, dir_data2.log_dir_path);
+        assert_eq!(dir_data1.dir_paths[&DirName::Log], dir_data2.dir_paths[&DirName::Log]);
         assert_eq!(dir_data1.log_hash_map.len(), dir_data2.log_hash_map.len());
     }
 
@@ -224,7 +242,6 @@ mod tests {
     fn test_dir_data_with_log_files() {
         // Arrange
         let exe_dir = PathBuf::from("/test/exe");
-        let log_dir = PathBuf::from("/test/logs");
         let mut log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
         
         // Create temp files using cross-platform temp directory
@@ -237,7 +254,7 @@ mod tests {
         log_hash_map.insert(NamedInput::new("Error"), Arc::new(file2));
         
         // Act
-        let dir_data = DirData::new(exe_dir, log_dir, log_hash_map.clone());
+        let dir_data = DirData::new(exe_dir, log_hash_map.clone());
         
         // Assert
         assert_eq!(dir_data.log_hash_map.len(), 2);

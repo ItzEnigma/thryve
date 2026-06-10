@@ -18,7 +18,7 @@
 //! - `Sync`: Packets can be shared between threads
 //! - `'static`: Packets have no non-'static references
 
-use crate::res;
+use crate::{graphs::callsite::TaskCallSite, res};
 
 /// Common trait for all packet types in the Thryve system.
 ///
@@ -78,5 +78,13 @@ pub trait Packet: Send + Sync + 'static {
         Self: Sized,
     {
         None
+    }
+
+    fn set_callsite(&mut self , _callsite: TaskCallSite) {
+        return
+    }
+
+    fn get_callsite(&self) -> TaskCallSite {
+        TaskCallSite::default()
     }
 }

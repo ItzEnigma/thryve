@@ -25,6 +25,8 @@ use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginMa
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::ctx::Ctx;
 use thryve_utils::cfg::metrics::Metrics;
+use thryve_utils::graphs::graph::TopologyNode;
+use thryve_utils::packets::notif_topology::TopologyModifier;
 use thryve_utils::packets::{notif_log::Log, task::Task};
 use thryve_utils::res;
 use thryve_utils::traits::queue::Queue;
@@ -66,6 +68,8 @@ pub struct Engine {
     pub is_metric_calc_enabled: bool,
     /// Determines if tasks are logged.
     pub is_task_logging_enabled: bool,
+    /// Determines if graph visualization is enabled.
+    pub is_graph_vis_enabled: bool,
     /// Keeps track of the metrics only if `is_debug_enabled` and `is_metric_calc_enabled` is true.
     pub metrics: Metrics,
     /// Manages observers and notifications.
@@ -112,6 +116,7 @@ impl Engine {
             is_debug_enabled: ctx.config.debugging.is_debugging,
             is_metric_calc_enabled: ctx.config.debugging.calculate_metrics,
             is_task_logging_enabled: ctx.config.debugging.log_tasks,
+            is_graph_vis_enabled: ctx.config.debugging.visual_graph,
             metrics: ctx.meta_data.metrics.clone(),
             plugin_manager: PluginManager::new(ctx, res_tx),
             obs_manager: ObserverManager::new(ctx),
@@ -168,9 +173,15 @@ impl Engine {
         while let Ok(task) = self.task_rx.try_recv() {
             received_tasks = true;
             
-            if self.is_debug_enabled && self.is_metric_calc_enabled {
-                self.manage_metrics_tasks(&task);
-            }
+            if self.is_debug_enabled{
+                if self.is_metric_calc_enabled {
+                    self.manage_metrics_tasks(&task);
+                }
+
+                if self.is_graph_vis_enabled{
+                    self.handle_graph_visualization(&task);
+                }
+            } 
 
             self.plugin_manager.threadpool.submit_task(task);
         }
@@ -395,6 +406,10 @@ impl Engine {
                 self.manage_metrics_tasks(&next_task);
             }
 
+            if self.is_debug_enabled && self.is_graph_vis_enabled {
+                self.handle_graph_visualization(&next_task);
+            }
+            
             self.plugin_manager.threadpool.submit_task(next_task);
         }
 
@@ -408,11 +423,25 @@ impl Engine {
             self.obs_manager.forward_notif(notif);
         }
 
-        let task_res_message = result.message;
-
+        let result_type = result.result_type.inner();
+        let result_message = result.message;
         let log_file = result.log_msg_to_file.inner();
-        if task_res_message != "".to_string() {
-            let notif = Log::log(task_res_message, log_file);
+
+        if result_type.is_empty(){
+            if !result_message.is_empty() {
+                panic!("Result type cannot be empty because the result message is not empty.\n
+                    found message: {}" , result_message)
+            }
+
+            else if !log_file.is_empty() {
+                panic!("Result type cannot be empty because the result is directed to log a message to a file.\n
+                    The log file found in the result: {}" , log_file)
+            }
+            return
+        }
+
+        if !result_message.is_empty() {
+            let notif = Log::log(result_message, log_file);
 
             if self.is_debug_enabled && self.is_metric_calc_enabled{
                 self.manage_metrics_notifs(&notif);
@@ -421,10 +450,23 @@ impl Engine {
             self.obs_manager.forward_notif(notif);
         }
 
-        let res_type = result.result_type.inner();
-        if (res_type == "Fin" || res_type == "FinErr") && !self.exit_flag {
+        if (result_type == "Fin" || result_type == "FinErr") && !self.exit_flag {
             self.finalize();
         }
+    }
+
+    fn handle_graph_visualization(&mut self , task: &Task) {
+        if let Some(callsite) = task.callsite.clone(){
+            let topo_node = TopologyNode::new(callsite.clone(), callsite.this_callsite_fingerprint.clone());
+            let notif = TopologyModifier::add_node(topo_node);
+            self.obs_manager.forward_notif(notif);
+    
+            if callsite.current_executing_task_fingerprint != String::default(){
+                let notif = TopologyModifier::add_edge(callsite.current_executing_task_fingerprint, callsite.this_callsite_fingerprint);
+                self.obs_manager.forward_notif(notif);
+            }
+        }
+
     }
 }
 
@@ -446,7 +488,7 @@ mod tests {
         thryve_utils::impl_as_any!(TestObsLogic);
         fn clean_up(&self, observer: Arc<Observer>) {
             while observer.obs_queue.main_queue.len() != 0 {
-                let _notif = observer.obs_queue.pop();
+                let _notif = observer.obs_queue.main_queue.pop();
             };
         }
     }
@@ -454,7 +496,7 @@ mod tests {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         Ctx::new(config, task_rx, notif_rx, packet_handle)
     }
@@ -621,7 +663,7 @@ mod tests {
         engine.obs_manager.load_observer(observer);
 
         // Create a "Fin" result
-        let fin_result = res::Result::new("Fin", "Finished".to_string(), "Main");
+        let fin_result = res::Result::fin();
 
         // Assert initially not exiting
         assert!(!engine.exit_flag);
@@ -709,7 +751,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx);
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx, false);
         let config = Config::default();
         let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
         let mut engine = Engine::new(&ctx);
@@ -753,7 +795,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone());
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone(), false);
         let config = Config::default();
         let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
         let mut engine = Engine::new(&ctx);

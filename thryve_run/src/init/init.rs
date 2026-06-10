@@ -19,14 +19,11 @@
 //! let engine = init_engine(&ctx);
 //! ```
 
-use std::{collections::HashMap, env::current_exe, fs::{File, OpenOptions, create_dir_all}, sync::Arc, time::SystemTime};
-
-use chrono::{ DateTime , Local };
-
+use std::{collections::HashMap, fs::{File, OpenOptions}, sync::Arc};
 use thryve_core::runtime::engine::Engine;
-use thryve_utils::{cfg::{dir_data::DirData, meta_data::MetaData}, extras::named_input::NamedInput};
-use thryve_utils::cfg::ctx::Ctx;
-use thryve_observers::logger::LoggerObserver;
+use thryve_utils::{cfg::{dir_data::DirData, meta_data::MetaData}, extras::{dir_paths::get_current_exec_dir, misc::get_current_date_time, named_input::NamedInput}};
+use thryve_utils::{cfg::ctx::Ctx, extras::dir_paths::{create_dir, DirName}};
+use thryve_observers::{logger::LoggerObserver, topology_handler::TopologyHandlerObserver};
 
 /// Initializes the Thryve engine with the given context.
 ///
@@ -66,6 +63,10 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
     // Initialize the logger observer with the specified log file names.
     init_logger(ctx, &mut eng);
 
+    if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph{
+        init_topology_handler(ctx, &mut eng);
+    }
+
     eng
 }
 
@@ -97,6 +98,12 @@ pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
     // Load the logger observer into the engine's observer manager to make it
     // available for handling notifications and logging messages.
     eng.obs_manager.load_observer(logger);
+}
+
+pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine){
+    let topology_handler = TopologyHandlerObserver::new(ctx);
+
+    eng.obs_manager.load_observer(topology_handler);
 }
 
 /// Initializes the directory structure and log files for the Thryve system.
@@ -149,23 +156,11 @@ pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
 /// init_directories(&mut ctx);
 /// ```
 pub fn init_directories(ctx: &mut Ctx) {
-    // Get the current executable's directory to create the log directory there.
-    let exe_dir = current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
- 
-    // Create a log directory with a timestamp to store the log files.
-    let datetime: DateTime<Local> = SystemTime::now().clone().into();
-    let log_dir_path = exe_dir
-        .join("log")
-        .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
-    create_dir_all(&log_dir_path).unwrap();
- 
+    let log_dir_path = create_dir(DirName::Log);
+
     // Create log files for each module type and store them in a hashmap for easy access.
     let mut temp_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
- 
+
     // Create a main log file and an error log file for general logging and
     // error logging respectively.
     let log_file_path_main = log_dir_path.join("Main.log");
@@ -225,8 +220,15 @@ pub fn init_directories(ctx: &mut Ctx) {
         );
     }
   
-    let dir_data = DirData::new(exe_dir, log_dir_path, temp_hash_map);
-    let meta_data = MetaData::new(datetime, dir_data);
+    let mut dir_data = DirData::new(get_current_exec_dir(), temp_hash_map);
+    dir_data.set_path(DirName::Log, log_dir_path);
+
+    if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph{
+        let topology_dir_path = create_dir(DirName::Topology);
+        dir_data.set_path(DirName::Topology, topology_dir_path);
+    }
+
+    let meta_data = MetaData::new(get_current_date_time(), dir_data);
   
     ctx.meta_data = meta_data;
 }
@@ -243,7 +245,7 @@ mod tests {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         Ctx::new(config, task_rx, notif_rx, packet_handle)
     }
@@ -257,7 +259,7 @@ mod tests {
         init_directories(&mut ctx);
 
         // Assert
-        assert!(ctx.meta_data.dir_data.log_dir_path.exists());
+        assert!(ctx.meta_data.dir_data.dir_paths[&DirName::Log].exists());
         assert!(ctx.meta_data.dir_data.log_hash_map.contains_key(&NamedInput::new("Main")));
         assert!(ctx.meta_data.dir_data.log_hash_map.contains_key(&NamedInput::new("Error")));
     }

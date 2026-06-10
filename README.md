@@ -294,7 +294,7 @@ fn create_observer(handle: PacketHandle) -> Observer {
         // Observer main loop
         loop {
             if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
+                return;
             }
             
             let notif = observer.obs_queue.pop();

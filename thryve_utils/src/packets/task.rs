@@ -22,6 +22,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::extras::{named_input::NamedInput, jobs::TaskJob};
+use crate::graphs::callsite::TaskCallSite;
 use crate::traits::packets::Packet;
 use crate::res;
 
@@ -61,6 +62,8 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct Task {
     /// Unique identifier assigned upon creation.
     pub id: u64,
+    /// Unique fingerprint for graph visualization.
+    pub callsite: Option<TaskCallSite>,
     /// Human-readable name for debugging and logging.
     pub task_name: NamedInput,
     /// Priority level (higher = more urgent).
@@ -84,6 +87,20 @@ impl Packet for Task {
     fn process(self) -> Option<(u64, res::Result)> {
         let id = self.id;
         Some((id, (self.job)()))
+    }
+
+    fn set_callsite(&mut self , callsite: TaskCallSite){
+        self.callsite = Some(callsite);
+    }
+
+    fn get_callsite(&self) -> TaskCallSite {
+        if let Some(callsite) = self.callsite.clone(){
+            callsite
+        }
+
+        else {
+            TaskCallSite::default()
+        }
     }
 }
 
@@ -118,6 +135,7 @@ impl Task {
     pub fn new(task_name: &str, task_priority: u8, function_to_exec: TaskJob) -> Self {
         Task {
             id: next_id(),
+            callsite: None,
             task_name: NamedInput::new(task_name),
             base_priority: task_priority,
             job: function_to_exec,

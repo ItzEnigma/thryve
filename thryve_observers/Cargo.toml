@@ -10,3 +10,4 @@
     # External Dependencies
     chrono = { workspace = true }
     crossbeam = { workspace = true }
+    ron = { workspace = true }

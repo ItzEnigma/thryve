@@ -108,7 +108,9 @@ impl MetaData {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::extras::dir_paths::DirName;
+
+use super::*;
 
     #[test]
     fn test_meta_data_default() {
@@ -118,7 +120,7 @@ mod tests {
         // Assert
         assert!(meta_data.datetime <= chrono::Local::now());
         assert!(meta_data.dir_data.exe_dir.as_os_str().is_empty());
-        assert!(meta_data.dir_data.log_dir_path.as_os_str().is_empty());
+        assert!(meta_data.dir_data.dir_paths.is_empty());
     }
 
     #[test]
@@ -156,14 +158,15 @@ mod tests {
         let datetime = chrono::Local::now();
         let exe_dir = std::path::PathBuf::from("/custom/exe");
         let log_dir = std::path::PathBuf::from("/custom/logs");
-        let dir_data = DirData::new(exe_dir.clone(), log_dir.clone(), std::collections::HashMap::new());
+        let mut dir_data = DirData::new(exe_dir.clone(), std::collections::HashMap::new());
+        dir_data.set_path(DirName::Log, log_dir.clone());
         
         // Act
         let meta_data = MetaData::new(datetime, dir_data.clone());
         
         // Assert
         assert_eq!(meta_data.dir_data.exe_dir, exe_dir);
-        assert_eq!(meta_data.dir_data.log_dir_path, log_dir);
+        assert_eq!(meta_data.dir_data.dir_paths[&DirName::Log], log_dir);
     }
 
     #[test]

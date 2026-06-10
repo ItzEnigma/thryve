@@ -18,10 +18,10 @@
 //! Any struct implementing the [`NotifLogic`] trait can serve as the core
 //! of a notification, enabling flexible and extensible notification handling
 //! throughout the system.
- 
-use crate::impl_as_any;
+use crate::graphs::callsite::TaskCallSite;
 use crate::traits::notif_logic::NotifLogic;
 use crate::extras::named_input::NamedInput;
+use crate::traits::packets::Packet;
 use std::time::SystemTime;
 
 /// Core notification structure for the Thryve notification system.
@@ -47,6 +47,8 @@ use std::time::SystemTime;
 pub struct Notif {
     /// Type identifier for categorizing the notification.
     pub notif_type: NamedInput,
+    /// Unique fingerprint for graph visualization.
+    pub callsite: Option<TaskCallSite>,
     /// Receiver identifier for routing to the appropriate observer.
     pub notif_receiver: NamedInput,
     /// Core logic implementing custom notification behavior.
@@ -55,8 +57,20 @@ pub struct Notif {
     pub timestamp: SystemTime,
 }
 
-impl NotifLogic for Notif {
-    impl_as_any!(Notif);
+impl Packet for Notif {
+    fn set_callsite(&mut self , callsite: TaskCallSite) {
+        self.callsite = Some(callsite);
+    }
+
+    fn get_callsite(&self) -> TaskCallSite {
+        if let Some(callsite) = self.callsite.clone(){
+            callsite
+        }
+
+        else {
+            TaskCallSite::default()
+        }
+    }
 }
 
 impl Notif {
@@ -82,6 +96,7 @@ impl Notif {
     ) -> Self {
         Self {
             notif_type: NamedInput::new(notif_type),
+            callsite: None,
             notif_receiver: NamedInput::new(notif_receiver),
             notif_core,
             timestamp: SystemTime::now(),
@@ -96,6 +111,7 @@ impl Notif {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::impl_as_any;
 
     // Test implementation of NotifLogic
     struct TestNotifLogic {

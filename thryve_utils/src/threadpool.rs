@@ -27,6 +27,7 @@ use std::thread::{self, JoinHandle};
 use crossbeam::channel::Sender;
 
 use crate::bases::observer::Observer;
+use crate::extras::thread_local::tl_set_current_task_fingerprint;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
 use crate::traits::{packets::Packet, queue::Queue};
 use crate::res;
@@ -65,7 +66,7 @@ pub struct ThreadPool<Q, P> {
     /// Number of worker threads to spawn.
     num_workers: usize,
     /// Collection of worker thread handles for lifecycle management.
-    workers: Vec<JoinHandle<()>>,
+    pub workers: Vec<JoinHandle<()>>,
     /// Flag for graceful shutdown.
     pool_exit_flag: Arc<AtomicBool>,
     /// Flag for pause/resume.
@@ -175,6 +176,7 @@ where
                         }
 
                         let obj = queue.pop();
+                        tl_set_current_task_fingerprint(obj.get_callsite().this_callsite_fingerprint);
 
                         if let Some(res_container) = obj.process().take() {
                             let _ = res_tx.send(res_container);
@@ -285,6 +287,12 @@ where
         self.pool_exit_flag.store(true, Ordering::SeqCst);
         self.main_queue.finalize(None);
 
+        for handle in self.workers.drain(..){
+            if !handle.is_finished(){
+                handle.join().expect("Could not join on plugin thread");
+            }
+        }
+
         let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
         self.packet_handle.send_notification(notif);
     }
@@ -375,7 +383,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
 
         // Act
@@ -393,7 +401,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
 
         // Act
@@ -408,7 +416,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle, None);
         let notif = Log::log("test_message".to_string(), "Main");
@@ -429,7 +437,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
 
         // Act
@@ -444,7 +452,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle, None);
 
@@ -462,7 +470,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
@@ -481,7 +489,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
@@ -502,7 +510,7 @@ use crate::traits::observer_logic::ObsLogic;
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let cfg = cfg::config::Config::default();
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = PQChild::new(&cfg , packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
@@ -521,14 +529,14 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Create a mock logger observer
         let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
-        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx);
+        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let fn_to_run: crate::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
@@ -554,7 +562,7 @@ use crate::traits::observer_logic::ObsLogic;
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 

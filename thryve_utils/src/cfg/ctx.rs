@@ -200,7 +200,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
 
         // Act
@@ -217,7 +217,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
         
         // Add a dummy observer
@@ -242,7 +242,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
         
         // Add a dummy plugin
@@ -267,7 +267,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
 
         // Act
@@ -285,7 +285,7 @@ mod tests {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
 
         // Act

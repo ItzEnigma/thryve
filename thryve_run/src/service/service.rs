@@ -136,10 +136,19 @@ impl <'a> Thryve <'a> {
         }
         
         // Create the context that will be passed to the engine, containing the configuration, channels, and packet handle.
-        let ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx));
-        
-        // Return the service instance and the context.
-        (svc , ctx)
+        if config.debugging.is_debugging{
+            let ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx, config.debugging.visual_graph));
+
+            // Return the service instance and the context.
+            (svc , ctx)
+        }
+
+        else{
+            let ctx = Ctx::new(config, task_rx, notif_rx, PacketHandle::new(task_tx , notif_tx, false));
+
+            // Return the service instance and the context.
+            (svc , ctx)
+        }
     }
 
     /// Runs the Thryve service and manages its execution lifecycle.

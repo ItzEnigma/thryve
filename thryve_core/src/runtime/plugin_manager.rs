@@ -155,7 +155,8 @@ impl PluginManager {
     /// manager.load_plugin(my_plugin);
     /// ```
     pub fn load_plugin(&mut self, config: &Config, mut plugin: Plugin) {
-        let task_init = Task::new("Init", config.tasks.max_priority, plugin.plg_entry_point());
+        let plg_type = format!("Init{}" , plugin.plg_type.inner());
+        let task_init = Task::new(&plg_type, config.tasks.max_priority, plugin.plg_entry_point());
         self.packet_handle.send_task(task_init);
         self.plugins.insert(NamedInput::new(plugin.plg_type.inner()), plugin);
     }
@@ -212,7 +213,7 @@ mod tests {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         Ctx::new(config, task_rx, notif_rx, packet_handle)
     }
