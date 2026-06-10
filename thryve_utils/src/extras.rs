@@ -239,19 +239,50 @@ pub mod panic_hook{
     }
 }
 
+/// Thread-local storage for the currently executing task's fingerprint.
+///
+/// This module provides thread-local storage for tracking which task is
+/// currently executing on each thread. This is essential for building
+/// the topology graph, as it allows the system to determine the parent
+/// task when a new task is created.
+///
+/// # Usage
+///
+/// The current task fingerprint is set when a task begins execution
+/// and cleared when it completes. When a new task is created via
+/// [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task),
+/// the current fingerprint is read and attached to the new task's
+/// call site as the `current_executing_task_fingerprint`.
 pub mod thread_local {
     use std::cell::RefCell;
 
     thread_local! {
+        /// Thread-local storage for the currently executing task's fingerprint.
         static CURRENT_TASK_FINGERPRINT: RefCell<String> = RefCell::new(String::default());
     }
 
+    /// Sets the current task fingerprint for the calling thread.
+    ///
+    /// This should be called when a task begins execution to track
+    /// which task is currently running on this thread.
+    ///
+    /// # Arguments
+    ///
+    /// * `fingerprint` - The fingerprint of the task being executed
     pub fn tl_set_current_task_fingerprint(fingerprint: String){
         CURRENT_TASK_FINGERPRINT.with(|data| {
             *data.borrow_mut() = fingerprint;
         });
     }
 
+    /// Gets the current task fingerprint for the calling thread.
+    ///
+    /// Returns the fingerprint of the task currently executing on
+    /// this thread, or an empty string if no task is executing.
+    ///
+    /// # Returns
+    ///
+    /// The fingerprint string, or an empty string if not set
     pub fn tl_get_current_task_fingerprint() -> String {
         CURRENT_TASK_FINGERPRINT.with(|data| {
             data.borrow().clone()
@@ -259,13 +290,56 @@ pub mod thread_local {
     }
 }
 
+/// Stack trace analysis for call site extraction.
+///
+/// This module provides functionality to analyze stack traces and extract
+/// call site information for graph visualization. When a task is created,
+/// a backtrace is captured and this module processes it to determine:
+///
+/// - The source file where the task was created
+/// - The module path within the crate
+/// - The line number of creation
+///
+/// # How It Works
+///
+/// 1. A backtrace is captured at the point of task creation
+/// 2. The backtrace frames are analyzed to find the actual caller
+/// 3. Symbol information is extracted (file path, line number, symbol name)
+/// 4. The module path is parsed from the symbol name
+/// 5. A [`TaskCallSite`](crate::graphs::callsite::TaskCallSite) is constructed
+///
+/// # Frame Skipping
+///
+/// The first 4 frames are skipped to bypass internal Thryve function calls
+/// and reach the actual user code that created the task.
 pub mod stack {
     use std::path::PathBuf;
 
-use backtrace::Backtrace;
-    
+    use backtrace::Backtrace;
+     
     use crate::graphs::callsite::TaskCallSite;
 
+    /// Extracts call site information from a backtrace.
+    ///
+    /// This function analyzes the provided backtrace to determine where
+    /// a task was created in the source code. It skips internal Thryve
+    /// frames and extracts file path, module path, line number, and
+    /// symbol name information.
+    ///
+    /// # Arguments
+    ///
+    /// * `backtrace` - The backtrace to analyze
+    /// * `name` - The name of the task being created
+    ///
+    /// # Returns
+    ///
+    /// A [`TaskCallSite`](crate::graphs::callsite::TaskCallSite) containing
+    /// the extracted call site information.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the backtrace cannot be properly analyzed or if the
+    /// expected frame structure is not found.
     pub fn get_task_data(backtrace: Backtrace , name: String) -> TaskCallSite {
         // println!("\n=== ALL FRAMES ===");
         // for (i, frame) in backtrace.frames().iter().enumerate() {

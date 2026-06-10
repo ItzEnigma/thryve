@@ -80,10 +80,40 @@ pub trait Packet: Send + Sync + 'static {
         None
     }
 
+    /// Sets the call site information for this packet.
+    ///
+    /// This method is used by the graph visualization system to attach
+    /// call site information to packets. The call site includes the
+    /// file path, module path, line number, and fingerprints needed
+    /// to build the topology graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `callsite` - The call site information to attach
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation does nothing. Types that need call
+    /// site tracking should override this method.
     fn set_callsite(&mut self , _callsite: TaskCallSite) {
         return
     }
 
+    /// Returns the call site information for this packet.
+    ///
+    /// This method provides access to call site information that was
+    /// attached via [`set_callsite`](Self::set_callsite). This is used
+    /// by the graph visualization system to track task creation points.
+    ///
+    /// # Returns
+    ///
+    /// The call site information if available, or a default empty
+    /// `TaskCallSite`.
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation returns an empty `TaskCallSite`.
+    /// Types that support call site tracking should override this method.
     fn get_callsite(&self) -> TaskCallSite {
         TaskCallSite::default()
     }

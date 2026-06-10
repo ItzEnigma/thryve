@@ -29,6 +29,7 @@ Thryve is designed around three main pillars:
 - **Configurable** via TOML with sensible defaults
 - **Extensible** through plugins and observers
 - **Production-ready** logging with timestamped, categorized output
+- **Graph visualization** for task topology analysis (debug mode)
 
 ## Architecture
 
@@ -207,6 +208,9 @@ log_tasks= false
 | `tasks` | `aging_interval` | u64 | 3 | Seconds before priority boost |
 | `debugging` | `is_debugging` | bool | false | Enable debug mode |
 | `debugging` | `wait_before_execution` | u64 | 10 | Debug wait time (seconds) |
+| `debugging` | `visual_graph` | bool | false | Enable task topology graph visualization |
+| `debugging` | `calculate_metrics` | bool | false | Enable metrics calculation |
+| `debugging` | `log_tasks` | bool | false | Enable task execution logging |
 
 ## Usage
 
@@ -357,6 +361,42 @@ fn main(){
     run_service::run_interactive(ctx);
 }
 ```
+
+## Graph Visualization (Debug Feature)
+
+When enabled via the `visual_graph` configuration option, Thryve automatically tracks task creation points and builds a topology graph showing how tasks call each other.
+
+### How It Works
+
+1. **Call Site Capture**: When a task is created, the system captures a stack backtrace to determine the exact file path, module path, and line number
+2. **Fingerprint Generation**: Each call site is assigned a unique fingerprint based on its location
+3. **Graph Building**: The [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) receives notifications and builds a graph where:
+   - **Nodes** represent call sites where tasks are created
+   - **Edges** represent parent-child task relationships
+   - **Edge weights** represent how many times a call path was taken
+4. **Visualization**: On shutdown, the graph is exported to a RON file and a GUI viewer is launched
+
+### Enabling Graph Visualization
+
+In your configuration file:
+
+```toml
+[debugging]
+is_debugging = true
+visual_graph = true
+```
+
+### Architecture
+
+The graph visualization system consists of:
+
+| Component | Description |
+|-----------|-------------|
+| [`TaskCallSite`](thryve_utils/src/graphs/callsite.rs) | Represents a single call site with file path, module path, line number |
+| [`TaskTopology`](thryve_utils/src/graphs/graph.rs) | Maintains the graph structure using petgraph's StableGraph |
+| [`TopologyModifier`](thryve_utils/src/packets/notif_topology.rs) | Notification type for adding nodes and edges |
+| [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) | Observer that maintains the graph and exports it on shutdown |
+
 
 ## Building
 

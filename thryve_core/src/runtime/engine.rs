@@ -455,6 +455,15 @@ impl Engine {
         }
     }
 
+    /// Handles graph visualization for a task.
+    ///
+    /// When graph visualization is enabled, this method captures the
+    /// call site information from tasks and sends notifications to
+    /// the topology handler observer to build the task call graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `task` - The task to process for graph visualization
     fn handle_graph_visualization(&mut self , task: &Task) {
         if let Some(callsite) = task.callsite.clone(){
             let topo_node = TopologyNode::new(callsite.clone(), callsite.this_callsite_fingerprint.clone());

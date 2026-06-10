@@ -1,3 +1,35 @@
+//! Topology handler observer for graph visualization.
+//!
+//! This module provides the [`TopologyHandlerObserver`] struct, which is an
+//! observer that receives topology modification notifications and maintains
+//! a graph of task relationships. When the engine shuts down, it exports
+//! the graph to a RON file and launches a GUI viewer.
+//!
+//! # Architecture
+//!
+//! The topology handler observer:
+//!
+//! 1. Receives `TopologyModifier` notifications from the engine
+//! 2. Updates an internal `TaskTopology` graph with new nodes and edges
+//! 3. On cleanup, exports the graph to a RON file
+//! 4. Launches an external GUI viewer to visualize the topology
+//!
+//! # Usage
+//!
+//! The topology handler is automatically initialized when graph visualization
+//! is enabled in the debugging configuration. It receives notifications
+//! about task creation points and builds a complete picture of the task
+//! call hierarchy.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use thryve_observers::topology_handler::TopologyHandlerObserver;
+//!
+//! // Typically created by the engine during initialization
+//! let observer = TopologyHandlerObserver::new(ctx);
+//! ```
+
 use std::{path::PathBuf, process::Command, sync::{Arc, RwLock, atomic::Ordering}, io::Write};
 
 use ron::ser::PrettyConfig;
@@ -10,14 +42,43 @@ use thryve_utils::impl_as_any;
 use thryve_utils::packets::{notif_log::Log, notif_topology::TopologyModifier};
 use thryve_utils::traits::{observer_logic::ObsLogic, queue::Queue};
 
-
-
+/// Observer that maintains and visualizes the task topology graph.
+///
+/// The `TopologyHandlerObserver` receives notifications about task creation
+/// points and maintains a graph representing the call hierarchy. On shutdown,
+/// it exports the graph to a RON file and launches a GUI viewer.
+///
+/// # Fields
+///
+/// - `topology`: The task topology graph (protected by a read-write lock)
+/// - `topology_dir`: The directory where topology files are stored
+///
+/// # Example
+///
+/// ```no_run
+/// use thryve_observers::topology_handler::TopologyHandlerObserver;
+///
+/// let observer = TopologyHandlerObserver::new(ctx);
+/// ```
 pub struct TopologyHandlerObserver{
+    /// The task topology graph (protected by a read-write lock).
     pub topology: RwLock<TaskTopology>,
+    /// The directory where topology files are stored.
     pub topology_dir: PathBuf,
 }
 
 impl ObsLogic for TopologyHandlerObserver {
+    /// Performs cleanup when the observer is shutting down.
+    ///
+    /// This method:
+    /// 1. Processes any remaining notifications in the queue
+    /// 2. Exports the topology graph to a RON file
+    /// 3. Clears the graph
+    /// 4. Launches the GUI viewer
+    ///
+    /// # Arguments
+    ///
+    /// * `obs` - The observer being cleaned up
     fn clean_up(&self, obs: Arc<Observer>) {
         while !obs.obs_queue.main_queue.is_empty() {
             if let Some(notif) = obs.obs_queue.main_queue.pop(){
@@ -56,6 +117,26 @@ impl ObsLogic for TopologyHandlerObserver {
 }
 
 impl TopologyHandlerObserver{
+    /// Creates a new topology handler observer.
+    ///
+    /// Initializes a new observer that will receive topology modification
+    /// notifications and maintain the task topology graph.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context
+    ///
+    /// # Returns
+    ///
+    /// A new `Observer` instance configured for topology handling.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_observers::topology_handler::TopologyHandlerObserver;
+    ///
+    /// let observer = TopologyHandlerObserver::new(ctx);
+    /// ```
     pub fn new(ctx: &Ctx) -> Observer{
         let topo_handler = Arc::new(Self {
             topology: RwLock::new(TaskTopology::default()),
@@ -75,7 +156,15 @@ impl TopologyHandlerObserver{
 
     }
 
-    pub fn topology_modification(&self, observer: Arc<Observer>){
+    /// Main loop for processing topology modification notifications.
+    ///
+    /// This method runs in a dedicated thread, continuously receiving
+    /// notifications and updating the topology graph accordingly.
+    ///
+    /// # Arguments
+    ///
+    /// * `observer` - The observer instance
+    fn topology_modification(&self, observer: Arc<Observer>){
         loop {
             if observer.exit_flag.load(Ordering::SeqCst){
                 let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
@@ -90,7 +179,15 @@ impl TopologyHandlerObserver{
         }
     }
 
-    pub fn handle_entry(&self , notif: Notif){
+    /// Handles an incoming topology modification notification.
+    ///
+    /// Processes the notification by adding nodes or edges to the
+    /// topology graph based on the action type.
+    ///
+    /// # Arguments
+    ///
+    /// * `notif` - The notification to handle
+    fn handle_entry(&self, notif: Notif){
         if notif.notif_receiver.inner() != "TopologyHandler" {
             return;
         }
@@ -157,6 +254,10 @@ impl TopologyHandlerObserver{
 }
 
 impl TopologyHandlerObserver {
+    /// Launches the GUI viewer for topology visualization.
+    ///
+    /// Spawns an external process (`topology_test.exe`) that reads
+    /// the exported RON file and displays the topology graph.
     fn visualize_gui(&self) {
         if let Some(current_execution_dir) = self.topology_dir.clone().parent(){
             let command = format!("{}\\topology_test.exe" , current_execution_dir.to_str().unwrap());

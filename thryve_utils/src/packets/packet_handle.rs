@@ -73,10 +73,18 @@ impl PacketHandle {
     /// notification senders. These channels are created by the engine
     /// during initialization and passed to modules.
     ///
+    /// When graph visualization is enabled, the packet handle will
+    /// automatically capture call site information (file path, module
+    /// path, line number) for each task sent through [`send_task`](Self::send_task).
+    /// This information is used to build a topology graph showing task
+    /// relationships and call hierarchies.
+    ///
     /// # Arguments
     ///
     /// * `task_tx` - Sender for tasks
     /// * `notif_tx` - Sender for notifications
+    /// * `is_graph_vis_enabled` - Whether graph visualization is enabled.
+    ///   When true, call site information is captured for each task.
     ///
     /// # Returns
     ///
@@ -86,7 +94,7 @@ impl PacketHandle {
     ///
     /// ```no_run
     /// // Typically created by the engine during initialization
-    /// let handle = PacketHandle::new(task_sender, notif_sender);
+    /// let handle = PacketHandle::new(task_sender, notif_sender, false);
     /// ```
     pub fn new(task_tx: Sender<Task>, notif_tx: Sender<Notif>, is_graph_vis_enabled: bool) -> Self {
         Self {
@@ -102,9 +110,27 @@ impl PacketHandle {
     /// for processing. The task will be queued and executed by worker
     /// threads according to its priority.
     ///
+    /// ## Graph Visualization
+    ///
+    /// When graph visualization is enabled (via the `is_graph_vis_enabled`
+    /// parameter in [`PacketHandle::new`](Self::new)), this method automatically:
+    ///
+    /// 1. Captures a stack backtrace to determine the call site
+    /// 2. Extracts file path, module path, and line number information
+    /// 3. Computes a unique fingerprint for this call site
+    /// 4. Retrieves the fingerprint of the currently executing task (parent)
+    /// 5. Attaches this call site information to the task
+    ///
+    /// This information is used by the [`TopologyHandlerObserver`](crate::topology_handler::TopologyHandlerObserver)
+    /// to build a topology graph showing task creation relationships.
+    ///
     /// # Arguments
     ///
     /// * `task` - The task to send
+    ///
+    /// # Panics
+    ///
+    /// Panics if the task cannot be sent to the engine.
     ///
     /// # Example
     ///
@@ -114,7 +140,7 @@ impl PacketHandle {
     /// handle.send_task(Task::new("MyTask", 0, Box::new(|| {
     ///     // Task logic here
     ///     Ok(())
-    /// }))); 
+    /// })));
     /// ```
     pub fn send_task(&self, mut task: Task) {
         if self.is_graph_visualization_enabled{

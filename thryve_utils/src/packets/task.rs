@@ -39,9 +39,22 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 /// and a function to execute. Tasks are processed by worker threads
 /// according to their priority and aging.
 ///
+/// # Graph Visualization
+///
+/// When graph visualization is enabled, tasks can carry call site
+/// information via the [`callsite`](Task::callsite) field. This information
+/// is automatically captured by [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task)
+/// and includes:
+///
+/// - The file path where the task was created
+/// - The module path in the Rust source
+/// - The line number of creation
+/// - Fingerprints for graph node identification
+///
 /// # Fields
 ///
 /// - `id`: Unique identifier assigned upon creation
+/// - `callsite`: Optional call site information for graph visualization
 /// - `task_name`: Human-readable name for debugging and logging
 /// - `base_priority`: Priority level (higher = more urgent)
 /// - `job`: The execution function (private)
@@ -62,7 +75,11 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct Task {
     /// Unique identifier assigned upon creation.
     pub id: u64,
-    /// Unique fingerprint for graph visualization.
+    /// Optional call site information for graph visualization.
+    ///
+    /// This field is populated when graph visualization is enabled
+    /// and contains information about where this task was created
+    /// in the source code.
     pub callsite: Option<TaskCallSite>,
     /// Human-readable name for debugging and logging.
     pub task_name: NamedInput,
@@ -89,10 +106,30 @@ impl Packet for Task {
         Some((id, (self.job)()))
     }
 
+    /// Sets the call site information for this task.
+    ///
+    /// This method is called by [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task)
+    /// when graph visualization is enabled. It attaches call site
+    /// information (file path, module path, line number, fingerprints)
+    /// to the task for topology graph construction.
+    ///
+    /// # Arguments
+    ///
+    /// * `callsite` - The call site information to attach to this task
     fn set_callsite(&mut self , callsite: TaskCallSite){
         self.callsite = Some(callsite);
     }
 
+    /// Returns the call site information for this task.
+    ///
+    /// This method provides access to the call site information that
+    /// was attached by [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task)
+    /// when graph visualization is enabled.
+    ///
+    /// # Returns
+    ///
+    /// The call site information if available, or a default empty
+    /// `TaskCallSite` if no call site was captured.
     fn get_callsite(&self) -> TaskCallSite {
         if let Some(callsite) = self.callsite.clone(){
             callsite

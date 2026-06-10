@@ -31,9 +31,17 @@ use std::time::SystemTime;
 /// system, carrying information about events, state changes, and other
 /// significant occurrences.
 ///
+/// # Graph Visualization
+///
+/// When graph visualization is enabled, notifications can carry call site
+/// information via the [`callsite`](Notif::callsite) field. This allows
+/// notifications to be traced back to their creation point in the source code,
+/// similar to tasks.
+///
 /// # Fields
 ///
 /// - `notif_type`: Type identifier for categorizing the notification
+/// - `callsite`: Optional call site information for graph visualization
 /// - `notif_receiver`: Receiver identifier for routing to the appropriate observer
 /// - `notif_core`: Core logic implementing custom notification behavior
 /// - `timestamp`: Time when the notification was created
@@ -47,7 +55,11 @@ use std::time::SystemTime;
 pub struct Notif {
     /// Type identifier for categorizing the notification.
     pub notif_type: NamedInput,
-    /// Unique fingerprint for graph visualization.
+    /// Optional call site information for graph visualization.
+    ///
+    /// This field is populated when graph visualization is enabled
+    /// and contains information about where this notification was created
+    /// in the source code.
     pub callsite: Option<TaskCallSite>,
     /// Receiver identifier for routing to the appropriate observer.
     pub notif_receiver: NamedInput,
@@ -58,10 +70,29 @@ pub struct Notif {
 }
 
 impl Packet for Notif {
+    /// Sets the call site information for this notification.
+    ///
+    /// This method is called by the packet handling system when graph
+    /// visualization is enabled. It attaches call site information
+    /// (file path, module path, line number, fingerprints) to the
+    /// notification for topology graph construction.
+    ///
+    /// # Arguments
+    ///
+    /// * `callsite` - The call site information to attach to this notification
     fn set_callsite(&mut self , callsite: TaskCallSite) {
         self.callsite = Some(callsite);
     }
 
+    /// Returns the call site information for this notification.
+    ///
+    /// This method provides access to the call site information that
+    /// was attached when graph visualization is enabled.
+    ///
+    /// # Returns
+    ///
+    /// The call site information if available, or a default empty
+    /// `TaskCallSite` if no call site was captured.
     fn get_callsite(&self) -> TaskCallSite {
         if let Some(callsite) = self.callsite.clone(){
             callsite
