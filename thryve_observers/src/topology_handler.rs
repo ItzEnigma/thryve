@@ -187,7 +187,7 @@ impl TopologyHandlerObserver{
     /// # Arguments
     ///
     /// * `notif` - The notification to handle
-    fn handle_entry(&self, notif: Notif){
+    pub fn handle_entry(&self, notif: Notif){
         if notif.notif_receiver.inner() != "TopologyHandler" {
             return;
         }
@@ -258,16 +258,21 @@ impl TopologyHandlerObserver {
     ///
     /// Spawns an external process (`topology_test.exe`) that reads
     /// the exported RON file and displays the topology graph.
-    fn visualize_gui(&self) {
+    pub fn visualize_gui(&self) {
         if let Some(current_execution_dir) = self.topology_dir.clone().parent(){
             let command = format!("{}\\topology_test.exe" , current_execution_dir.to_str().unwrap());
             println!("Command: {}" , command);
-            
             std::io::stdout().flush().unwrap();
 
-            Command::new(command).spawn().expect("Failed to spawn GUI");
+            if PathBuf::from(command.clone()).exists() {
+                Command::new(command).spawn().expect("Failed to spawn GUI");
+                println!("Process spawned and detached!");
+            }
 
-            println!("Process spawned and detached!");
+            else {println!("Failed to spawn GUI");}
+            
+
+
         }
         else {
             println!("{}\\topology_test.exe" , self.topology_dir.clone().parent().unwrap().to_str().unwrap());

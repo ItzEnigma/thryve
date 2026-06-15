@@ -4,6 +4,7 @@
         "thryve_core",
         "thryve_utils",
         "thryve_observers",
+        "thryve_tests",
         "thryve",
         ]
 

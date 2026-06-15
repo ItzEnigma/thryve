@@ -167,7 +167,7 @@ impl Engine {
     /// # Returns
     ///
     /// `true` if any tasks were received and processed.
-    fn check_tasks(&mut self) -> bool {
+    pub fn check_tasks(&mut self) -> bool {
         let mut received_tasks = false;
 
         while let Ok(task) = self.task_rx.try_recv() {
@@ -196,7 +196,7 @@ impl Engine {
     /// # Returns
     ///
     /// `true` if any notifications were received and processed.
-    fn check_notifs(&mut self) -> bool {
+    pub fn check_notifs(&mut self) -> bool {
         let mut received_notifs = false;
 
         while let Ok(notif) = self.notif_rx.try_recv() {
@@ -245,7 +245,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task` - Reference to the task being processed
-    fn manage_metrics_tasks(&mut self, task: &Task) {
+    pub fn manage_metrics_tasks(&mut self, task: &Task) {
         let size = task.size_in_bytes();
         let cur_batch_size = self.metrics.cur_batch_count_task;
 
@@ -269,7 +269,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task_result` - Reference to the result being processed
-    fn manage_metrics_results(&mut self, task_result: &res::Result) {
+    pub fn manage_metrics_results(&mut self, task_result: &res::Result) {
         let size = task_result.size_in_bytes();
         let cur_batch_size = self.metrics.cur_batch_count_res;
 
@@ -293,7 +293,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `notif` - Reference to the notification being processed
-    fn manage_metrics_notifs(&mut self, notif: &Notif) {
+    pub fn manage_metrics_notifs(&mut self, notif: &Notif) {
         let size = notif.size_in_bytes();
         let cur_batch_size = self.metrics.cur_batch_count_notif;
 
@@ -398,7 +398,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task_result` - Tuple of task ID and result
-    fn handle_result(&mut self, task_result: (u64, res::Result)) {
+    pub fn handle_result(&mut self, task_result: (u64, res::Result)) {
         let result = task_result.1;
 
         if let Some(next_task) = result.next_task {
@@ -464,7 +464,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task` - The task to process for graph visualization
-    fn handle_graph_visualization(&mut self , task: &Task) {
+    pub fn handle_graph_visualization(&mut self , task: &Task) {
         if let Some(callsite) = task.callsite.clone(){
             let topo_node = TopologyNode::new(callsite.clone(), callsite.this_callsite_fingerprint.clone());
             let notif = TopologyModifier::add_node(topo_node);
@@ -476,541 +476,5 @@ impl Engine {
             }
         }
 
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use thryve_utils::cfg::ctx::Ctx;
-    use thryve_utils::cfg::config::Config;
-    use thryve_utils::packets::packet_handle::PacketHandle;
-    use thryve_utils::packets::task::Task;
-    use thryve_utils::bases::notif::Notif;
-    use thryve_utils::bases::observer::Observer;
-    use thryve_utils::traits::observer_logic::ObsLogic;
-    use crossbeam::channel::bounded;
-
-    // Test implementation of ObsLogic
-    struct TestObsLogic;
-    impl ObsLogic for TestObsLogic {
-        thryve_utils::impl_as_any!(TestObsLogic);
-        fn clean_up(&self, observer: Arc<Observer>) {
-            while observer.obs_queue.main_queue.len() != 0 {
-                let _notif = observer.obs_queue.main_queue.pop();
-            };
-        }
-    }
-
-    fn create_test_ctx() -> Ctx {
-        let (task_tx, task_rx) = bounded::<Task>(10);
-        let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let config = Config::default();
-        Ctx::new(config, task_rx, notif_rx, packet_handle)
-    }
-
-    #[test]
-    fn test_engine_new_creates_engine() {
-        // Arrange
-        let ctx = create_test_ctx();
-
-        // Act
-        let engine = Engine::new(&ctx);
-
-        // Assert
-        assert!(!engine.exit_flag);
-        assert!(!engine.pause_flag);
-        assert_eq!(engine.sleep_tick_rate, ctx.config.engine.sleep_tick_rate);
-    }
-
-    #[test]
-    fn test_engine_run_once_with_exit_flag_only_checks_notifs() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        engine.exit_flag = true;
-
-        // Act - should not panic
-        engine.run_once();
-
-        // Assert - exit_flag should still be true
-        assert!(engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_run_once_with_pause_flag_only_checks_notifs() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        engine.pause_flag = true;
-
-        // Act - should not panic
-        engine.run_once();
-
-        // Assert - pause_flag should still be true
-        assert!(engine.pause_flag);
-    }
-
-    #[test]
-    fn test_engine_pause_sets_flag() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer first (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Assert initially not paused
-        assert!(!engine.pause_flag);
-
-        // Act
-        engine.pause();
-
-        // Assert
-        assert!(engine.pause_flag);
-    }
-
-    #[test]
-    fn test_engine_resume_clears_flag() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer first (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        engine.pause();
-
-        // Assert paused
-        assert!(engine.pause_flag);
-
-        // Act
-        engine.resume();
-
-        // Assert
-        assert!(!engine.pause_flag);
-    }
-
-    #[test]
-    fn test_engine_check_results_with_empty_channel() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Act
-        let received = engine.check_results();
-
-        // Assert - no results available
-        assert!(!received);
-    }
-
-    #[test]
-    fn test_engine_check_tasks_with_empty_channel() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Act
-        let received = engine.check_tasks();
-
-        // Assert - no tasks available
-        assert!(!received);
-    }
-
-    #[test]
-    fn test_engine_check_notifs_with_empty_channel() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Act
-        let received = engine.check_notifs();
-
-        // Assert - no notifications available
-        assert!(!received);
-    }
-
-    #[test]
-    fn test_engine_finalize_sets_exit_flag() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for finalize)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Assert initially not exiting
-        assert!(!engine.exit_flag);
-
-        // Act
-        engine.finalize();
-
-        // Assert
-        assert!(engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_handle_result_with_fin_type_triggers_finalize() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Create a "Fin" result
-        let fin_result = res::Result::fin();
-
-        // Assert initially not exiting
-        assert!(!engine.exit_flag);
-
-        // Act - handle the Fin result
-        engine.handle_result((1, fin_result));
-
-        // Assert - finalize should have been called
-        assert!(engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_handle_result_with_finerr_type_triggers_finalize() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Create a "FinErr" result
-        let finerr_result = res::Result::new("FinErr", "Error finished".to_string(), "Error");
-
-        // Assert initially not exiting
-        assert!(!engine.exit_flag);
-
-        // Act - handle the FinErr result
-        engine.handle_result((1, finerr_result));
-
-        // Assert - finalize should have been called
-        assert!(engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_handle_result_with_normal_type_does_not_finalize() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Create a normal result
-        let normal_result = res::Result::new("normal", "Done".to_string(), "Main");
-
-        // Act - handle the normal result
-        engine.handle_result((1, normal_result));
-
-        // Assert - should not have finalized
-        assert!(!engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_handle_result_submits_next_task() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Create a next task
-        let next_task = Task::new("nextTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
-        let result_with_next = res::Result::new("normal", "Done".to_string(), "Main").chain(next_task);
-
-        // Act - handle the result with next task
-        engine.handle_result((1, result_with_next));
-
-        // Assert - the next task should have been submitted to the threadpool
-        // We can verify this by checking that the task was sent (no panic means it worked)
-        assert!(!engine.exit_flag);
-    }
-
-    #[test]
-    fn test_engine_check_tasks_receives_and_submits() {
-        // Arrange
-        let (task_tx, task_rx) = bounded::<Task>(10);
-        let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx, false);
-        let config = Config::default();
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
-        let mut engine = Engine::new(&ctx);
-
-        // Send a task
-        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
-        task_tx.send(task).unwrap();
-
-        // Act
-        let received = engine.check_tasks();
-
-        // Assert
-        assert!(received);
-    }
-
-    #[test]
-    fn test_engine_check_notifs_receives_and_forwards() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer (required for forward_notif)
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Send a notification
-        let notif = Log::log("test notification".to_string(), "Main");
-        ctx.packet_handle().send_notification(notif);
-
-        // Act
-        let received = engine.check_notifs();
-
-        // Assert
-        assert!(received);
-    }
-
-    #[test]
-    fn test_engine_run_once_processes_all_channels() {
-        // Arrange
-        let (task_tx, task_rx) = bounded::<Task>(10);
-        let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone(), false);
-        let config = Config::default();
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
-        let mut engine = Engine::new(&ctx);
-
-        // Load a logging observer
-        let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
-        engine.obs_manager.load_observer(observer);
-
-        // Send a task and notification
-        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
-        task_tx.send(task).unwrap();
-        let notif = Log::log("test".to_string(), "Main");
-        notif_tx.send(notif).unwrap();
-
-        // Act - run once should process both without blocking
-        engine.run_once();
-
-        // Assert - engine should still be running
-        assert!(!engine.exit_flag);
-        assert!(!engine.pause_flag);
-    }
-
-    // Tests for manage_metrics_tasks
-
-    #[test]
-    fn test_manage_metrics_tasks_stores_size_in_batch() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
-            res::Result::new("Ok", "Done".to_string(), "Main")
-        }));
-        let expected_size = task.size_in_bytes();
-
-        // Act
-        engine.manage_metrics_tasks(&task);
-
-        // Assert
-        assert_eq!(engine.metrics.task_size_batch[0], expected_size);
-        assert_eq!(engine.metrics.cur_batch_count_task, 1);
-    }
-
-    #[test]
-    fn test_manage_metrics_tasks_increments_batch_count() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let task1 = Task::new("Task1", 1, Box::new(|| {
-            res::Result::new("Ok", "Done".to_string(), "Main")
-        }));
-        let task2 = Task::new("Task2", 2, Box::new(|| {
-            res::Result::new("Ok", "Done".to_string(), "Main")
-        }));
-
-        // Act
-        engine.manage_metrics_tasks(&task1);
-        engine.manage_metrics_tasks(&task2);
-
-        // Assert
-        assert_eq!(engine.metrics.cur_batch_count_task, 2);
-        assert_eq!(engine.metrics.task_size_batch[0], task1.size_in_bytes());
-        assert_eq!(engine.metrics.task_size_batch[1], task2.size_in_bytes());
-    }
-
-    #[test]
-    fn test_manage_metrics_tasks_does_not_trigger_calculation_before_batch_full() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
-            res::Result::new("Ok", "Done".to_string(), "Main")
-        }));
-
-        // Act
-        engine.manage_metrics_tasks(&task);
-
-        // Assert - avg_task_size should remain 0.0 since batch is not full
-        assert_eq!(engine.metrics.avg_task_size, 0.0);
-    }
-
-    // Tests for manage_metrics_results
-
-    #[test]
-    fn test_manage_metrics_results_stores_size_in_batch() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
-        let expected_size = result.size_in_bytes();
-
-        // Act
-        engine.manage_metrics_results(&result);
-
-        // Assert
-        assert_eq!(engine.metrics.res_size_batch[0], expected_size);
-        assert_eq!(engine.metrics.cur_batch_count_res, 1);
-    }
-
-    #[test]
-    fn test_manage_metrics_results_increments_batch_count() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let result1 = res::Result::new("Type1", "Message1".to_string(), "Main");
-        let result2 = res::Result::new("Type2", "Message2".to_string(), "Error");
-
-        // Act
-        engine.manage_metrics_results(&result1);
-        engine.manage_metrics_results(&result2);
-
-        // Assert
-        assert_eq!(engine.metrics.cur_batch_count_res, 2);
-        assert_eq!(engine.metrics.res_size_batch[0], result1.size_in_bytes());
-        assert_eq!(engine.metrics.res_size_batch[1], result2.size_in_bytes());
-    }
-
-    #[test]
-    fn test_manage_metrics_results_does_not_trigger_calculation_before_batch_full() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
-
-        // Act
-        engine.manage_metrics_results(&result);
-
-        // Assert - avg_res_size should remain 0.0 since batch is not full
-        assert_eq!(engine.metrics.avg_res_size, 0.0);
-    }
-
-    // Tests for manage_metrics_notifs
-
-    #[test]
-    fn test_manage_metrics_notifs_stores_size_in_batch() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let notif = Log::log("Test notification".to_string(), "Main");
-        let expected_size = notif.size_in_bytes();
-
-        // Act
-        engine.manage_metrics_notifs(&notif);
-
-        // Assert
-        assert_eq!(engine.metrics.notif_size_batch[0], expected_size);
-        assert_eq!(engine.metrics.cur_batch_count_notif, 1);
-    }
-
-    #[test]
-    fn test_manage_metrics_notifs_increments_batch_count() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let notif1 = Log::log("Notification 1".to_string(), "Main");
-        let notif2 = Log::log("Notification 2".to_string(), "Debug");
-
-        // Act
-        engine.manage_metrics_notifs(&notif1);
-        engine.manage_metrics_notifs(&notif2);
-
-        // Assert
-        assert_eq!(engine.metrics.cur_batch_count_notif, 2);
-        assert_eq!(engine.metrics.notif_size_batch[0], notif1.size_in_bytes());
-        assert_eq!(engine.metrics.notif_size_batch[1], notif2.size_in_bytes());
-    }
-
-    #[test]
-    fn test_manage_metrics_notifs_does_not_trigger_calculation_before_batch_full() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let notif = Log::log("Test notification".to_string(), "Main");
-
-        // Act
-        engine.manage_metrics_notifs(&notif);
-
-        // Assert - avg_notif_size should remain 0.0 since batch is not full
-        assert_eq!(engine.metrics.avg_notif_size, 0.0);
-    }
-
-    // Integration test for all three manage_metrics functions
-
-    #[test]
-    fn test_all_manage_metrics_functions_work_together() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
-            res::Result::new("Ok", "Done".to_string(), "Main")
-        }));
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
-        let notif = Log::log("Test notification".to_string(), "Main");
-
-        // Act
-        engine.manage_metrics_tasks(&task);
-        engine.manage_metrics_results(&result);
-        engine.manage_metrics_notifs(&notif);
-
-        // Assert
-        assert_eq!(engine.metrics.cur_batch_count_task, 1);
-        assert_eq!(engine.metrics.cur_batch_count_res, 1);
-        assert_eq!(engine.metrics.cur_batch_count_notif, 1);
-        assert_eq!(engine.metrics.task_size_batch[0], task.size_in_bytes());
-        assert_eq!(engine.metrics.res_size_batch[0], result.size_in_bytes());
-        assert_eq!(engine.metrics.notif_size_batch[0], notif.size_in_bytes());
     }
 }

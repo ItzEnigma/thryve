@@ -67,7 +67,7 @@ use crate::graphs::callsite::TaskCallSite;
 ///
 /// let node = TopologyNode::new(callsite, "fingerprint_123".to_string());
 /// ```
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize , PartialEq, Eq)]
 pub struct TopologyNode {
     /// The call site information for this node.
     pub callsite: TaskCallSite,
@@ -334,4 +334,3 @@ impl TopologyNode{
         }
     }
 }
-

@@ -72,9 +72,9 @@ use crate::init::init::init_engine;
 /// service.run_service(ctx);
 /// ```
 pub struct Thryve <'a>{
-    is_running: Arc<AtomicBool>,
-    is_paused: Arc<AtomicBool>,
-    service_instance: Service<'a>,
+    pub is_running: Arc<AtomicBool>,
+    pub is_paused: Arc<AtomicBool>,
+    pub service_instance: Service<'a>,
 }
 
 
