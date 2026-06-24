@@ -89,7 +89,10 @@ impl ObsLogic for TopologyHandlerObserver {
         let current_dir = self.topology_dir.clone();
 
         // Export topology to RON file
-        let mut topology_write = self.topology.write().unwrap();
+        // RwLock write failure is fatal - indicates poisoned lock
+        let mut topology_write = self.topology.write().unwrap_or_else(|e| {
+            panic!("Topology RwLock poisoned: {}. Cannot export topology.", e)
+        });
 
         // Configure pretty-printing options
         let pretty_config = PrettyConfig::new()
@@ -98,13 +101,15 @@ impl ObsLogic for TopologyHandlerObserver {
             .new_line(String::from("\n"));
 
         // Serialize to RON string
+        // Serialization failure is fatal - topology data is corrupted
         let ron_string = ron::ser::to_string_pretty(&topology_write.graph, pretty_config)
-            .expect("Failed to serialize topology to RON");
+            .expect("Failed to serialize topology to RON - topology data may be corrupted");
         
         // Write to file
         let file_path = current_dir
             .join("topology_export.ron");
 
+        // File write failure is fatal - cannot store topology data
         std::fs::write(&file_path, ron_string)
             .expect("Failed to write topology file");
 
@@ -143,7 +148,7 @@ impl TopologyHandlerObserver{
             topology_dir: ctx.meta_data.dir_data.get_dir_path(&DirName::Topology),
         });
 
-        let topo_handler_job: ObsJob = Box::new(move |topo_handler: Arc<Observer>| {
+        let topo_handler_job = ObsJob::new(move |topo_handler: Arc<Observer>| {
 
             let topo_handler_as_any = topo_handler.obs_core.as_any();
             if let Some(topo_handler_core) = topo_handler_as_any.downcast_ref::<TopologyHandlerObserver>() {
@@ -200,12 +205,14 @@ impl TopologyHandlerObserver{
         // If the notification is successfully downcasted to a `TopologyModifier` type,
         // extract the log file name from the notification and log the message
         // to the appropriate file.
+        // Downcast failure is fatal - indicates a protocol violation
         let mut notif_core = notif_casted.expect(&format!("Notification Sent to TopologyHandler but is meant for someone else. Intended receiver: {}", notif.notif_receiver.inner())).clone();
 
         let from_fingerprint = notif_core.from_fingerprint.as_str();
         let to_fingerprint = notif_core.to_fingerprint.as_str();
 
-        let mut topology_ref = self.topology.write().unwrap();
+        // RwLock write failure is fatal - indicates poisoned lock
+        let mut topology_ref = self.topology.write().expect("Topology RwLock poisoned - cannot process topology modifier");
 
         if topology_ref.workspace_root == PathBuf::default() {
             topology_ref.workspace_root = get_workspace_root();
@@ -213,9 +220,12 @@ impl TopologyHandlerObserver{
 
         match notif_core.action.as_str() {
             "AddNode" => {
-                notif_core.graph_node.callsite.file_path = notif_core.graph_node.callsite.file_path
-                    .strip_prefix(topology_ref.workspace_root.clone())
-                    .unwrap_or(&notif_core.graph_node.callsite.file_path).to_path_buf();
+                // strip_prefix returns None if the prefix isn't found - this is not fatal,
+                // we just use the original path
+                notif_core.graph_node.callsite.file_path =
+                    notif_core.graph_node.callsite.file_path
+                        .strip_prefix(topology_ref.workspace_root.clone())
+                        .unwrap_or(&notif_core.graph_node.callsite.file_path).to_path_buf();
 
                 let node_fingerprint = notif_core.graph_node.fingerprint.clone();
 
@@ -229,8 +239,9 @@ impl TopologyHandlerObserver{
                 let temp_from = topology_ref.contains_node(from_fingerprint);
                 let temp_to = topology_ref.contains_node(to_fingerprint);
 
+                // Missing node is a fatal error - indicates graph corruption
                 if !temp_from || !temp_to{
-                    panic!("Cannot add edge because a node is missing");
+                    panic!("Cannot add edge because a node is missing. This indicates graph corruption. from={}, to={}", from_fingerprint, to_fingerprint);
                 }
 
                 let temp_from = topology_ref.get_node_index(from_fingerprint);
@@ -252,7 +263,6 @@ impl TopologyHandlerObserver{
 
     }
 }
-
 impl TopologyHandlerObserver {
     /// Launches the GUI viewer for topology visualization.
     ///
@@ -260,22 +270,36 @@ impl TopologyHandlerObserver {
     /// the exported RON file and displays the topology graph.
     pub fn visualize_gui(&self) {
         if let Some(current_execution_dir) = self.topology_dir.clone().parent(){
-            let command = format!("{}\\topology_test.exe" , current_execution_dir.to_str().unwrap());
+            // Path conversion failure is fatal - indicates corrupted path data
+            let command = format!("{}\\topology_test.exe" , current_execution_dir.to_str().expect("Topology directory path contains invalid UTF-8"));
             println!("Command: {}" , command);
-            std::io::stdout().flush().unwrap();
+            // Stdout flush failure is fatal - indicates corrupted stdout
+            std::io::stdout().flush().expect("Failed to flush stdout");
 
             if PathBuf::from(command.clone()).exists() {
+                // Process spawn failure is fatal - cannot visualize topology
                 Command::new(command).spawn().expect("Failed to spawn GUI");
                 println!("Process spawned and detached!");
             }
 
             else {println!("Failed to spawn GUI");}
             
+            
 
 
         }
         else {
-            println!("{}\\topology_test.exe" , self.topology_dir.clone().parent().unwrap().to_str().unwrap());
+            // Path operations - parent() returns None if no parent, to_str() fails on invalid UTF-8
+            // These are non-fatal - we log the error and continue
+            if let Some(parent) = self.topology_dir.clone().parent() {
+                if let Some(path_str) = parent.to_str() {
+                    println!("{}\\topology_test.exe" , path_str);
+                } else {
+                    println!("Topology directory path contains invalid UTF-8");
+                }
+            } else {
+                println!("Failed to get topology directory parent path");
+            }
         }
 
     }

@@ -36,7 +36,7 @@ use thryve_utils::packets::{notif_log::Log , packet_handle::PacketHandle , task:
 use thryve_utils::traits::plugin_logic::PluginB;
 use thryve_utils::res;
 use thryve_utils::queues::priority_queue::PQChild;
-use thryve_utils::threadpool::ThreadPool;
+use thryve_utils::threads::threadpool::ThreadPool;
 
 use std::{collections::HashMap, sync::Arc};
 

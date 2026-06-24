@@ -1,0 +1,49 @@
+# cbindgen configuration for Thryve FFI
+#
+# This file configures cbindgen to generate C-compatible headers.
+# The generated header is used by cbindgen::Builder in build.rs.
+
+# C-compatible output (not C++)
+language = "C"
+
+# Include version in header
+include_version = true
+
+# Include guard for header
+include_guard = "THRYVE_H"
+
+# Disable Rust-specific documentation (it won't make sense in C)
+documentation = false
+
+# Use typedef instead of using (C-style)
+style = "type"
+
+# Use size_t for usize
+usize_is_size_t = true
+
+# Enum configuration: prefix enum values with enum name
+[enum]
+prefix_with_name = true
+
+# Export configuration
+[export]
+include = [
+    "FfiConfig",
+    "FfiCtx",
+    "FfiRunHandle",
+    "FfiService",
+    "FfiPlugin",
+    "FfiObserver",
+    "FfiPacketHandle",
+    "FfiTask",
+    "FfiNotif",
+    "FfiStatus",
+    "FfiTaskResult",
+    "FfiTaskJob",
+    "FfiPluginCleanUp",
+    "FfiPluginEntryPoint",
+    "FfiObserverCleanUp",
+    "FfiObserverMainLoop",
+    "FfiObsJob",
+    "FfiNotifLogic",
+]

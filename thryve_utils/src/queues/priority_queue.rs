@@ -33,6 +33,7 @@ use crossbeam_skiplist::SkipMap;
 
 use crate::bases::observer::Observer;
 use crate::cfg::config::{Config, TaskConfig};
+use crate::extras::jobs::TaskJob;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
 use crate::bases::queue::QueueBase;
 use crate::traits::queue::Queue;
@@ -85,13 +86,21 @@ impl Queue<Task> for PQChild<Task> {
     /// calculates its priority, and inserts it into the `SkipMap`.
     /// Notifies waiting threads if the queue is not paused.
     ///
+    /// # Panics
+    ///
+    /// Panics if `task_config` is `None`, which should never happen if
+    /// the queue was properly initialized with [`PQChild::new`](Self::new).
+    ///
     /// # Arguments
     ///
     /// * `task` - The task to insert
     fn push(&self, task: Task) {
+        let task_config = self.task_config.as_ref()
+            .expect("PQChild task_config must be Some - queue was not properly initialized");
+
         // Wrap the task to track enqueue time for aging.
         let mut enq_task = EnqueuedTask { task, enq_at: Instant::now() };
-        enq_task.task.clamp_task_priority(self.task_config.clone().unwrap().max_priority);
+        enq_task.task.clamp_task_priority(task_config.max_priority);
 
         // Create priority struct for ordering.
         let priority = Priority {
@@ -129,6 +138,8 @@ impl Queue<Task> for PQChild<Task> {
 
             // Wait if paused.
             else if self.pause_flag.load(Ordering::SeqCst) == true {
+                // Mutex lock failure indicates poisoned mutex - fatal error.
+                // Condvar wait failure also indicates poisoned mutex - fatal error.
                 let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
             }
 
@@ -143,11 +154,13 @@ impl Queue<Task> for PQChild<Task> {
             }
 
             // Wait for notification.
+            // Mutex lock failure indicates poisoned mutex - fatal error.
+            // Condvar wait failure also indicates poisoned mutex - fatal error.
             let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
         }
 
         // Return special "Fin" task on shutdown.
-        Task::new("Fin", 0, Box::new(|| Result::fin()))
+        Task::new("Fin", 0, TaskJob::new(|| Result::fin()))
     }
 
     /// Finalizes the queue for shutdown.

@@ -157,7 +157,7 @@ where
     /// pool.run_threads_plugins();
     /// // Worker threads now processing tasks
     /// ```
-    pub fn run_threads_plugins(&mut self) {        
+    pub fn run_threads_plugins(&mut self) {
         for i in 0..self.num_workers {
             let queue = Arc::clone(&self.main_queue);
             let res_tx = self.res_tx.clone().expect("Result Sender Has to be Present!");
@@ -179,7 +179,11 @@ where
                         tl_set_current_task_fingerprint(obj.get_callsite().this_callsite_fingerprint);
 
                         if let Some(res_container) = obj.process().take() {
-                            let _ = res_tx.send(res_container);
+                            // Non-fatal: if result send fails, log it and continue
+                            if let Err(e) = res_tx.send(res_container) {
+                                let notif = Log::log(format!("Failed to send result: {}", e), "Error");
+                                tx.send_notification(notif);
+                            }
                         }
                     }
                 })
@@ -211,7 +215,7 @@ where
         let handle = thread::Builder::new()
             .name(format!("{}" , obs.obs_type))
             .spawn(move || {
-                (arc_obs.fn_to_run)(arc_obs.clone());
+                arc_obs.run_loop(arc_obs.clone());
             })
             .unwrap_or_else(|e| panic!("Failed to spawn observer worker thread: {}", e));
 

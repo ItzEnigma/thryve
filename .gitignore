@@ -8,3 +8,5 @@ Cargo.lock
 
 mermaid
 thryve_utils/src/debug_logging.rs
+thryve_ffi/dist
+thryve_ffi/out

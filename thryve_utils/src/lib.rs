@@ -1,4 +1,5 @@
 pub mod cfg;
+pub mod errors;
 pub mod graphs;
 pub mod traits;
 pub mod packets;
@@ -6,6 +7,6 @@ pub mod queues;
 pub mod res;
 pub mod extras;
 pub mod debug_logging;
-pub mod threadpool;
 pub mod bases;
 pub mod macros;
+pub mod threads;

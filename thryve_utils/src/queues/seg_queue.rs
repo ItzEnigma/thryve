@@ -68,6 +68,8 @@ impl Queue<Notif> for QChild {
 
             // Wait if paused.
             else if self.pause_flag.load(Ordering::SeqCst) == true {
+                // Mutex lock failure indicates poisoned mutex - fatal error.
+                // Condvar wait failure also indicates poisoned mutex - fatal error.
                 let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
             }
 
@@ -77,6 +79,8 @@ impl Queue<Notif> for QChild {
             }
 
             // Wait for notification.
+            // Mutex lock failure indicates poisoned mutex - fatal error.
+            // Condvar wait failure also indicates poisoned mutex - fatal error.
             let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
         }
 
@@ -89,6 +93,11 @@ impl Queue<Notif> for QChild {
     /// Drains remaining notifications to the logger, sets the exit
     /// flag, and notifies all waiting threads.
     ///
+    /// # Panics
+    ///
+    /// Panics if `logger` is `None`, which indicates the queue was
+    /// finalized without a valid logger observer.
+    ///
     /// # Arguments
     ///
     /// * `logger` - The logger observer for draining notifications
@@ -97,7 +106,8 @@ impl Queue<Notif> for QChild {
         self.condition_var.notify_all();
 
         let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
-        logger.unwrap().obs_queue.push(notif);
+        let obs = logger.expect("Observer queue finalized without logger - cannot send finalization notification");
+        obs.obs_queue.push(notif);
     }
 
     /// Pauses the queue.

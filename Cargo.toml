@@ -6,6 +6,7 @@
         "thryve_observers",
         "thryve_tests",
         "thryve",
+        "thryve_ffi",
         ]
 
     resolver = "3"
@@ -20,4 +21,6 @@
     ron = "0.12"
     petgraph = {version = "0.8.3" , features = ["serde-1"]}
     serde = { version = "1.0.228" , features = ["derive"] }
-
+    tokio = "1"
+    anyhow = "1.0.102"
+    thiserror = "2.0.18"

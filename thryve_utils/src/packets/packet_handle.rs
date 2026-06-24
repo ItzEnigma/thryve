@@ -157,8 +157,10 @@ impl PacketHandle {
             task.set_callsite(callsite.clone());
         }
 
-        let _ = self.task_tx.send(task)
-        .unwrap_or_else(|e| panic!("Failed to send task to engine: {}" , e));
+        // Channel send failure is fatal - the engine receiver is gone, meaning
+        // the engine is shutting down or in an invalid state.
+        self.task_tx.send(task)
+        .unwrap_or_else(|e| panic!("Failed to send task to engine: {}. Engine may have shut down.", e));
     }
   
     /// Sends a notification to the engine.
@@ -171,6 +173,11 @@ impl PacketHandle {
     ///
     /// * `notif` - The notification to send
     ///
+    /// # Panics
+    ///
+    /// Panics if the notification cannot be sent, which indicates the engine
+    /// receiver is gone and the engine is shutting down.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -179,7 +186,9 @@ impl PacketHandle {
     /// handle.send_notification(Log::log("Hello".to_string(), "Main"));
     /// ```
     pub fn send_notification(&self, notif: Notif) {
-        let _ = self.notif_tx.send(notif)
-        .unwrap_or_else(|e| panic!("Failed to send notification to engine: {}", e));
+        // Channel send failure is fatal - the engine receiver is gone, meaning
+        // the engine is shutting down or in an invalid state.
+        self.notif_tx.send(notif)
+        .unwrap_or_else(|e| panic!("Failed to send notification to engine: {}. Engine may have shut down.", e));
     }
 }

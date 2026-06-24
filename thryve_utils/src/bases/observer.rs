@@ -125,4 +125,19 @@ impl Observer {
         self.obs_queue.finalize(Some(self.clone()));
         self.obs_core.clean_up(self.clone());
     }
+
+    /// Extracts and returns the initialization function.
+    ///
+    /// Returns the `fn_to_run` closure and replaces it with a default
+    /// error function. This ensures the initialization function is only executed
+    /// once when the observer is first loaded.
+    ///
+    /// # Returns
+    ///
+    /// The initialization function closure, or a default error function if
+    /// called multiple times.
+    pub fn run_loop(&self , arc_obs: Arc<Observer>){
+        // Take the ObsJob and replace it with a default one (similar to Task::process)
+        self.fn_to_run.call_once(arc_obs);
+    }
 }

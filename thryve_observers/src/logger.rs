@@ -104,7 +104,8 @@ impl ObsLogic for LoggerObserver {
         };
 
         for (_ , mut file) in self.files.clone() {
-            file.flush().unwrap()
+            // Non-fatal: flush failure means data might not be written, but we continue
+            let _ = file.flush();
         }
     }
 
@@ -152,7 +153,7 @@ impl LoggerObserver {
             files: dir_data.log_hash_map,
         });
 
-        let logger_core: ObsJob = Box::new(move |logger: Arc<Observer>| {
+        let logger_core = ObsJob::new(move |logger: Arc<Observer>| {
             let logger_as_any = logger.obs_core.as_any();
             if let Some(logger_core) = logger_as_any.downcast_ref::<LoggerObserver>() {
                 logger_core.log(logger.clone());

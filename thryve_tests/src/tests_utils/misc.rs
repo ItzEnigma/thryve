@@ -184,13 +184,15 @@ mod tests_extras {
         // but we can verify they compile and work correctly
         mod jobs_tests {
 
-            use super::*;
+            use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+
+use super::*;
             use std::sync::Arc;
 
             #[test]
             fn test_task_job_type_alias_compiles() {
                 // Arrange & Act - just verify the type alias works
-                let _job: jobs::TaskJob = Box::new(|| {
+                let _job = TaskJob::new(|| {
                     thryve_utils::res::Result::new("Test", "Test message".to_string(), "Main")
                 });
                 
@@ -200,12 +202,12 @@ mod tests_extras {
             #[test]
             fn test_task_job_execution() {
                 // Arrange
-                let job: jobs::TaskJob = Box::new(|| {
+                let job = TaskJob::new(|| {
                     thryve_utils::res::Result::new("Success", "Completed".to_string(), "Main")
                 });
                 
                 // Act
-                let result = job();
+                let result = job.call_once();
                 
                 // Assert
                 assert_eq!(result.result_type.inner(), "Success");
@@ -215,7 +217,7 @@ mod tests_extras {
             #[test]
             fn test_obs_job_type_alias_compiles() {
                 // Arrange & Act - verify the type alias works
-                let _job: jobs::ObsJob = Box::new(move |_observer: Arc<thryve_utils::bases::observer::Observer>| {
+                let _job = ObsJob::new(move |_observer: Arc<thryve_utils::bases::observer::Observer>| {
                     // Observer initialization logic
                 });
                 
@@ -228,7 +230,7 @@ mod tests_extras {
                 let executed = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let executed_clone = Arc::clone(&executed);
                 
-                let job: jobs::ObsJob = Box::new(move |_observer: Arc<thryve_utils::bases::observer::Observer>| {
+                let job = ObsJob::new(move |_observer: Arc<thryve_utils::bases::observer::Observer>| {
                     executed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                 });
                 
@@ -246,7 +248,7 @@ mod tests_extras {
                 ));
                 
                 // Act - execute the fn_to_run
-                (observer.fn_to_run)(observer.clone());
+                observer.run_loop(observer.clone());
                 
                 // Assert
                 assert!(executed.load(std::sync::atomic::Ordering::SeqCst));
@@ -358,7 +360,7 @@ mod tests_extras {
             #[test]
             fn test_get_current_exec_dir_returns_valid_path() {
                 // Act
-                let exec_dir = dir_paths::get_current_exec_dir();
+                let exec_dir = dir_paths::get_current_exec_dir().expect("Should be able to get executable directory");
                 
                 // Assert - should be an absolute path
                 assert!(exec_dir.is_absolute());
@@ -371,7 +373,7 @@ mod tests_extras {
             #[test]
             fn test_create_dir_log_creates_directory() {
                 // Act
-                let log_dir = dir_paths::create_dir(dir_paths::DirName::Log);
+                let log_dir = dir_paths::create_dir(dir_paths::DirName::Log).expect("Should be able to create log directory");
                 
                 // Assert
                 assert!(log_dir.is_absolute());
@@ -384,7 +386,7 @@ mod tests_extras {
             #[test]
             fn test_create_dir_topology_creates_directory() {
                 // Act
-                let topology_dir = dir_paths::create_dir(dir_paths::DirName::Topology);
+                let topology_dir = dir_paths::create_dir(dir_paths::DirName::Topology).expect("Should be able to create topology directory");
                 
                 // Assert
                 assert!(topology_dir.is_absolute());
@@ -457,7 +459,8 @@ mod tests_extras {
 }
 
 mod tests_res {
-    use thryve_utils::traits::packets::Packet;
+    use thryve_utils::extras::jobs::TaskJob;
+use thryve_utils::traits::packets::Packet;
     use thryve_utils::res::*;
     use thryve_utils::packets::task::*;
 
@@ -510,7 +513,7 @@ mod tests_res {
         let next_task = Task::new(
             "FollowUpTask",
             1,
-            Box::new(|| Result::new("Ok", "Done".to_string(), "Main"))
+            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main"))
         );
         
         // Act
@@ -566,13 +569,13 @@ mod tests_res {
             "First step done".to_string(),
             "Main",
         ).chain(
-            Task::new("Step2", 2, Box::new(|| {
+            Task::new("Step2", 2, TaskJob::new(|| {
                 Result::new(
                     "Step2",
                     "Second step done".to_string(),
                     "Main"
                 ).chain(
-                    Task::new("Step3", 3, Box::new(|| {
+                    Task::new("Step3", 3, TaskJob::new(|| {
                         Result::new("Final", "All done".to_string(), "Main")
                     }))
                 )
@@ -674,7 +677,7 @@ mod tests_res {
     #[test]
     fn test_size_in_bytes_with_chained_result() {
         // Arrange
-        let next_task = Task::new("NextTask", 1, Box::new(|| {
+        let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
             Result::new("Ok", "Done".to_string(), "Main")
         }));
         let result = Result::new("Chained", "Chained message".to_string(), "Main")
@@ -739,7 +742,7 @@ mod tests_res {
         // Arrange - set thread-local fingerprint
         thryve_utils::extras::thread_local::tl_set_current_task_fingerprint("parent_task_fp".to_string());
         
-        let next_task = Task::new("ChainedTask", 1, Box::new(|| {
+        let next_task = Task::new("ChainedTask", 1, TaskJob::new(|| {
             Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -771,7 +774,7 @@ mod tests_res {
         for fingerprint in test_fingerprints {
             thryve_utils::extras::thread_local::tl_set_current_task_fingerprint(fingerprint.to_string());
             
-            let next_task = Task::new("ChainedTask", 1, Box::new(|| {
+            let next_task = Task::new("ChainedTask", 1, TaskJob::new(|| {
                 Result::new("Ok", "Done".to_string(), "Main")
             }));
 
@@ -796,7 +799,7 @@ mod tests_res {
         // Arrange - ensure thread-local fingerprint is empty
         thryve_utils::extras::thread_local::tl_set_current_task_fingerprint(String::new());
         
-        let next_task = Task::new("ChainedTask", 1, Box::new(|| {
+        let next_task = Task::new("ChainedTask", 1, TaskJob::new(|| {
             Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -813,7 +816,7 @@ mod tests_res {
     #[test]
     fn test_result_chain_with_unicode_message() {
         // Arrange
-        let next_task = Task::new("UnicodeTask", 1, Box::new(|| {
+        let next_task = Task::new("UnicodeTask", 1, TaskJob::new(|| {
             Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -830,7 +833,7 @@ mod tests_res {
     fn test_result_chain_with_long_message() {
         // Arrange
         let long_message = "a".repeat(10000);
-        let next_task = Task::new("LongTask", 1, Box::new(|| {
+        let next_task = Task::new("LongTask", 1, TaskJob::new(|| {
             Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -848,7 +851,8 @@ mod tests_threadpool {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
-    use thryve_utils::packets::notif_log::Log;
+    use thryve_utils::extras::jobs::ObsJob;
+use thryve_utils::packets::notif_log::Log;
     use thryve_utils::threadpool::*;
     use thryve_utils::cfg;
     use thryve_utils::packets::packet_handle::PacketHandle;
@@ -1030,7 +1034,7 @@ mod tests_threadpool {
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
             "logger",
             "loggerType",

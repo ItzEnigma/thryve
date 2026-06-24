@@ -26,7 +26,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| {
+        let job = TaskJob::new(|| {
             res::Result::new("OK", "success".to_string(), "Main")
         });
 
@@ -51,7 +51,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new(
@@ -74,7 +74,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new(
@@ -97,7 +97,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| {
+        let job: TaskJob = TaskJob::new(|| {
             res::Result::new("OK", "success".to_string(), "Main")
         });
 
@@ -111,7 +111,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
 
         // Act - first call should return the original job
         let first_fn = plugin.plg_entry_point();
-        let first_result = first_fn();
+        let first_result = first_fn.call_once();
 
         // Assert - first call returns original job
         assert_eq!(first_result.result_type.inner(), "OK");
@@ -119,7 +119,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
 
         // Act - second call should return default error function
         let second_fn = plugin.plg_entry_point();
-        let second_result = second_fn();
+        let second_result = second_fn.call_once();
 
         // Assert - second call returns error function
         assert_eq!(second_result.result_type.inner(), "BIGERR");
@@ -133,7 +133,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         let plugin = Plugin::new(
             "test_plugin",
@@ -154,7 +154,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new(
@@ -179,7 +179,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new(
@@ -203,7 +203,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type cannot be empty
         let _plugin = Plugin::new(
@@ -223,7 +223,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type must be alphanumeric
         let _plugin = Plugin::new(
@@ -243,7 +243,7 @@ use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type must be alphanumeric
         let _plugin = Plugin::new(
@@ -284,7 +284,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {
             // No-op test function
         });
 
@@ -310,7 +310,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -333,7 +333,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -356,7 +356,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -378,7 +378,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
@@ -405,7 +405,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -430,7 +430,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -454,7 +454,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type cannot be empty
         let _observer = Observer::new(
@@ -474,7 +474,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type must be alphanumeric
         let _observer = Observer::new(
@@ -494,7 +494,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type must be alphanumeric
         let _observer = Observer::new(
@@ -513,7 +513,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
@@ -537,7 +537,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -563,7 +563,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {
             executed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
 
@@ -578,7 +578,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         let obs_arc = Arc::new(observer);
         // Execute the fn_to_run
-        (obs_arc.fn_to_run)(obs_arc.clone());
+        obs_arc.run_loop(obs_arc.clone());
 
         // Assert - the function should have been executed
         assert!(executed.load(std::sync::atomic::Ordering::SeqCst));
@@ -591,7 +591,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
@@ -614,7 +614,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
@@ -641,7 +641,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",

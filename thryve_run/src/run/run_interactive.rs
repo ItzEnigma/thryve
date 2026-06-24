@@ -32,6 +32,7 @@
 use crossbeam::channel::bounded;
 use thryve_utils::extras;
 
+use std::thread::JoinHandle;
 use std::{thread, time::Duration};
 use thryve_utils::cfg::{config::Config, ctx::Ctx};
 use thryve_utils::packets::packet_handle::PacketHandle;
@@ -77,53 +78,57 @@ use crate::init::init::{self, init_engine};
 /// let ctx = Ctx::new(config);
 /// run_interactive(ctx);
 /// ```
-pub fn run_interactive(mut ctx: Ctx) {
+pub fn run_interactive(mut ctx: Ctx) -> Option<JoinHandle<()>> {
     println!("Running interactively from binary.");
 
-    // Initialize the logging directories and panic hook.
-    init::init_directories(&mut ctx);
-    extras::panic_hook::init_panic_hook();
-
-    // Initialize the engine by creating a new instance of the engine struct and setting up the logger observer.
-    let mut eng = init_engine(&ctx);
+    let handle = std::thread::spawn(move || {
+        // Initialize the logging directories and panic hook.
+        init::init_directories(&mut ctx);
+        extras::panic_hook::init_panic_hook();
     
-    let mut state: u8 = 0;
-    let len_obs_tasks = ctx.observers.len();
-    let len_plugin_tasks = ctx.plugins.len();
+        // Initialize the engine by creating a new instance of the engine struct and setting up the logger observer.
+        let mut eng = init_engine(&ctx);
+        
+        let mut state: u8 = 0;
+        let len_obs_tasks = ctx.observers.len();
+        let len_plugin_tasks = ctx.plugins.len();
+        
+        // Main loop for processing notifications and tasks until the engine signals for shutdown by setting the exit flag to true.
+        // The loop also handles the initial setup of the logger observer and the observer sorter thread during the first iteration.
+        // During the first iteration, it loads the observers and plugins into the engine, initializes the observer sorter thread, and handles any debugging wait time if specified in the configuration.
+        while eng.exit_flag == false {
+            // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
+            if state == 0{
+                state += 1;
+                
+                // Load the observers and plugins into the engine if there are any specified in the context.
+                if len_obs_tasks > 0 {
+                    for obs in ctx.observers(){
+                        eng.obs_manager.load_observer(obs);
+                    }
+                }
     
-    // Main loop for processing notifications and tasks until the engine signals for shutdown by setting the exit flag to true.
-    // The loop also handles the initial setup of the logger observer and the observer sorter thread during the first iteration.
-    // During the first iteration, it loads the observers and plugins into the engine, initializes the observer sorter thread, and handles any debugging wait time if specified in the configuration.
-    while eng.exit_flag == false {
-        // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
-        if state == 0{
-            state += 1;
-            
-            // Load the observers and plugins into the engine if there are any specified in the context.
-            if len_obs_tasks > 0 {
-                for obs in ctx.observers(){
-                    eng.obs_manager.load_observer(obs);
+                // Load the plugins into the engine if there are any specified in the context.
+                if len_plugin_tasks > 0 {
+                    for plugin in ctx.plugins(){
+                        println!("loaded plugin: {}" , plugin.plg_type.inner());
+                        eng.plugin_manager.load_plugin(&ctx.config , plugin);
+                    }
+                }
+                
+                // Initialize the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
+                eng.obs_manager.init_obs_sorter_thread();
+                
+                // Handle any debugging wait time if specified in the configuration.
+                if ctx.config.debugging.is_debugging{
+                    thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
                 }
             }
-
-            // Load the plugins into the engine if there are any specified in the context.
-            if len_plugin_tasks > 0 {
-                for plugin in ctx.plugins(){
-                    eng.plugin_manager.load_plugin(&ctx.config , plugin);
-                }
-            }
-            
-            // Initialize the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
-            eng.obs_manager.init_obs_sorter_thread();
-            
-            // Handle any debugging wait time if specified in the configuration.
-            if ctx.config.debugging.is_debugging{
-                thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
-            }
+    
+            eng.run_once();
         }
-
-        eng.run_once();
-    }
+    });
+    Some(handle)
 }
 
 /// Creates the communication channels and context required for engine execution.

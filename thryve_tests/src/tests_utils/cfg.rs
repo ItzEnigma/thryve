@@ -541,6 +541,7 @@ use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::*;
 use thryve_utils::bases::observer::Observer;
     use crossbeam::channel::bounded;
+use thryve_utils::extras::jobs::{ObsJob, TaskJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
 
@@ -588,7 +589,7 @@ use thryve_utils::packets::task::Task;
             "TestObs",
             "TestType",
             Arc::new(TestObsLogic),
-            Box::new(|_| {}),
+            ObsJob::default(),
             ctx.packet_handle(),
         ));
 
@@ -614,7 +615,7 @@ use thryve_utils::packets::task::Task;
             "TestType",
             Arc::new(TestPlgLogic),
             ctx.packet_handle(),
-            Box::new(|| thryve_utils::res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| thryve_utils::res::Result::new("Ok", "Done".to_string(), "Main")),
         ));
 
         // Act

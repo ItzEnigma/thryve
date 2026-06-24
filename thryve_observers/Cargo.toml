@@ -11,3 +11,4 @@
     chrono = { workspace = true }
     crossbeam = { workspace = true }
     ron = { workspace = true }
+    anyhow = { workspace = true }

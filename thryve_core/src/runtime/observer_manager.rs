@@ -25,7 +25,7 @@ use thryve_utils::extras::named_input::NamedInput;
 use thryve_utils::bases::observer::Observer;
 use thryve_utils::packets::notif_log::Log;
 use thryve_utils::queues::seg_queue::QChild;
-use thryve_utils::threadpool::ThreadPool;
+use thryve_utils::threads::threadpool::ThreadPool;
 use thryve_utils::traits::queue::Queue;
 
 use std::sync::Arc;
@@ -122,33 +122,47 @@ impl ObserverManager {
             .spawn(move || {
                 loop {
                     if exit_flag.load(Ordering::SeqCst) == true {
-                        let notif = Log::log("Obs Sorter Thread Finalized...".to_string(), "Main");
-                        arc_observers
-                            .get(&NamedInput::new("Logging"))
-                            .unwrap()
-                            .obs_queue
-                            .push(notif);
+                        // Non-fatal: if logger not found, send to main queue instead
+                        if let Some(logger) = arc_observers.get(&NamedInput::new("Logging")) {
+                            let notif = Log::log("Obs Sorter Thread Finalized...".to_string(), "Main");
+                            logger.obs_queue.push(notif);
+                        }
                         
                         while !queue.main_queue.is_empty() {
                             if let Some(obj) = queue.main_queue.pop(){
-                                let _ = arc_observers
-                                    .get(&obj.notif_receiver)
-                                    .unwrap()
-                                    .obs_queue
-                                    .push(obj);
+                                // Non-fatal: if target observer not found, skip the notification
+                                if let Some(target_obs) = arc_observers.get(&obj.notif_receiver) {
+                                    target_obs.obs_queue.push(obj);
+                                } else {
+                                    // Log the missing observer notification
+                                    let notif = Log::log(
+                                        format!("Observer not found for notification: {}", obj.notif_receiver.inner()),
+                                        "Error"
+                                    );
+                                    if let Some(logger) = arc_observers.get(&NamedInput::new("Logging")) {
+                                        logger.obs_queue.push(notif);
+                                    }
+                                }
                             }
-
                         }
 
                         break;
                     }
 
                     let obj = queue.pop();
-                    let _ = arc_observers
-                        .get(&obj.notif_receiver)
-                        .unwrap()
-                        .obs_queue
-                        .push(obj);
+                    // Non-fatal: if target observer not found, skip the notification
+                    if let Some(target_obs) = arc_observers.get(&obj.notif_receiver) {
+                        target_obs.obs_queue.push(obj);
+                    } else {
+                        // Log the missing observer notification
+                        let notif = Log::log(
+                            format!("Observer not found for notification: {}", obj.notif_receiver.inner()),
+                            "Error"
+                        );
+                        if let Some(logger) = arc_observers.get(&NamedInput::new("Logging")) {
+                            logger.obs_queue.push(notif);
+                        }
+                    }
                 }
             }
         )
@@ -254,8 +268,15 @@ impl ObserverManager {
     /// let logger = manager.finalize();
     /// logger.obs_queue.push(final_notification);
     /// ```
+    /// Finalizes the observer manager.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Logging observer is not found in the registry,
+    /// which indicates a fatal configuration error.
     pub fn finalize(&mut self) -> Arc<Observer> {
-        let logger = self.observers.remove(&NamedInput::new("Logging")).unwrap();
+        let logger = self.observers.remove(&NamedInput::new("Logging"))
+            .expect("Failed to find Logging observer during finalize - this is a fatal error");
         logger.exit_flag.store(true, Ordering::SeqCst);
         
         self.threadpool.finalize_obs(logger.clone());

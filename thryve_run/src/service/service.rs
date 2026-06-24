@@ -225,11 +225,11 @@ impl <'a> Thryve <'a> {
                 let is_running_clone = is_running.clone();
                 let pause_flag_clone = pause_flag.clone();
 
-                let mut ctx = Some(ctx.take().expect("Start Called More Than Once"));
+                let mut ctx = Some(ctx.take().expect("Start() called more than once - this is a fatal application logic error. The service can only be started once."));
                 
                 // Spawn a new thread to run the engine so that the service can continue to listen for commands.
                 let handle = thread::spawn(move || {
-                    let mut ctx = ctx.take().expect("Start Called More Than Once");
+                    let mut ctx = ctx.take().expect("Start() called more than once - this is a fatal application logic error. The service can only be started once.");
                     let mut eng = init_engine(&ctx);
                     
                     let mut state: u8 = 0;
@@ -301,8 +301,11 @@ impl <'a> Thryve <'a> {
                 is_running.store(false, Ordering::SeqCst);
 
                 if let Some(handle) = engine_thread.lock().unwrap().take() {
+                    // Thread join failure is a fatal error - the engine thread panicked
                     if let Err(e) = handle.join() {
-                        log(format!("Engine thread join error: {:?}", e));
+                        // Thread join error indicates the engine thread panicked
+                        // This is a critical failure that requires immediate attention
+                        log(format!("Engine thread join error (thread panicked): {:?}", e));
                     }
                 }
             }

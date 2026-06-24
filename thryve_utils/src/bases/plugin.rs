@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use crate::extras::{named_input::NamedInput, jobs::TaskJob};
 use crate::packets::packet_handle::PacketHandle;
-use crate::res;
 use crate::traits::plugin_logic::{PlgLogic, PluginB};
 
 /// Core plugin structure for the Thryve plugin system.
@@ -122,27 +121,6 @@ impl Plugin {
     /// The initialization function closure, or a default error function if
     /// called multiple times.
     pub fn plg_entry_point(&mut self) -> TaskJob {
-        let temp: TaskJob = self.default_fn();
-        std::mem::replace(&mut self.plg_entry_point, temp)
-    }
-
-    /// Returns a default error function as a placeholder.
-    ///
-    /// This function is used as a replacement for `plg_entry_point` after
-    /// the original function has been extracted. If this function is ever
-    /// executed, it indicates a serious error in the plugin loading process.
-    ///
-    /// # Returns
-    ///
-    /// A closure that returns an error result indicating a critical failure.
-    fn default_fn(&self) -> TaskJob {
-        let job: TaskJob = Box::new(move || {
-            res::Result::new(
-                "BIGERR",
-                "If This Is Ever Called, Something is Wrong".to_string(),
-                "Main",
-            )
-        });
-        job
+        std::mem::take(&mut self.plg_entry_point)
     }
 }

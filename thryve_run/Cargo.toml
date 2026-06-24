@@ -9,6 +9,8 @@
     thryve_observers = { path = "../thryve_observers" , version = "0.1.0"}
 
     # External Dependencies.
+    anyhow = { workspace = true }
+    thiserror = { workspace = true }
     windows = { version = "0.62.2", features = ["Win32_System_Services", "Win32_Foundation"] }
     windows-services = { workspace = true }
     crossbeam = { workspace = true }

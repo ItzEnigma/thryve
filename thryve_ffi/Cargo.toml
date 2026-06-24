@@ -1,0 +1,19 @@
+[package]
+name = "thryve_ffi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thryve = { path = "../thryve" }
+thryve_utils = { path = "../thryve_utils" }
+thryve_run = { path = "../thryve_run" }
+crossbeam = { workspace = true }
+
+[build-dependencies]
+cbindgen = "0.29"
+
+[dev-dependencies]
+cbindgen = "0.29"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]

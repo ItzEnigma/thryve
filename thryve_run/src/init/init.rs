@@ -21,7 +21,7 @@
 
 use std::{collections::HashMap, fs::{File, OpenOptions}, sync::Arc};
 use thryve_core::runtime::engine::Engine;
-use thryve_utils::{cfg::{dir_data::DirData, meta_data::MetaData}, extras::{dir_paths::get_current_exec_dir, misc::get_current_date_time, named_input::NamedInput}};
+use thryve_utils::{cfg::{dir_data::DirData, meta_data::MetaData}, errors::ThryveUtilsError, extras::{dir_paths::get_current_exec_dir, misc::get_current_date_time, named_input::NamedInput}};
 use thryve_utils::{cfg::ctx::Ctx, extras::dir_paths::{create_dir, DirName}};
 use thryve_observers::{logger::LoggerObserver, topology_handler::TopologyHandlerObserver};
 
@@ -156,7 +156,8 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine){
 /// init_directories(&mut ctx);
 /// ```
 pub fn init_directories(ctx: &mut Ctx) {
-    let log_dir_path = create_dir(DirName::Log);
+    let log_dir_path = create_dir(DirName::Log)
+        .expect("Failed to create log directory - cannot initialize without logging capability");
 
     // Create log files for each module type and store them in a hashmap for easy access.
     let mut temp_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
@@ -170,8 +171,8 @@ pub fn init_directories(ctx: &mut Ctx) {
             OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(log_file_path_main)
-                .unwrap(),
+                .open(&log_file_path_main)
+                .unwrap_or_else(|e| panic!("Failed to create main log file at {}: {}", log_file_path_main.display(), e)),
         ),
     );
  
@@ -182,8 +183,8 @@ pub fn init_directories(ctx: &mut Ctx) {
             OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(log_file_path_err)
-                .unwrap(),
+                .open(&log_file_path_err)
+                .unwrap_or_else(|e| panic!("Failed to create error log file at {}: {}", log_file_path_err.display(), e)),
         ),
     );
 
@@ -196,8 +197,8 @@ pub fn init_directories(ctx: &mut Ctx) {
                 OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(log_file_path_debug)
-                    .unwrap(),
+                    .open(&log_file_path_debug)
+                    .unwrap_or_else(|e| panic!("Failed to create debug log file at {}: {}", log_file_path_debug.display(), e)),
             ),
         );
     }
@@ -214,17 +215,20 @@ pub fn init_directories(ctx: &mut Ctx) {
                 OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(log_file_path)
-                    .unwrap(),
+                    .open(&log_file_path)
+                    .unwrap_or_else(|e| panic!("Failed to create log file at {}: {}", log_file_path.display(), e)),
             ),
         );
     }
   
-    let mut dir_data = DirData::new(get_current_exec_dir(), temp_hash_map);
+    let current_exec_dir = get_current_exec_dir()
+        .expect("Failed to get current executable directory - cannot initialize DirData without this path");
+    let mut dir_data = DirData::new(current_exec_dir, temp_hash_map);
     dir_data.set_path(DirName::Log, log_dir_path);
 
     if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph{
-        let topology_dir_path = create_dir(DirName::Topology);
+        let topology_dir_path = create_dir(DirName::Topology)
+            .expect("Failed to create topology directory - cannot initialize topology tracking");
         dir_data.set_path(DirName::Topology, topology_dir_path);
     }
 

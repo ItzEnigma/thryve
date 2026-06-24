@@ -4,7 +4,8 @@ mod tests_engine {
 use thryve_core::runtime::engine::*;
 use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::cfg::config::Config;
-    use thryve_utils::packets::notif_log::Log;
+    use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+use thryve_utils::packets::notif_log::Log;
 use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::bases::notif::Notif;
@@ -82,7 +83,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -104,7 +105,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -167,7 +168,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for finalize)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -189,7 +190,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -214,7 +215,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -239,7 +240,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -261,12 +262,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Create a next task
-        let next_task = Task::new("nextTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        let next_task = Task::new("nextTask", 5, TaskJob::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
         let result_with_next = res::Result::new("normal", "Done".to_string(), "Main").chain(next_task);
 
         // Act - handle the result with next task
@@ -288,7 +289,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         let mut engine = Engine::new(&ctx);
 
         // Send a task
-        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        let task = Task::new("testTask", 5, TaskJob::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
         task_tx.send(task).unwrap();
 
         // Act
@@ -306,7 +307,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -333,12 +334,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Send a task and notification
-        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        let task = Task::new("testTask", 5, TaskJob::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
         task_tx.send(task).unwrap();
         let notif = Log::log("test".to_string(), "Main");
         notif_tx.send(notif).unwrap();
@@ -358,7 +359,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
+        let task = Task::new("TestTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         let expected_size = task.size_in_bytes();
@@ -376,10 +377,10 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task1 = Task::new("Task1", 1, Box::new(|| {
+        let task1 = Task::new("Task1", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
-        let task2 = Task::new("Task2", 2, Box::new(|| {
+        let task2 = Task::new("Task2", 2, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -398,7 +399,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
+        let task = Task::new("TestTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -516,7 +517,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new("TestTask", 1, Box::new(|| {
+        let task = Task::new("TestTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         let result = res::Result::new("Success", "Done".to_string(), "Main");
@@ -547,12 +548,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Create a task without a callsite
-        let task = Task::new("TestTask", 1, Box::new(|| {
+        let task = Task::new("TestTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
 
@@ -571,12 +572,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("Topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -587,7 +588,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
             42,
             "TestTask".to_string(),
         );
-        let mut task = Task::new("TestTask", 1, Box::new(|| {
+        let mut task = Task::new("TestTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         task.callsite = Some(callsite);
@@ -608,12 +609,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("Topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -626,7 +627,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         );
         callsite.current_executing_task_fingerprint = "parent_fingerprint_123".to_string();
         
-        let mut task = Task::new("ChildTask", 1, Box::new(|| {
+        let mut task = Task::new("ChildTask", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         task.callsite = Some(callsite);
@@ -647,12 +648,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("Topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -663,7 +664,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
             100,
             "我的任务".to_string(),
         );
-        let mut task = Task::new("我的任务", 1, Box::new(|| {
+        let mut task = Task::new("我的任务", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         task.callsite = Some(callsite);
@@ -683,12 +684,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("Topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -702,7 +703,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
         callsite.this_callsite_fingerprint = String::new();
         callsite.current_executing_task_fingerprint = String::new();
         
-        let mut task = Task::new("Test", 1, Box::new(|| {
+        let mut task = Task::new("Test", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         task.callsite = Some(callsite);
@@ -722,7 +723,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -746,12 +747,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Send a task
-        let task = Task::new("testTask", 5, Box::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
+        let task = Task::new("testTask", 5, TaskJob::new(|| {res::Result::new("Test", "testinggg".to_string(), "Main")}));
         ctx.packet_handle().send_task(task);
         ctx.task_rx.try_recv().ok(); // ensure channel exists
         
@@ -772,13 +773,13 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Fill the batch (batch size is 1024 for tasks)
         for i in 0..1024 {
-            let task = Task::new(&format!("Task{}", i), 1, Box::new(|| {
+            let task = Task::new(&format!("Task{}", i), 1, TaskJob::new(|| {
                 res::Result::new("Ok", "Done".to_string(), "Main")
             }));
             engine.manage_metrics_tasks(&task);
@@ -800,7 +801,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -826,7 +827,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -851,7 +852,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -872,7 +873,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -893,7 +894,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -915,7 +916,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -936,7 +937,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -959,12 +960,12 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
         // Create a result with a chained task
-        let next_task = Task::new("FollowUp", 1, Box::new(|| {
+        let next_task = Task::new("FollowUp", 1, TaskJob::new(|| {
             res::Result::new("Ok", "Done".to_string(), "Main")
         }));
         let result = res::Result::new("Success", "Test".to_string(), "Main").chain(next_task);
@@ -1043,7 +1044,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         engine.obs_manager.load_observer(observer);
 
@@ -1062,7 +1063,8 @@ mod tests_observer_manager_init {
     use thryve_utils::bases::observer::Observer;
     use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::cfg::config::Config;
-    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::extras::jobs::ObsJob;
+use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::packets::notif_log::Log;
@@ -1116,7 +1118,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1132,7 +1134,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1151,13 +1153,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1178,7 +1180,7 @@ mod tests_observer_manager_init {
 
         // Load an observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new("test", "TestType", obs_core, fn_to_run, ctx.packet_handle());
 
         // Act
@@ -1196,13 +1198,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1218,12 +1220,12 @@ mod tests_observer_manager_init {
 
         // Load multiple observers
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1242,7 +1244,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1261,12 +1263,12 @@ mod tests_observer_manager_init {
 
         // Load multiple observers
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1288,13 +1290,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1310,7 +1312,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1327,13 +1329,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1349,7 +1351,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1365,7 +1367,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1383,7 +1385,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1399,7 +1401,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1415,7 +1417,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1431,7 +1433,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1450,13 +1452,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1477,7 +1479,7 @@ mod tests_observer_manager_init {
 
         // Act - load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1493,7 +1495,7 @@ mod tests_observer_manager_init {
 
         // Act - load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1509,7 +1511,7 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
@@ -1529,7 +1531,7 @@ mod tests_observer_manager_init {
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1549,13 +1551,13 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new("logger", "Logging", obs_core.clone(), fn_to_run, ctx.packet_handle());
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new("topology", "TopologyHandler", obs_core, fn_to_run, ctx.packet_handle());
         manager.load_observer(topo);
 
@@ -1574,7 +1576,8 @@ use thryve_core::runtime::plugin_manager::*;
 use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::cfg::config::Config;
-    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::extras::jobs::TaskJob;
+use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::res;
@@ -1645,7 +1648,7 @@ use thryve_utils::traits::plugin_logic::PlgLogic;
         let mut manager = PluginManager::new(&ctx, res_tx);
         
         let plg_core = Arc::new(TestPlgLogic);
-        let job: thryve_utils::extras::jobs::TaskJob = Box::new(|| {
+        let job: thryve_utils::extras::jobs::TaskJob = TaskJob::new(|| {
             res::Result::new("OK", "success".to_string(), "Main")
         });
         let plugin = Plugin::new(
@@ -1674,12 +1677,12 @@ use thryve_utils::traits::plugin_logic::PlgLogic;
 
         // Load first plugin
         let plg_core1 = Arc::new(TestPlgLogic);
-        let job1: thryve_utils::extras::jobs::TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job1: thryve_utils::extras::jobs::TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
         let plugin1 = Plugin::new("plugin1", "type1", plg_core1, ctx.packet_handle().clone(), job1);
 
         // Load second plugin
         let plg_core2 = Arc::new(TestPlgLogic);
-        let job2: thryve_utils::extras::jobs::TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job2: thryve_utils::extras::jobs::TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
         let plugin2 = Plugin::new("plugin2", "type2", plg_core2, ctx.packet_handle().clone(), job2);
 
         // Act
@@ -1700,7 +1703,7 @@ use thryve_utils::traits::plugin_logic::PlgLogic;
 
         // Add a plugin
         let plg_core = Arc::new(TestPlgLogic);
-        let job: thryve_utils::extras::jobs::TaskJob = Box::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: thryve_utils::extras::jobs::TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
         let plugin = Plugin::new("test_plugin", "testType", plg_core, ctx.packet_handle(), job);
         manager.load_plugin(&ctx.config, plugin);
 

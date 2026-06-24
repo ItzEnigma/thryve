@@ -103,7 +103,7 @@ impl Packet for Task {
     /// fails (which should not happen under normal circumstances).
     fn process(self) -> Option<(u64, res::Result)> {
         let id = self.id;
-        Some((id, (self.job)()))
+        Some((id, self.job.call_once()))
     }
 
     /// Sets the call site information for this task.
@@ -230,6 +230,12 @@ impl Task {
         if self.base_priority > max_task_priority {
             self.base_priority = max_task_priority;
         }
+    }
+}
+
+impl Default for Task {
+    fn default() -> Self {
+        Task::new("DefTask" , 0 , TaskJob::default())
     }
 }
 

@@ -24,6 +24,9 @@ use serde::Deserialize;
 
 use std::fs;
 
+use crate::errors::ThryveUtilsError;
+
+
 /// Root configuration structure for the Thryve Task Manager application.
 ///
 /// This structure aggregates all configuration subsystems and serves as the
@@ -131,9 +134,15 @@ impl Config{
     pub fn load_config_from_file(path: &str) -> Config {
         let config = match read_config_file(path) {
             Ok(cfg) => cfg,
-            Err(_) => Config::load_def_config(),
+            Err(e) => {
+                // Non-fatal: fall back to defaults if config file cannot be read
+                // This allows the application to start even if the config file is missing or corrupted
+                eprintln!("Warning: Failed to load config from '{}': {}. Using defaults.", path, e);
+                Config::load_def_config()
+            }
         };
     
+        // This is a fatal error - invalid config would break the entire system
         assert!(config.tasks.max_priority < 15, "Maximum Task Priority cannot exceed 15");
     
         config
@@ -397,9 +406,9 @@ impl Default for DebugConfig {
 /// # Returns
 ///
 /// * `Ok(Config)` - Parsed configuration on success
-/// * `Err(Box<dyn Error>)` - File I/O or parsing error
-fn read_config_file(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+/// * `Err(ThryveUtilsError)` - File I/O or parsing error
+fn read_config_file(path: &str) -> Result<Config, ThryveUtilsError> {
     let contents = fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&contents)?;
+    let config: Config = toml::from_str(&contents).map_err(|e| ThryveUtilsError::ConfigParse(e))?;
     Ok(config)
 }

@@ -109,33 +109,38 @@ pub mod named_input {
 }
 
 pub mod jobs {
-    //! Type aliases for job closures.
+    //! Job types for task and observer initialization.
     //!
-    //! This module defines type aliases for the closure types used
-    //! as jobs in the Thryve system. These aliases simplify the
+    //! This module defines the [`TaskJob`] and [`ObsJob`] types used
+    //! as jobs in the Thryve system. These types simplify the
     //! type signatures throughout the codebase.
     //!
     //! # Job Types
     //!
-    //! - [`TaskJob`]: Closure for task execution
+    //! - [`TaskJob`]: Wrapper for task execution closures
     //! - [`ObsJob`]: Closure for observer initialization
     use std::sync::Arc;
 
     use crate::bases::observer::Observer;
-    use crate::res::Result;
+    use crate::res;
 
-    /// Type alias for task execution closures.
+    /// A task execution closure wrapper.
     ///
-    /// A `TaskJob` is a closure that takes no arguments and returns
+    /// A `TaskJob` is a wrapper around a closure that takes no arguments and returns
     /// a [`Result`](crate::res::Result). Tasks are executed by worker
     /// threads, and the result indicates success or failure along with
     /// optional follow-up actions.
     ///
+    /// This type is a newtype wrapper around `Box<dyn FnOnce() -> Result + Send + Sync>`
+    /// to allow implementing `Default` (since the orphan rules prevent
+    /// implementing traits for type aliases).
+    ///
     /// # Traits
     ///
-    /// - `FnOnce`: Executed exactly once
+    /// - `FnOnce`: Can be called exactly once (via [`call_once`](TaskJob::call_once))
     /// - `Send`: Can be sent to another thread
     /// - `Sync`: Can be shared between threads
+    /// - `Default`: Returns an error function as a placeholder
     ///
     /// # Example
     ///
@@ -143,42 +148,180 @@ pub mod jobs {
     /// use thryve_utils::extras::jobs::TaskJob;
     /// use thryve_utils::res::Result;
     ///
-    /// let job: TaskJob = Box::new(|| {
+    /// let job: TaskJob = TaskJob::new(|| {
     ///     // Task execution logic
     ///     Result::new("Success", "Done".to_string(), "Main")
     /// });
     ///
-    /// let result = job();
+    /// let result = job.call_once(());
     /// ```
-    pub type TaskJob = Box<dyn FnOnce() -> Result + Send + Sync>;
+    pub struct TaskJob {
+        /// The inner closure that executes the task.
+        inner: Box<dyn FnOnce() -> res::Result + Send + Sync>,
+    }
 
-    /// Type alias for observer initialization closures.
+    impl TaskJob {
+        /// Creates a new `TaskJob` from a closure.
+        ///
+        /// # Arguments
+        ///
+        /// * `closure` - A closure that takes no arguments and returns a `Result`
+        ///
+        /// # Returns
+        ///
+        /// A new `TaskJob` wrapping the closure.
+        pub fn new(closure: impl FnOnce() -> res::Result + Send + Sync + 'static) -> Self {
+            TaskJob {
+                inner: Box::new(closure),
+            }
+        }
+
+        /// Calls the task job and returns the result.
+        ///
+        /// This consumes the `TaskJob` and executes the inner closure.
+        /// After calling this method, the `TaskJob` can no longer be used.
+        ///
+        /// # Returns
+        ///
+        /// The [`Result`](crate::res::Result) returned by the closure.
+        ///
+        /// # Example
+        ///
+        /// ```no_run
+        /// use thryve_utils::extras::jobs::TaskJob;
+        /// use thryve_utils::res::Result;
+        ///
+        /// let job: TaskJob = TaskJob::new(|| {
+        ///     Result::new("Success", "Done".to_string(), "Main")
+        /// });
+        ///
+        /// let result = job.call_once(());
+        /// ```
+        pub fn call_once(self) -> res::Result {
+            (self.inner)()
+        }
+    }
+
+    impl Default for TaskJob {
+        /// Returns a default error function as a placeholder.
+        ///
+        /// This function is used as a replacement for `plg_entry_point` after
+        /// the original function has been extracted. If this function is ever
+        /// executed, it indicates a serious error in the plugin loading process.
+        ///
+        /// # Returns
+        ///
+        /// A `TaskJob` that returns an error result indicating a critical failure.
+        fn default() -> Self {
+            TaskJob {
+                inner: Box::new(|| {
+                    res::Result::new(
+                        "BIGERR",
+                        "If This Is Ever Called, Something is Wrong".to_string(),
+                        "Main",
+                    )
+                }),
+            }
+        }
+    }
+
+    impl From<Box<dyn FnOnce() -> res::Result + Send + Sync>> for TaskJob {
+        /// Converts a `Box<dyn FnOnce() -> Result + Send + Sync>` into a `TaskJob`.
+        ///
+        /// This implementation allows seamless migration from the old type alias
+        /// pattern to the new struct pattern. Code using `Box::new(|| { ... })`
+        /// can continue to work with `TaskJob::from(boxed_closure)` or via
+        /// the `Into` trait.
+        fn from(boxed: Box<dyn FnOnce() -> res::Result + Send + Sync>) -> Self {
+            TaskJob { inner: boxed }
+        }
+    }
+
+
+    /// A wrapper for observer initialization closures.
     ///
-    /// An `ObsJob` is a closure that takes an [`Arc<Observer>`](crate::bases::observer::Observer)
+    /// An `ObsJob` wraps a closure that takes an [`Arc<Observer>`](crate::bases::observer::Observer)
     /// and returns nothing. This closure is used to initialize observers
     /// with their specific logic, typically starting a loop that processes
     /// notifications until shutdown.
     ///
-    /// # Typical Pattern
-    ///
-    /// ```no_run
-    /// use thryve_utils::extras::jobs::ObsJob;
-    /// use thryve_utils::bases::observer::Observer;
-    /// use std::sync::Arc;
-    ///
-    /// let job: ObsJob = Box::new(move |observer: Arc<Observer>| {
-    ///     // Downcast observer core to concrete type
-    ///     // Start notification processing loop
-    ///     // Clean up on exit
-    /// });
-    /// ```
+    /// This type is a newtype wrapper around `Box<dyn Fn(Arc<Observer>) + Send + Sync>`
+    /// to allow implementing `Default` (since the orphan rules prevent
+    /// implementing traits for type aliases).
     ///
     /// # Traits
     ///
     /// - `Fn`: Can be called multiple times (though typically called once)
     /// - `Send`: Can be sent to another thread
     /// - `Sync`: Can be shared between threads
-    pub type ObsJob = Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>;
+    /// - `Default`: Returns an empty closure as a placeholder
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use thryve_utils::extras::jobs::ObsJob;
+    /// use thryve_utils::bases::observer::Observer;
+    /// use std::sync::Arc;
+    ///
+    /// let job: ObsJob = ObsJob::new(|observer: Arc<Observer>| {
+    ///     // Downcast observer core to concrete type
+    ///     // Start notification processing loop
+    ///     // Clean up on exit
+    /// });
+    /// ```
+    pub struct ObsJob {
+        /// The inner closure that executes the observer job.
+        inner: Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>,
+    }
+
+    impl ObsJob {
+        /// Creates a new `ObsJob` from a closure.
+        ///
+        /// # Arguments
+        ///
+        /// * `closure` - A closure that takes an `Arc<Observer>` and returns nothing
+        ///
+        /// # Returns
+        ///
+        /// A new `ObsJob` wrapping the closure.
+        pub fn new(closure: impl Fn(Arc<Observer>) -> () + Send + Sync + 'static) -> Self {
+            ObsJob {
+                inner: Box::new(closure),
+            }
+        }
+
+        /// Calls the observer job and executes the closure.
+        ///
+        /// This consumes the `ObsJob` and executes the inner closure.
+        /// After calling this method, the `ObsJob` can no longer be used.
+        ///
+        /// # Arguments
+        ///
+        /// * `observer` - The observer to pass to the closure
+        pub fn call_once(&self, observer: Arc<Observer>) {
+            (self.inner)(observer);
+        }
+    }
+
+    impl Default for ObsJob {
+        /// Returns a default `ObsJob` that does nothing.
+        fn default() -> Self {
+            ObsJob {
+                inner: Box::new(|_observer: Arc<Observer>| {}),
+            }
+        }
+    }
+
+    impl From<Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>> for ObsJob {
+        /// Converts a boxed closure into an `ObsJob`.
+        ///
+        /// This implementation allows seamless migration from the old type alias
+        /// pattern to the new struct pattern. Code using `Box::new(move |observer| { ... })`
+        /// can continue to work with `ObsJob::from(boxed_closure)`.
+        fn from(boxed: Box<dyn Fn(Arc<Observer>) -> () + Send + Sync>) -> Self {
+            ObsJob { inner: boxed }
+        }
+    }
 }
 
 pub mod panic_hook{
@@ -417,6 +560,7 @@ pub mod dir_paths {
     use std::{env::current_exe, fs::create_dir_all, path::{Path, PathBuf}, process::Command};
 
     use crate::extras::misc::get_current_date_time;
+    use crate::errors::ThryveUtilsError;
     
     #[derive(Clone , PartialEq, Eq, Hash)]
     pub enum DirName {
@@ -424,18 +568,37 @@ pub mod dir_paths {
         Topology,
     }
 
-    pub fn get_current_exec_dir() -> PathBuf {
+    /// Gets the current executable's directory.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(PathBuf)` - The directory path
+    /// * `Err(ThryveUtilsError)` - If `current_exe()` fails
+    pub fn get_current_exec_dir() -> Result<PathBuf, ThryveUtilsError> {
         let exe_dir = current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+            .map_err(|e| ThryveUtilsError::Io(e))?
+            .parent()
+            .ok_or_else(|| ThryveUtilsError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Executable has no parent directory"
+            )))?
+            .to_path_buf();
 
-        exe_dir
+        Ok(exe_dir)
     }
 
-    pub fn create_dir(file_path: DirName) -> PathBuf{
-        let current_root_dir = get_current_exec_dir();
+    /// Creates a directory based on the given `DirName`.
+    ///
+    /// # Arguments
+    ///
+    /// * `file_path` - The type of directory to create
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(PathBuf)` - The created directory path
+    /// * `Err(ThryveUtilsError)` - If directory creation fails
+    pub fn create_dir(file_path: DirName) -> Result<PathBuf, ThryveUtilsError> {
+        let current_root_dir = get_current_exec_dir()?;
         
         match file_path {
             DirName::Log => {
@@ -444,21 +607,31 @@ pub mod dir_paths {
                 let log_dir_path = current_root_dir
                     .join("log")
                     .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
-                create_dir_all(&log_dir_path).unwrap();
+                create_dir_all(&log_dir_path)
+                    .map_err(|e| ThryveUtilsError::DirectoryCreation(format!("Failed to create log directory: {}\n{e}", log_dir_path.display())))?;
 
-                log_dir_path
+                Ok(log_dir_path)
             }
 
             DirName::Topology => {
                 let topology_dir_path = current_root_dir
                     .join("topology");
-                create_dir_all(&topology_dir_path).unwrap();
+                create_dir_all(&topology_dir_path)
+                    .map_err(|e| ThryveUtilsError::DirectoryCreation(format!("Failed to create topology directory: {}\n{e}", topology_dir_path.display())))?;
 
-                topology_dir_path
+                Ok(topology_dir_path)
             }
         }
     }
 
+    /// Gets the workspace root directory by running `cargo locate-project`.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if:
+    /// - The cargo command fails to execute
+    /// - The output is not valid UTF-8
+    /// - The cargo.toml path has no parent directory
     pub fn get_workspace_root() -> PathBuf {
         // Look up the cargo executable used to build the project
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());

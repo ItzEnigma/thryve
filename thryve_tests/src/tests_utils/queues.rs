@@ -2,7 +2,8 @@ mod tests_seg_queue {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
-    use thryve_utils::queues::seg_queue::*;
+    use thryve_utils::extras::jobs::ObsJob;
+use thryve_utils::queues::seg_queue::*;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
@@ -149,7 +150,7 @@ mod tests_seg_queue {
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run: thryve_utils::extras::jobs::ObsJob = Box::new(move |_obs: Arc<Observer>| {});
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
             "logger",
             "loggertype",
@@ -221,7 +222,8 @@ mod tests_priority_queue {
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-    use thryve_utils::queues::priority_queue::*;
+    use thryve_utils::extras::jobs::TaskJob;
+use thryve_utils::queues::priority_queue::*;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::bases::notif::Notif;
@@ -255,7 +257,7 @@ use thryve_utils::traits::queue::Queue;
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
-        let task = Task::new("testTask", 5, Box::new(|| Result::new("OK", "success".to_string(), "Main")));
+        let task = Task::new("testTask", 5, TaskJob::new(|| Result::new("OK", "success".to_string(), "Main")));
 
         // Act - push task
         queue.push(task);
@@ -354,8 +356,8 @@ use thryve_utils::traits::queue::Queue;
         let queue = PQChild::new(&config, packet_handle);
 
         // Push tasks with different priorities (lower number = higher priority)
-        let task_low = Task::new("lowPriority", 1, Box::new(|| Result::new("OK", "low".to_string(), "Main")));
-        let task_high = Task::new("highPriority", 10, Box::new(|| Result::new("OK", "high".to_string(), "Main")));
+        let task_low = Task::new("lowPriority", 1, TaskJob::new(|| Result::new("OK", "low".to_string(), "Main")));
+        let task_high = Task::new("highPriority", 10, TaskJob::new(|| Result::new("OK", "high".to_string(), "Main")));
 
         // Act - push in reverse order
         queue.push(task_low);
