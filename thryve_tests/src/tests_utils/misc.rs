@@ -853,7 +853,7 @@ mod tests_threadpool {
 
     use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::packets::notif_log::Log;
-    use thryve_utils::threadpool::*;
+    use thryve_utils::threads::threadpool::*;
     use thryve_utils::cfg;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
