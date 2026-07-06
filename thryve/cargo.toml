@@ -3,6 +3,7 @@
 name = "thryve"
 version = "0.1.0"
 edition = "2024"
+publish = false # Prevents accidental cargo publish commands
 
 [dependencies]
 thryve_utils = { path = "../thryve_utils" }

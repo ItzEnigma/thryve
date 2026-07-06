@@ -9,9 +9,11 @@ A comprehensive guide for C++ developers who want to use the Thryve framework th
 - [Project Setup](#project-setup)
 - [Building](#building)
 - [Running](#running)
+- [Running as a Windows Service](#running-as-a-windows-service)
 - [Writing Your First Plugin](#writing-your-first-plugin)
 - [Writing Your First Observer](#writing-your-first-observer)
 - [Common Patterns](#common-patterns)
+- [Memory Management](#memory-management)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -307,6 +309,179 @@ std::cout << "Plugin added to context" << std::endl;
 
 ---
 
+## Running as a Windows Service
+
+To run the Thryve engine as a Windows service, use `ffi_service_create` and `ffi_service_run` instead of `ffi_run_interactive_start`. The service mode is designed for background execution managed by the Windows Service Control Manager (SCM).
+
+### Starting the Service
+
+```cpp
+// 1. Create configuration
+FfiConfig config = ffi_config_default();
+if (!config) return 1;
+
+// 2. Create PacketHandle
+FfiPacketHandle pkt = ffi_packet_handle_create(config);
+if (!pkt) {
+    ffi_config_free(config);
+    return 1;
+}
+
+// 3. Create context
+FfiCtx ctx = ffi_ctx_create(config);
+if (!ctx) {
+    ffi_packet_handle_free(pkt);
+    ffi_config_free(config);
+    return 1;
+}
+
+// 4. Add plugins/observers to the context
+// ...
+
+// 5. Create the service instance
+FfiService service = ffi_service_create(config);
+if (!service) {
+    ffi_plugin_free(plugin);
+    ffi_packet_handle_free(pkt);
+    ffi_ctx_free(ctx);
+    ffi_config_free(config);
+    return 1;
+}
+
+// 6. Start the service (blocks until SCM sends Stop)
+// ffi_service_run is a BLOCKING call that registers with the Windows SCM.
+// The engine thread is spawned inside ffi_service_run when SCM sends Start.
+// ffi_service_run only returns when SCM sends Stop.
+FfiStatus status = ffi_service_run(service, ctx);
+if (status != FfiStatus_Ok) {
+    std::cerr << "Service run failed: " << (int)status << std::endl;
+}
+
+// NOTE: After ffi_service_run returns, both `service` and `ctx` are already
+// consumed (they become Box::from_raw inside ffi_service_run and are dropped).
+// You do NOT call ffi_service_free or ffi_ctx_free after ffi_service_run.
+
+// 7. Cleanup remaining resources
+ffi_packet_handle_free(pkt);
+ffi_config_free(config);
+```
+
+### Service Lifecycle
+
+The service lifecycle is managed by the Windows SCM:
+
+1. **Start**: When the SCM sends `Command::Start`, the service:
+   - Spawns the engine in a dedicated thread
+   - Loads observers and plugins from the context
+   - Starts the main processing loop
+2. **Stop**: When the SCM sends `Command::Stop`, the service:
+   - Signals the engine to shut down
+   - Joins the engine thread (ensures graceful cleanup)
+   - Returns from `ffi_service_run`
+3. **Pause/Resume**: When the SCM sends `Command::Pause` or `Command::Resume`, the engine suspends/resumes processing
+
+### Installing and Uninstalling the Service
+
+To install the service on Windows:
+
+```bash
+# Run as Administrator
+ImgCompression.exe install
+```
+
+This uses `sc.exe` to register the service with the SCM. The service will start automatically on system boot.
+
+To uninstall:
+
+```bash
+# Run as Administrator
+ImgCompression.exe uninstall
+```
+
+This stops the service (if running) and removes it from the SCM.
+
+### Service vs Interactive Mode Differences
+
+| Aspect | Interactive | Service |
+|--------|-------------|---------|
+| Engine start | Immediate via `ffi_run_interactive_start` | Deferred until SCM sends `Start` |
+| Engine stop | You call `ffi_run_interactive_free` | SCM sends `Stop` command |
+| Pause/Resume | Not supported | Supported via SCM |
+| After run | **Don't** free `ctx` (consumed by start), free `config` | **Don't** free `ctx` (consumed by run), **don't** free `service` (consumed by run), free `config` |
+| Blocking call | `ffi_run_interactive_start` returns `FfiRunHandle` | `ffi_service_run` is blocking, returns `FfiStatus` |
+
+### Complete Example (Service Mode)
+
+```cpp
+#include "thryve_ffi.h"
+#include <iostream>
+
+// Plugin callbacks
+extern "C" void plugin_cleanup(const void* core_ptr) {
+    std::cout << "Plugin cleanup" << std::endl;
+}
+
+extern "C" FfiTaskResult plugin_entry(void) {
+    std::cout << "Plugin entry point" << std::endl;
+    return ffi_task_result_new("Success", "Plugin executed", "Main");
+}
+
+int main() {
+    // 1. Create configuration
+    FfiConfig config = ffi_config_default();
+    if (!config) return 1;
+    
+    // 2. Create PacketHandle
+    FfiPacketHandle pkt = ffi_packet_handle_create(config);
+    if (!pkt) {
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 3. Create context
+    FfiCtx ctx = ffi_ctx_create(config);
+    if (!ctx) {
+        ffi_packet_handle_free(pkt);
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 4. Create and add plugin
+    FfiPlugin plugin = ffi_plugin_create(
+        "MyPlugin", "MyType", nullptr, pkt,
+        plugin_cleanup, plugin_entry
+    );
+    ffi_ctx_add_plugin(ctx, plugin);
+    
+    // 5. Create the service instance
+    FfiService service = ffi_service_create(config);
+    if (!service) {
+        ffi_plugin_free(plugin);
+        ffi_packet_handle_free(pkt);
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 6. Start the service (blocks until SCM sends Stop)
+    FfiStatus status = ffi_service_run(service, ctx);
+    if (status != FfiStatus_Ok) {
+        std::cerr << "Service run failed: " << (int)status << std::endl;
+    }
+    
+    // NOTE: After ffi_service_run returns, both `service` and `ctx` are already
+    // consumed. You do NOT call ffi_service_free or ffi_ctx_free.
+    
+    // 7. Cleanup remaining resources
+    ffi_packet_handle_free(pkt);
+    ffi_config_free(config);
+    
+    return 0;
+}
+```
+
+---
+
 ## Writing Your First Observer
 
 An observer is a unit that runs continuously in the engine's main loop.
@@ -421,7 +596,7 @@ if (handle) {
 }
 ```
 
-### Complete Example
+### Complete Example (Interactive Mode)
 
 ```cpp
 #include "thryve_ffi.h"
@@ -497,7 +672,184 @@ int main() {
     
     // 7. Cleanup
     ffi_packet_handle_free(pkt);
+    // NOTE: ctx was consumed by ffi_run_interactive_start, so don't free it
+    // NOTE: plugin and observer are owned by ctx, so don't free them
+    ffi_config_free(config);
+    
+    return 0;
+}
+```
+
+---
+
+## Running as a Windows Service
+
+To run the Thryve engine as a Windows service, use `ffi_service_create` and `ffi_service_run` instead of `ffi_run_interactive_start`. The service mode is designed for background execution managed by the Windows Service Control Manager (SCM).
+
+### Starting the Service
+
+```cpp
+// 1. Create configuration
+FfiConfig config = ffi_config_default();
+if (!config) return 1;
+
+// 2. Create PacketHandle
+FfiPacketHandle pkt = ffi_packet_handle_create(config);
+if (!pkt) {
+    ffi_config_free(config);
+    return 1;
+}
+
+// 3. Create context
+FfiCtx ctx = ffi_ctx_create(config);
+if (!ctx) {
+    ffi_packet_handle_free(pkt);
+    ffi_config_free(config);
+    return 1;
+}
+
+// 4. Add plugins/observers to the context
+// ... add plugin and observer as shown above ...
+
+// 5. Create the service instance
+FfiService service = ffi_service_create(config);
+if (!service) {
+    ffi_plugin_free(plugin);
+    ffi_packet_handle_free(pkt);
     ffi_ctx_free(ctx);
+    ffi_config_free(config);
+    return 1;
+}
+
+// 6. Start the service (blocks until SCM sends Stop)
+// ffi_service_run is a BLOCKING call that registers with the Windows SCM.
+// The engine thread is spawned inside ffi_service_run when SCM sends Start.
+// ffi_service_run only returns when SCM sends Stop.
+FfiStatus status = ffi_service_run(service, ctx);
+if (status != FfiStatus_Ok) {
+    std::cerr << "Service run failed: " << (int)status << std::endl;
+}
+
+// NOTE: After ffi_service_run returns, both `service` and `ctx` are already
+// consumed (they become Box::from_raw inside ffi_service_run and are dropped).
+// You do NOT call ffi_service_free or ffi_ctx_free after ffi_service_run.
+
+// 7. Cleanup remaining resources
+// Note: plugin is owned by ctx, so don't free it
+// Note: ctx was consumed by ffi_service_run, so don't free it
+// Note: service was consumed by ffi_service_run, so don't free it
+ffi_packet_handle_free(pkt);
+ffi_config_free(config);
+```
+
+### Service Lifecycle
+
+The service lifecycle is managed by the Windows SCM:
+
+1. **Start**: When the SCM sends `Command::Start`, the service:
+   - Spawns the engine in a dedicated thread
+   - Loads observers and plugins from the context
+   - Starts the main processing loop
+2. **Stop**: When the SCM sends `Command::Stop`, the service:
+   - Signals the engine to shut down
+   - Joins the engine thread (ensures graceful cleanup)
+   - Returns from `ffi_service_run`
+3. **Pause/Resume**: When the SCM sends `Command::Pause` or `Command::Resume`, the engine suspends/resumes processing
+
+### Installing and Uninstalling the Service
+
+To install the service on Windows:
+
+```bash
+# Run as Administrator
+ImgCompression.exe install
+```
+
+This uses `sc.exe` to register the service with the SCM. The service will start automatically on system boot.
+
+To uninstall:
+
+```bash
+# Run as Administrator
+ImgCompression.exe uninstall
+```
+
+This stops the service (if running) and removes it from the SCM.
+
+### Service vs Interactive Mode Differences
+
+| Aspect | Interactive | Service |
+|--------|-------------|---------|
+| Engine start | Immediate via `ffi_run_interactive_start` | Deferred until SCM sends `Start` |
+| Engine stop | You call `ffi_run_interactive_free` | SCM sends `Stop` command |
+| Pause/Resume | Not supported | Supported via SCM |
+| After run | **Don't** free `ctx` (consumed by start), free `config` | **Don't** free `ctx` (consumed by run), **don't** free `service` (consumed by run), free `config` |
+| Blocking call | `ffi_run_interactive_start` returns `FfiRunHandle` | `ffi_service_run` is blocking, returns `FfiStatus` |
+
+### Complete Example (Service Mode)
+
+```cpp
+#include "thryve_ffi.h"
+#include <iostream>
+
+// Plugin callbacks
+extern "C" void plugin_cleanup(const void* core_ptr) {
+    std::cout << "Plugin cleanup" << std::endl;
+}
+
+extern "C" FfiTaskResult plugin_entry(void) {
+    std::cout << "Plugin entry point" << std::endl;
+    return ffi_task_result_new("Success", "Plugin executed", "Main");
+}
+
+int main() {
+    // 1. Create configuration
+    FfiConfig config = ffi_config_default();
+    if (!config) return 1;
+    
+    // 2. Create PacketHandle
+    FfiPacketHandle pkt = ffi_packet_handle_create(config);
+    if (!pkt) {
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 3. Create context
+    FfiCtx ctx = ffi_ctx_create(config);
+    if (!ctx) {
+        ffi_packet_handle_free(pkt);
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 4. Create and add plugin
+    FfiPlugin plugin = ffi_plugin_create(
+        "MyPlugin", "MyType", nullptr, pkt,
+        plugin_cleanup, plugin_entry
+    );
+    ffi_ctx_add_plugin(ctx, plugin);
+    
+    // 5. Create the service instance
+    FfiService service = ffi_service_create(config);
+    if (!service) {
+        ffi_plugin_free(plugin);
+        ffi_packet_handle_free(pkt);
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+        return 1;
+    }
+    
+    // 6. Start the service (blocks until SCM sends Stop)
+    FfiStatus status = ffi_service_run(service, ctx);
+    if (status != FfiStatus_Ok) {
+        std::cerr << "Service run failed: " << (int)status << std::endl;
+    }
+    
+    // NOTE: After ffi_service_run returns, both `service` and `ctx` are already
+    // consumed. You do NOT call ffi_service_free or ffi_ctx_free.
+    
+    // 7. Cleanup remaining resources
+    ffi_packet_handle_free(pkt);
     ffi_config_free(config);
     
     return 0;
@@ -517,6 +869,23 @@ int main() {
 3. **Observer job callback**: When the observer job callback receives an `FfiObserver`, you **must** call `ffi_observer_free()` on it to prevent memory leaks.
 
 4. **PacketHandle**: The PacketHandle pointer is cloned inside the Rust side, so you can continue to use it after passing to plugin/observer creation.
+
+### Service Mode Cleanup
+
+When using `ffi_service_run`, **both** the service and context are **consumed** (not freed) inside the function. This is different from interactive mode where only `ctx` is consumed:
+
+| Resource | Interactive (`ffi_run_interactive_start`) | Service (`ffi_service_run`) |
+|----------|------------------------------------------|----------------------------|
+| `ctx` | Consumed (don't free) | Consumed (don't free) |
+| `service` | N/A | Consumed (don't free) |
+| `config` | Free with `ffi_config_free` | Free with `ffi_config_free` |
+| `packet_handle` | Free with `ffi_packet_handle_free` | Free with `ffi_packet_handle_free` |
+
+**Important**: After `ffi_service_run` returns, you **must NOT** call:
+- `ffi_service_free(service)` — the service was already consumed and dropped inside `ffi_service_run`
+- `ffi_ctx_free(ctx)` — the ctx was already consumed and dropped inside `ffi_service_run`
+
+Calling either of these after `ffi_service_run` will result in a **double-free** and undefined behavior.
 
 ### Ownership Transfer Diagram
 

@@ -1300,7 +1300,6 @@ pub extern "C" fn ffi_plugin_create(
     entry_point: FfiPluginEntryPoint,
 ) -> FfiPlugin {
     if plg_name.is_null() || plg_type.is_null() || tx.is_null() {
-        println!("ALOOOOOOOOOOOOOOO");
         return std::ptr::null_mut();
     }
 
@@ -1308,9 +1307,6 @@ pub extern "C" fn ffi_plugin_create(
     let type_str = unsafe { CStr::from_ptr(plg_type) }.to_str().unwrap_or("Unknown");
     let plg_name = name_str;
     let plg_type = type_str;
-
-    println!("Plugin {} is being created" , plg_name);
-    println!("2");
 
     // Create the packet handle clone
     let packet_handle = unsafe { &*(tx as *const PacketHandle) }.clone();
@@ -1329,14 +1325,6 @@ pub extern "C" fn ffi_plugin_create(
         clean_up,
     ));
 
-    println!("ALOOOOOOOOOOOOO44444444444444444");
-    println!("  task_job created, calling Plugin::new...");
-    println!("  plg_name: {}", plg_name);
-    println!("  plg_type: {}", plg_type);
-    println!("  packet_handle: non-null");
-    println!("  adapter core_ptr: {:p}", plg_core_ptr);
-    // Create the Plugin
-    println!("  calling Plugin::new...");
     let plugin = Plugin::new(
         plg_name,
         plg_type,
@@ -1344,18 +1332,13 @@ pub extern "C" fn ffi_plugin_create(
         packet_handle,
         task_job,
     );
-    println!("  Plugin::new returned");
-    println!("ALOOOOOOOOOOOOO55555555555555");
-    println!("  about to create boxed...");
 
     let boxed = Box::into_raw(Box::new(plugin)) as FfiPlugin;
-    println!("  boxed created: {:p}", boxed);
 
     if boxed.is_null() {
         println!("  boxed is null!");
         return std::ptr::null_mut();
     }
-    println!("  returning boxed");
     boxed
 }
 

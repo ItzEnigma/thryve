@@ -20,7 +20,6 @@
 //! - Notification receiver: Receives notifications from observers
 //! - Result receiver: Receives results from plugin executions
 
-use crate::errors::ThryveCoreError;
 use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
 
 use thryve_utils::bases::notif::Notif;
