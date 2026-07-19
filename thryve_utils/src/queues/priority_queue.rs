@@ -199,6 +199,10 @@ impl Queue<Task> for PQChild<Task> {
         let notif = Log::log("Task Queue continuing".to_string(), "Main");
         self.packet_handle.send_notification(notif);
     }
+
+    fn exit_flag(&self) -> Arc<AtomicBool> {
+        self.exit_flag.clone()
+    }
 }
 
 impl PQChild<Task> {

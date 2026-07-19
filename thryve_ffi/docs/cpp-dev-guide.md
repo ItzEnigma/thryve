@@ -9,10 +9,10 @@ A comprehensive guide for C++ developers who want to use the Thryve framework th
 - [Project Setup](#project-setup)
 - [Building](#building)
 - [Running](#running)
-- [Running as a Windows Service](#running-as-a-windows-service)
 - [Writing Your First Plugin](#writing-your-first-plugin)
 - [Writing Your First Observer](#writing-your-first-observer)
 - [Common Patterns](#common-patterns)
+- [Running as a Windows Service](#running-as-a-windows-service)
 - [Memory Management](#memory-management)
 - [Troubleshooting](#troubleshooting)
 
@@ -255,19 +255,21 @@ if (!config) {
     return 1;
 }
 
-// Create PacketHandle (required for plugin creation)
-FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-if (!packet_handle) {
-    std::cerr << "Failed to create packet handle" << std::endl;
-    ffi_config_free(config);
-    return 1;
-}
-
 // Create context
 FfiCtx ctx = ffi_ctx_create(config);
 if (!ctx) {
     std::cerr << "Failed to create context" << std::endl;
-    ffi_packet_handle_free(packet_handle);
+    ffi_config_free(config);
+    return 1;
+}
+
+// Get the engine's connected PacketHandle from ctx (required for plugin
+// creation). Do not create a standalone PacketHandle — it would not be
+// wired to this ctx's engine.
+FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+if (!packet_handle) {
+    std::cerr << "Failed to get packet handle" << std::endl;
+    ffi_ctx_free(ctx);
     ffi_config_free(config);
     return 1;
 }
@@ -305,179 +307,6 @@ if (status != FfiStatus_Ok) {
     return 1;
 }
 std::cout << "Plugin added to context" << std::endl;
-```
-
----
-
-## Running as a Windows Service
-
-To run the Thryve engine as a Windows service, use `ffi_service_create` and `ffi_service_run` instead of `ffi_run_interactive_start`. The service mode is designed for background execution managed by the Windows Service Control Manager (SCM).
-
-### Starting the Service
-
-```cpp
-// 1. Create configuration
-FfiConfig config = ffi_config_default();
-if (!config) return 1;
-
-// 2. Create PacketHandle
-FfiPacketHandle pkt = ffi_packet_handle_create(config);
-if (!pkt) {
-    ffi_config_free(config);
-    return 1;
-}
-
-// 3. Create context
-FfiCtx ctx = ffi_ctx_create(config);
-if (!ctx) {
-    ffi_packet_handle_free(pkt);
-    ffi_config_free(config);
-    return 1;
-}
-
-// 4. Add plugins/observers to the context
-// ...
-
-// 5. Create the service instance
-FfiService service = ffi_service_create(config);
-if (!service) {
-    ffi_plugin_free(plugin);
-    ffi_packet_handle_free(pkt);
-    ffi_ctx_free(ctx);
-    ffi_config_free(config);
-    return 1;
-}
-
-// 6. Start the service (blocks until SCM sends Stop)
-// ffi_service_run is a BLOCKING call that registers with the Windows SCM.
-// The engine thread is spawned inside ffi_service_run when SCM sends Start.
-// ffi_service_run only returns when SCM sends Stop.
-FfiStatus status = ffi_service_run(service, ctx);
-if (status != FfiStatus_Ok) {
-    std::cerr << "Service run failed: " << (int)status << std::endl;
-}
-
-// NOTE: After ffi_service_run returns, both `service` and `ctx` are already
-// consumed (they become Box::from_raw inside ffi_service_run and are dropped).
-// You do NOT call ffi_service_free or ffi_ctx_free after ffi_service_run.
-
-// 7. Cleanup remaining resources
-ffi_packet_handle_free(pkt);
-ffi_config_free(config);
-```
-
-### Service Lifecycle
-
-The service lifecycle is managed by the Windows SCM:
-
-1. **Start**: When the SCM sends `Command::Start`, the service:
-   - Spawns the engine in a dedicated thread
-   - Loads observers and plugins from the context
-   - Starts the main processing loop
-2. **Stop**: When the SCM sends `Command::Stop`, the service:
-   - Signals the engine to shut down
-   - Joins the engine thread (ensures graceful cleanup)
-   - Returns from `ffi_service_run`
-3. **Pause/Resume**: When the SCM sends `Command::Pause` or `Command::Resume`, the engine suspends/resumes processing
-
-### Installing and Uninstalling the Service
-
-To install the service on Windows:
-
-```bash
-# Run as Administrator
-ImgCompression.exe install
-```
-
-This uses `sc.exe` to register the service with the SCM. The service will start automatically on system boot.
-
-To uninstall:
-
-```bash
-# Run as Administrator
-ImgCompression.exe uninstall
-```
-
-This stops the service (if running) and removes it from the SCM.
-
-### Service vs Interactive Mode Differences
-
-| Aspect | Interactive | Service |
-|--------|-------------|---------|
-| Engine start | Immediate via `ffi_run_interactive_start` | Deferred until SCM sends `Start` |
-| Engine stop | You call `ffi_run_interactive_free` | SCM sends `Stop` command |
-| Pause/Resume | Not supported | Supported via SCM |
-| After run | **Don't** free `ctx` (consumed by start), free `config` | **Don't** free `ctx` (consumed by run), **don't** free `service` (consumed by run), free `config` |
-| Blocking call | `ffi_run_interactive_start` returns `FfiRunHandle` | `ffi_service_run` is blocking, returns `FfiStatus` |
-
-### Complete Example (Service Mode)
-
-```cpp
-#include "thryve_ffi.h"
-#include <iostream>
-
-// Plugin callbacks
-extern "C" void plugin_cleanup(const void* core_ptr) {
-    std::cout << "Plugin cleanup" << std::endl;
-}
-
-extern "C" FfiTaskResult plugin_entry(void) {
-    std::cout << "Plugin entry point" << std::endl;
-    return ffi_task_result_new("Success", "Plugin executed", "Main");
-}
-
-int main() {
-    // 1. Create configuration
-    FfiConfig config = ffi_config_default();
-    if (!config) return 1;
-    
-    // 2. Create PacketHandle
-    FfiPacketHandle pkt = ffi_packet_handle_create(config);
-    if (!pkt) {
-        ffi_config_free(config);
-        return 1;
-    }
-    
-    // 3. Create context
-    FfiCtx ctx = ffi_ctx_create(config);
-    if (!ctx) {
-        ffi_packet_handle_free(pkt);
-        ffi_config_free(config);
-        return 1;
-    }
-    
-    // 4. Create and add plugin
-    FfiPlugin plugin = ffi_plugin_create(
-        "MyPlugin", "MyType", nullptr, pkt,
-        plugin_cleanup, plugin_entry
-    );
-    ffi_ctx_add_plugin(ctx, plugin);
-    
-    // 5. Create the service instance
-    FfiService service = ffi_service_create(config);
-    if (!service) {
-        ffi_plugin_free(plugin);
-        ffi_packet_handle_free(pkt);
-        ffi_ctx_free(ctx);
-        ffi_config_free(config);
-        return 1;
-    }
-    
-    // 6. Start the service (blocks until SCM sends Stop)
-    FfiStatus status = ffi_service_run(service, ctx);
-    if (status != FfiStatus_Ok) {
-        std::cerr << "Service run failed: " << (int)status << std::endl;
-    }
-    
-    // NOTE: After ffi_service_run returns, both `service` and `ctx` are already
-    // consumed. You do NOT call ffi_service_free or ffi_ctx_free.
-    
-    // 7. Cleanup remaining resources
-    ffi_packet_handle_free(pkt);
-    ffi_config_free(config);
-    
-    return 0;
-}
 ```
 
 ---
@@ -554,9 +383,9 @@ FfiTask task = ffi_task_create(
 );
 
 if (task) {
-    // Send the task to the context
+    // Send the task to the context. ffi_ctx_send_task takes ownership of
+    // task — do NOT call ffi_task_free on it afterward, that's a double-free.
     ffi_ctx_send_task(ctx, task);
-    ffi_task_free(task);  // Free after sending
 }
 ```
 
@@ -571,18 +400,26 @@ FfiNotif notif = ffi_notification_create(
 );
 
 if (notif) {
-    // Send the notification to the context
+    // Send the notification to the context. ffi_ctx_send_notification takes
+    // ownership of notif — do NOT call ffi_notification_free on it afterward,
+    // that's a double-free.
     FfiStatus status = ffi_ctx_send_notification(ctx, notif);
     if (status != FfiStatus_Ok) {
         std::cerr << "Failed to send notification: " << (int)status << std::endl;
     }
-    ffi_notification_free(notif);  // Free after sending
 }
 ```
 
 ### Starting the Engine
 
+`ffi_run_interactive_start` spawns the engine on a background thread and returns immediately — it does not block. There is no separate "stop" FFI call: the engine's loop only exits once a task result comes back with `result_type = "Fin"` (or `"FinErr"`), which is what actually sets the engine's exit flag. `ffi_run_interactive_free` just waits (joins) for that to happen — call it too early (before any Fin task has been processed) and it blocks forever.
+
 ```cpp
+// A task job that requests a graceful shutdown once submitted
+extern "C" FfiTaskResult shutdown_task_job(void) {
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
+}
+
 // Start the interactive engine
 std::cout << "Starting Thryve engine..." << std::endl;
 
@@ -590,8 +427,16 @@ FfiRunHandle handle = ffi_run_interactive_start(ctx);
 if (handle) {
     std::cout << "Engine started. Press Enter to stop..." << std::endl;
     std::cin.get();
-    
-    // Stop the engine
+
+    // Submit a shutdown task so the engine actually finalizes and its loop
+    // exits — without this, ffi_run_interactive_free below would hang.
+    FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+    if (shutdown_task) {
+        ffi_packet_handle_send_task(packet_handle, shutdown_task);
+    }
+
+    // Now safe to call — returns once the engine thread has processed the
+    // shutdown task and exited its loop.
     ffi_run_interactive_free(handle);
 }
 ```
@@ -629,53 +474,68 @@ extern "C" void observer_job(FfiObserver obs) {
     ffi_observer_free(obs);
 }
 
+// Shutdown task job — the only way to make the engine's loop actually exit
+extern "C" FfiTaskResult shutdown_task_job(void) {
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
+}
+
 int main() {
     // 1. Create configuration
     FfiConfig config = ffi_config_default();
     if (!config) return 1;
-    
-    // 2. Create PacketHandle
-    FfiPacketHandle pkt = ffi_packet_handle_create(config);
-    if (!pkt) {
-        ffi_config_free(config);
-        return 1;
-    }
-    
-    // 3. Create context
+
+    // 2. Create context
     FfiCtx ctx = ffi_ctx_create(config);
     if (!ctx) {
-        ffi_packet_handle_free(pkt);
         ffi_config_free(config);
         return 1;
     }
-    
+
+    // 3. Get the engine's connected PacketHandle from ctx — save it, it's
+    // the only way to reach the engine once ctx is consumed in step 6.
+    FfiPacketHandle pkt = ffi_ctx_get_packet_handle(ctx);
+    if (!pkt) {
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+        return 1;
+    }
+
     // 4. Create and add plugin
     FfiPlugin plugin = ffi_plugin_create(
         "MyPlugin", "MyType", nullptr, pkt,
         plugin_cleanup, plugin_entry
     );
     ffi_ctx_add_plugin(ctx, plugin);
-    
+
     // 5. Create and add observer
     FfiObserver obs = ffi_observer_create(
         "MyObserver", "MyType", nullptr, pkt,
         observer_cleanup, observer_job
     );
     ffi_ctx_add_observer(ctx, obs);
-    
-    // 6. Start the engine
+
+    // 6. Start the engine. This consumes ctx — never touch or free ctx again
+    // after this call.
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
         std::cin.get();
+
+        // Submit a shutdown task so the engine actually finalizes and exits
+        // its loop — without this, ffi_run_interactive_free below would hang.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(pkt, shutdown_task);
+        }
+
         ffi_run_interactive_free(handle);
     }
-    
+
     // 7. Cleanup
     ffi_packet_handle_free(pkt);
     // NOTE: ctx was consumed by ffi_run_interactive_start, so don't free it
     // NOTE: plugin and observer are owned by ctx, so don't free them
     ffi_config_free(config);
-    
+
     return 0;
 }
 ```
@@ -693,17 +553,23 @@ To run the Thryve engine as a Windows service, use `ffi_service_create` and `ffi
 FfiConfig config = ffi_config_default();
 if (!config) return 1;
 
-// 2. Create PacketHandle
-FfiPacketHandle pkt = ffi_packet_handle_create(config);
-if (!pkt) {
+// 2. Create the service instance. This also builds its matching ctx and
+// returns both together — there's no separate ffi_ctx_create call for
+// service mode, unlike interactive mode.
+FfiServiceCreateResult created = ffi_service_create(config);
+if (!created.service || !created.ctx) {
     ffi_config_free(config);
     return 1;
 }
+FfiService service = created.service;
+FfiCtx ctx = created.ctx;
 
-// 3. Create context
-FfiCtx ctx = ffi_ctx_create(config);
-if (!ctx) {
-    ffi_packet_handle_free(pkt);
+// 3. Get the engine's connected PacketHandle from ctx (required to create
+// plugins/observers)
+FfiPacketHandle pkt = ffi_ctx_get_packet_handle(ctx);
+if (!pkt) {
+    ffi_service_free(service);
+    ffi_ctx_free(ctx);
     ffi_config_free(config);
     return 1;
 }
@@ -711,17 +577,7 @@ if (!ctx) {
 // 4. Add plugins/observers to the context
 // ... add plugin and observer as shown above ...
 
-// 5. Create the service instance
-FfiService service = ffi_service_create(config);
-if (!service) {
-    ffi_plugin_free(plugin);
-    ffi_packet_handle_free(pkt);
-    ffi_ctx_free(ctx);
-    ffi_config_free(config);
-    return 1;
-}
-
-// 6. Start the service (blocks until SCM sends Stop)
+// 5. Start the service (blocks until SCM sends Stop)
 // ffi_service_run is a BLOCKING call that registers with the Windows SCM.
 // The engine thread is spawned inside ffi_service_run when SCM sends Start.
 // ffi_service_run only returns when SCM sends Stop.
@@ -734,7 +590,7 @@ if (status != FfiStatus_Ok) {
 // consumed (they become Box::from_raw inside ffi_service_run and are dropped).
 // You do NOT call ffi_service_free or ffi_ctx_free after ffi_service_run.
 
-// 7. Cleanup remaining resources
+// 6. Cleanup remaining resources
 // Note: plugin is owned by ctx, so don't free it
 // Note: ctx was consumed by ffi_service_run, so don't free it
 // Note: service was consumed by ffi_service_run, so don't free it
@@ -806,52 +662,46 @@ int main() {
     // 1. Create configuration
     FfiConfig config = ffi_config_default();
     if (!config) return 1;
-    
-    // 2. Create PacketHandle
-    FfiPacketHandle pkt = ffi_packet_handle_create(config);
+
+    // 2. Create the service instance. This also builds its matching ctx and
+    // returns both together — no separate ffi_ctx_create call needed here.
+    FfiServiceCreateResult created = ffi_service_create(config);
+    if (!created.service || !created.ctx) {
+        ffi_config_free(config);
+        return 1;
+    }
+    FfiService service = created.service;
+    FfiCtx ctx = created.ctx;
+
+    // 3. Get the engine's connected PacketHandle from ctx
+    FfiPacketHandle pkt = ffi_ctx_get_packet_handle(ctx);
     if (!pkt) {
+        ffi_service_free(service);
+        ffi_ctx_free(ctx);
         ffi_config_free(config);
         return 1;
     }
-    
-    // 3. Create context
-    FfiCtx ctx = ffi_ctx_create(config);
-    if (!ctx) {
-        ffi_packet_handle_free(pkt);
-        ffi_config_free(config);
-        return 1;
-    }
-    
+
     // 4. Create and add plugin
     FfiPlugin plugin = ffi_plugin_create(
         "MyPlugin", "MyType", nullptr, pkt,
         plugin_cleanup, plugin_entry
     );
     ffi_ctx_add_plugin(ctx, plugin);
-    
-    // 5. Create the service instance
-    FfiService service = ffi_service_create(config);
-    if (!service) {
-        ffi_plugin_free(plugin);
-        ffi_packet_handle_free(pkt);
-        ffi_ctx_free(ctx);
-        ffi_config_free(config);
-        return 1;
-    }
-    
-    // 6. Start the service (blocks until SCM sends Stop)
+
+    // 5. Start the service (blocks until SCM sends Stop)
     FfiStatus status = ffi_service_run(service, ctx);
     if (status != FfiStatus_Ok) {
         std::cerr << "Service run failed: " << (int)status << std::endl;
     }
-    
+
     // NOTE: After ffi_service_run returns, both `service` and `ctx` are already
     // consumed. You do NOT call ffi_service_free or ffi_ctx_free.
-    
-    // 7. Cleanup remaining resources
+
+    // 6. Cleanup remaining resources
     ffi_packet_handle_free(pkt);
     ffi_config_free(config);
-    
+
     return 0;
 }
 ```
@@ -868,7 +718,11 @@ int main() {
 
 3. **Observer job callback**: When the observer job callback receives an `FfiObserver`, you **must** call `ffi_observer_free()` on it to prevent memory leaks.
 
-4. **PacketHandle**: The PacketHandle pointer is cloned inside the Rust side, so you can continue to use it after passing to plugin/observer creation.
+4. **PacketHandle**: Get it from `ffi_ctx_get_packet_handle(ctx)` — this is the engine's real, connected handle. (There is no standalone `ffi_packet_handle_create` — it doesn't exist, and a disconnected packet handle wouldn't reach the engine anyway.) It is cloned inside the Rust side when passed to plugin/observer creation, so you can continue to use your copy afterward.
+
+5. **Sending tasks/notifications**: `ffi_ctx_send_task`, `ffi_ctx_send_notification`, `ffi_packet_handle_send_task`, and `ffi_packet_handle_send_notification` all **take ownership** of the task/notification you pass in. **Do not** call `ffi_task_free`/`ffi_notification_free` on it afterward — that's a double-free.
+
+6. **`ffi_ctx_create` vs `ffi_service_create`**: `ffi_ctx_create(config)` is for **interactive mode** — it's the only way to get a bare `ctx` to populate before starting the engine. **Service mode doesn't use it** — `ffi_service_create(config)` already returns its own matching `ctx` bundled together with the service.
 
 ### Service Mode Cleanup
 
@@ -876,10 +730,10 @@ When using `ffi_service_run`, **both** the service and context are **consumed** 
 
 | Resource | Interactive (`ffi_run_interactive_start`) | Service (`ffi_service_run`) |
 |----------|------------------------------------------|----------------------------|
-| `ctx` | Consumed (don't free) | Consumed (don't free) |
-| `service` | N/A | Consumed (don't free) |
+| `ctx` | From `ffi_ctx_create` — consumed by start (don't free) | From `ffi_service_create`'s bundled result — consumed by run (don't free) |
+| `service` | N/A | From `ffi_service_create` — consumed by run (don't free) |
 | `config` | Free with `ffi_config_free` | Free with `ffi_config_free` |
-| `packet_handle` | Free with `ffi_packet_handle_free` | Free with `ffi_packet_handle_free` |
+| `packet_handle` | From `ffi_ctx_get_packet_handle(ctx)` — free with `ffi_packet_handle_free` | From `ffi_ctx_get_packet_handle(ctx)` — free with `ffi_packet_handle_free` |
 
 **Important**: After `ffi_service_run` returns, you **must NOT** call:
 - `ffi_service_free(service)` — the service was already consumed and dropped inside `ffi_service_run`

@@ -662,11 +662,14 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 }
 
 mod tests_notif {
+    use std::path::PathBuf;
     use std::time::SystemTime;
 
 use thryve_utils::bases::notif::*;
+    use thryve_utils::graphs::callsite::TaskCallSite;
     use thryve_utils::impl_as_any;
 use thryve_utils::traits::notif_logic::NotifLogic;
+use thryve_utils::traits::packets::Packet;
 
     // Test implementation of NotifLogic
     struct TestNotifLogic {
@@ -794,5 +797,55 @@ use thryve_utils::traits::notif_logic::NotifLogic;
         // Assert
         assert_eq!(notif.notif_type.inner().len(), 100);
         assert_eq!(notif.notif_receiver.inner().len(), 100);
+    }
+
+    #[test]
+    fn test_notif_get_callsite_defaults_to_none_before_set() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+
+        // Act
+        let callsite = notif.get_callsite();
+
+        // Assert - no callsite was ever set, so it should fall back to default
+        assert_eq!(callsite, TaskCallSite::default());
+    }
+
+    #[test]
+    fn test_notif_set_callsite_then_get_callsite_returns_it() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+        let mut notif = Notif::new("TestType", "TestReceiver", notif_core);
+        let callsite = TaskCallSite::new(
+            PathBuf::from("src/test.rs"),
+            "test_module".to_string(),
+            42,
+            "TestTask".to_string(),
+        );
+
+        // Act
+        notif.set_callsite(callsite.clone());
+        let retrieved = notif.get_callsite();
+
+        // Assert
+        assert_eq!(retrieved, callsite);
+        assert_eq!(notif.callsite, Some(callsite));
+    }
+
+    #[test]
+    fn test_notif_set_callsite_overwrites_previous_value() {
+        // Arrange
+        let notif_core = Box::new(TestNotifLogic { _data: "test".to_string() });
+        let mut notif = Notif::new("TestType", "TestReceiver", notif_core);
+        let first = TaskCallSite::new(PathBuf::from("src/a.rs"), "a".to_string(), 1, "A".to_string());
+        let second = TaskCallSite::new(PathBuf::from("src/b.rs"), "b".to_string(), 2, "B".to_string());
+
+        // Act
+        notif.set_callsite(first);
+        notif.set_callsite(second.clone());
+
+        // Assert
+        assert_eq!(notif.get_callsite(), second);
     }
 }

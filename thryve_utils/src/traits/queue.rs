@@ -16,6 +16,7 @@
 //! - [`PQChild`](crate::queues::priority_queue::PQChild): Priority queue for tasks
 //! - [`QChild`](crate::queues::seg_queue::QChild): Segmented queue for notifications
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::bases::observer::Observer;
@@ -134,4 +135,20 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// // pop() will now continue
     /// ```
     fn resume(&self);
+
+    /// Returns the queue's own shutdown flag.
+    ///
+    /// This is the same flag `pop()` checks internally before blocking and
+    /// after waking. Consumers (thread pools) should adopt this flag as
+    /// their own shutdown signal rather than allocating a separate one --
+    /// otherwise a worker can pass its own pre-`pop()` shutdown check just
+    /// before the queue's flag flips, block inside `pop()`, and then treat
+    /// the sentinel value `pop()` returns on shutdown as real work.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let shared_flag = queue.exit_flag();
+    /// ```
+    fn exit_flag(&self) -> Arc<AtomicBool>;
 }

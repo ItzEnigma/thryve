@@ -1069,6 +1069,7 @@ use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::traits::observer_logic::ObsLogic;
+    use thryve_utils::traits::queue::Queue;
     use crossbeam::channel::bounded;
 
     // Test implementation of ObsLogic
@@ -1566,6 +1567,64 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 
         // Assert
         assert_eq!(names.len(), 2);
+    }
+
+    // Tests for the sorter thread's missing-observer fallback routing.
+    // Both the normal per-iteration loop and the shutdown-drain loop have
+    // their own copy of this fallback (log the error, forward it to the
+    // Logging observer if present) -- these tests exercise each separately.
+
+    #[test]
+    fn test_sorter_thread_routes_missing_observer_notif_to_logger_while_running() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        manager.load_observer(logger);
+
+        // Act - start the sorter thread while exit_flag is still false, then
+        // feed it a notification addressed to an observer type that was
+        // never loaded. This exercises the per-iteration (non-shutdown)
+        // fallback branch that logs the error and forwards it to Logging.
+        manager.init_obs_sorter_thread();
+        let orphaned = Log::log("orphaned".to_string(), "NoSuchObserver");
+        manager.threadpool.main_queue.push(orphaned);
+
+        // Give the sorter thread time to process it before the test ends.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+
+    #[test]
+    fn test_sorter_thread_exit_drain_routes_missing_observer_notif_to_logger() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        let obs_core = Arc::new(TestObsLogic);
+        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let logger = Observer::new("logger", "Logging", obs_core, fn_to_run, ctx.packet_handle());
+        manager.load_observer(logger);
+
+        // Queue a notification addressed to an observer that was never loaded.
+        let orphaned = Log::log("orphaned".to_string(), "NoSuchObserver");
+        manager.threadpool.main_queue.push(orphaned);
+
+        // Set the exit flag *before* spawning the sorter thread so its very
+        // first loop iteration deterministically takes the shutdown-drain
+        // branch, instead of racing a background thread through the normal
+        // blocking-pop loop.
+        manager.threadpool.pool_exit_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        // Act - should not panic; drains the queue and routes the orphaned
+        // notification to the Logging observer's fallback instead of
+        // dropping it silently.
+        manager.init_obs_sorter_thread();
+
+        // Give the sorter thread a moment to finish draining before the test ends.
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
 }
 

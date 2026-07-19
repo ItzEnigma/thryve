@@ -129,6 +129,10 @@ impl Queue<Notif> for QChild {
         let notif = Log::log("Obs Queue continuing".to_string(), "Main");
         self.packet_handle.send_notification(notif);
     }
+
+    fn exit_flag(&self) -> Arc<AtomicBool> {
+        self.exit_flag.clone()
+    }
 }
 
 impl QChild {

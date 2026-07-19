@@ -14,8 +14,11 @@ use thryve_utils::packets::packet_handle::PacketHandle;
     use chrono::{DateTime, Local};
     use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+use thryve_utils::traits::observer_logic::ObsLogic;
+use thryve_utils::traits::queue::Queue;
 
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
@@ -324,11 +327,11 @@ use std::time::SystemTime;
         let ctx = create_test_ctx();
         let observer = TopologyHandlerObserver::new(&ctx);
         let observer = Arc::new(observer);
-        
+
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
-        
+
         // Add a node to have something to export
         let node = TopologyNode {
             callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), "test".to_string(), 1, "Test".to_string()),
@@ -336,9 +339,29 @@ use std::time::SystemTime;
         };
         topo_handler.handle_entry(TopologyModifier::add_node(node));
 
-        // Act - cleanup should export the topology (this will try to spawn GUI, which we can't test)
-        // We'll just verify it doesn't panic on the export part
-        // Note: This test may fail if topology_test.exe doesn't exist, but that's expected
+        // Queue a leftover notification on the observer's own queue so
+        // clean_up's drain-then-export loop has something to process
+        // before it writes the RON file (Topology.exe won't exist in
+        // this environment, so visualize_gui just logs and returns).
+        let queued_node = TopologyNode {
+            callsite: TaskCallSite::new(PathBuf::from("src/queued.rs"), "queued".to_string(), 2, "Queued".to_string()),
+            fingerprint: "queued_node".to_string(),
+        };
+        observer.obs_queue.main_queue.push(TopologyModifier::add_node(queued_node));
+
+        // Act
+        topo_handler.clean_up(observer.clone());
+
+        // Assert - the leftover notification was drained, the RON file was
+        // written to topology_dir, and the in-memory graph was cleared
+        // afterward.
+        assert!(observer.obs_queue.main_queue.is_empty());
+        let export_path = topo_handler.topology_dir.join("topology_export.ron");
+        assert!(export_path.exists());
+        let contents = std::fs::read_to_string(&export_path).expect("exported RON file should be readable");
+        assert!(!contents.is_empty());
+        let topology_ref = topo_handler.topology.read().unwrap();
+        assert_eq!(topology_ref.graph.node_count(), 0);
     }
 
     #[test]
@@ -381,7 +404,7 @@ use std::time::SystemTime;
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
 
-        // Act - should not panic even if topology_test.exe doesn't exist
+        // Act - should not panic even if Topology.exe doesn't exist
         // The function will fail to spawn the process but won't panic
         topo_handler.visualize_gui();
     }
@@ -494,5 +517,87 @@ use std::time::SystemTime;
         // Assert - the file path should be relative after stripping workspace root
         let topology_ref = topo_handler.topology.read().unwrap();
         assert!(topology_ref.contains_node("workspace_node"));
+    }
+
+    #[test]
+    fn test_handle_entry_with_unrecognized_action_is_ignored() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let observer = TopologyHandlerObserver::new(&ctx);
+
+        // Downcast to get the TopologyHandlerObserver
+        let obs_core = observer.obs_core.as_any();
+        let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
+
+        // Build a TopologyModifier with an action string that doesn't match
+        // "AddNode" or "AddEdge", to exercise the catch-all match arm.
+        let modifier = TopologyModifier {
+            graph_node: TopologyNode::default(),
+            from_fingerprint: String::default(),
+            to_fingerprint: String::default(),
+            action: "SomeUnknownAction".to_string(),
+        };
+        let notif = Notif::new("SomeUnknownAction", "TopologyHandler", Box::new(modifier));
+
+        // Act - should not panic, should just fall through the catch-all arm
+        topo_handler.handle_entry(notif);
+
+        // Assert - nothing was added to the graph
+        let topology_ref = topo_handler.topology.read().unwrap();
+        assert_eq!(topology_ref.graph.node_count(), 0);
+    }
+
+    #[test]
+    fn test_topology_modification_loop_processes_notif_then_exits_on_flag() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let observer = Arc::new(TopologyHandlerObserver::new(&ctx));
+
+        let observer_thread = observer.clone();
+        let handle = std::thread::spawn(move || {
+            observer_thread.run_loop(observer_thread.clone());
+        });
+
+        // Push a node-add notification for the loop to pop and handle on
+        // its first iteration.
+        let node = TopologyNode {
+            callsite: TaskCallSite::new(PathBuf::from("src/loop.rs"), "loop_mod".to_string(), 1, "LoopTask".to_string()),
+            fingerprint: "loop_node".to_string(),
+        };
+        observer.obs_queue.push(TopologyModifier::add_node(node));
+
+        // Give the loop time to pop and handle it before we ask it to exit.
+        std::thread::sleep(Duration::from_millis(150));
+
+        // The loop checks exit_flag *before* each pop(), so by now it is
+        // blocked waiting inside a second pop() call; set the flag, then
+        // push one more notification purely to wake that blocked pop() so
+        // the loop can come back around and see the flag is set.
+        observer.exit_flag.store(true, Ordering::SeqCst);
+        observer.obs_queue.push(TopologyModifier::add_node(TopologyNode::default()));
+
+        // Act & Assert - the loop must actually return once it observes the
+        // exit flag, or this join blocks forever instead of completing.
+        handle.join().expect("topology_modification loop should exit cleanly on exit_flag");
+
+        let obs_core = observer.obs_core.as_any();
+        let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
+        let topology_ref = topo_handler.topology.read().unwrap();
+        assert!(topology_ref.contains_node("loop_node"));
+    }
+
+    #[test]
+    fn test_visualize_gui_with_root_topology_dir_has_no_parent() {
+        // Arrange - a root path has no parent, so this exercises the
+        // `topology_dir.parent()` == None branch, which the ctx-based
+        // constructor can never produce on its own (its topology_dir is
+        // always a subdirectory of a temp dir).
+        let topo_handler = TopologyHandlerObserver {
+            topology: std::sync::RwLock::new(thryve_utils::graphs::graph::TaskTopology::default()),
+            topology_dir: PathBuf::from("C:\\"),
+        };
+
+        // Act - should not panic despite there being no parent directory
+        topo_handler.visualize_gui();
     }
 }

@@ -38,11 +38,18 @@ typedef uint8_t *FfiPlugin;
 
 typedef uint8_t *FfiObserver;
 
+typedef uint8_t *FfiNotif;
+
 typedef FfiTaskResult (*FfiTaskJob)(void);
 
 typedef uint8_t *FfiRunHandle;
 
 typedef uint8_t *FfiService;
+
+typedef struct {
+  FfiService service;
+  FfiCtx ctx;
+} FfiServiceCreateResult;
 
 typedef void (*FfiPluginCleanUp)(const void*);
 
@@ -51,8 +58,6 @@ typedef FfiTaskResult (*FfiPluginEntryPoint)(void);
 typedef void (*FfiObserverCleanUp)(const void*);
 
 typedef void (*FfiObsJob)(FfiObserver);
-
-typedef uint8_t *FfiNotif;
 
 typedef void (*FfiObserverMainLoop)(const void*);
 
@@ -73,8 +78,6 @@ FfiConfig ffi_config_from_file(const char *path);
 
 void ffi_config_free(FfiConfig config);
 
-FfiPacketHandle ffi_packet_handle_create(FfiConfig config);
-
 void ffi_packet_handle_free(FfiPacketHandle handle);
 
 FfiPacketHandle ffi_packet_handle_clone(FfiPacketHandle handle);
@@ -91,6 +94,12 @@ FfiStatus ffi_ctx_set_logging_file_names(FfiCtx ctx, const char *const *file_nam
 
 FfiStatus ffi_ctx_send_task(FfiCtx ctx, FfiTask task);
 
+FfiPacketHandle ffi_ctx_get_packet_handle(FfiCtx ctx);
+
+FfiStatus ffi_packet_handle_send_task(FfiPacketHandle handle, FfiTask task);
+
+FfiStatus ffi_packet_handle_send_notification(FfiPacketHandle handle, FfiNotif notif);
+
 FfiTask ffi_task_create(const char *name, uint8_t priority, FfiTaskJob job);
 
 void ffi_task_free(FfiTask task);
@@ -99,7 +108,7 @@ FfiRunHandle ffi_run_interactive_start(FfiCtx ctx);
 
 FfiStatus ffi_run_interactive_free(FfiRunHandle handle);
 
-FfiService ffi_service_create(FfiConfig config);
+FfiServiceCreateResult ffi_service_create(FfiConfig config);
 
 FfiStatus ffi_service_run(FfiService service, FfiCtx ctx);
 

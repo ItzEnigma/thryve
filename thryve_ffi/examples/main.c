@@ -26,7 +26,7 @@ void my_plugin_cleanup(const void* core_ptr) {
 // Plugin entry point — called when the plugin's task is executed
 FfiTaskResult my_plugin_entry_point(void) {
     printf("Plugin entry point called\n");
-    
+
     // Use the helper function to create a result with proper fields
     FfiTaskResult result = ffi_task_result_new("Success", "Plugin executed", "Main");
     // Or construct manually:
@@ -49,6 +49,10 @@ void my_observer_cleanup(const void* core_ptr) {
 // Observer job function — called when the observer runs
 void my_observer_job(FfiObserver observer) {
     printf("Observer job called\n");
+
+    // IMPORTANT: The observer parameter is an Arc<Observer> clone.
+    // You must drop it when done to prevent memory leaks.
+    ffi_observer_free(observer);
 }
 
 // ============================================================================
@@ -57,9 +61,18 @@ void my_observer_job(FfiObserver observer) {
 
 FfiTaskResult my_task_job(void) {
     printf("Task job called\n");
-    
+
     FfiTaskResult result = {0};
     return result;
+}
+
+// Shutdown task job — returning a "Fin" result_type is what tells the engine
+// to finalize and set its exit flag. There is no separate "stop" FFI call;
+// submitting a task like this is the only way to make the engine loop exit,
+// which in turn is what lets ffi_run_interactive_free's join() return.
+FfiTaskResult shutdown_task_job(void) {
+    printf("Shutdown task job called\n");
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
 }
 
 // ============================================================================
@@ -77,24 +90,27 @@ int main(void) {
     }
     printf("Config created\n");
 
-    // 2. Create PacketHandle from configuration (required for plugins/observers)
-    FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-    if (!packet_handle) {
-        fprintf(stderr, "Failed to create packet handle\n");
-        ffi_config_free(config);
-        return 1;
-    }
-    printf("PacketHandle created\n");
-
-    // 3. Create context from configuration
+    // 2. Create context from configuration
     FfiCtx ctx = ffi_ctx_create(config);
     if (!ctx) {
         fprintf(stderr, "Failed to create context\n");
-        ffi_packet_handle_free(packet_handle);
         ffi_config_free(config);
         return 1;
     }
     printf("Context created\n");
+
+    // 3. Get the engine's connected packet handle from ctx.
+    // Do NOT use a standalone packet handle here — it would not be wired to
+    // this ctx's engine, and any task/notification sent through it would be
+    // silently dropped once the engine starts running.
+    FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+    if (!packet_handle) {
+        fprintf(stderr, "Failed to get packet handle\n");
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+        return 1;
+    }
+    printf("PacketHandle created\n");
 
     // 4. Create a plugin
     FfiPlugin plugin = ffi_plugin_create(
@@ -105,7 +121,7 @@ int main(void) {
         my_plugin_cleanup,    // clean_up callback
         my_plugin_entry_point // entry_point callback
     );
-    
+
     if (!plugin) {
         fprintf(stderr, "Failed to create plugin\n");
         ffi_packet_handle_free(packet_handle);
@@ -136,12 +152,12 @@ int main(void) {
         my_observer_cleanup,  // clean_up callback
         my_observer_job       // obs_job callback
     );
-    
+
     if (!observer) {
         fprintf(stderr, "Failed to create observer\n");
     } else {
         printf("Observer created\n");
-        
+
         // Add observer to context
         status = ffi_ctx_add_observer(ctx, observer);
         if (status != FfiStatus_Ok) {
@@ -157,40 +173,53 @@ int main(void) {
         0,                    // priority
         my_task_job           // job callback
     );
-    
+
     if (!task) {
         fprintf(stderr, "Failed to create task\n");
     } else {
         printf("Task created\n");
-        
-        // Send the task to the context
+
+        // Send the task to the context. ffi_ctx_send_task takes ownership of
+        // task — do NOT call ffi_task_free on it afterward, that would be a
+        // double-free.
         status = ffi_ctx_send_task(ctx, task);
         if (status != FfiStatus_Ok) {
             fprintf(stderr, "Failed to send task: %d\n", status);
         } else {
             printf("Task sent to context\n");
         }
-        
-        ffi_task_free(task);
     }
 
-    // 8. Start the engine (interactive mode)
+    // 8. Start the engine (interactive mode). This consumes ctx — after this
+    // call, ctx is no longer valid and must never be freed or otherwise used
+    // (not even on the error path below). packet_handle remains our only way
+    // to feed the now-running engine.
     printf("\nStarting interactive engine...\n");
     printf("Press Enter to stop...\n");
-    
+
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
         // Wait for user input to stop
         getchar();
-        
-        // Stop the engine
+
+        // Submit a shutdown task so the engine actually finalizes and exits
+        // its loop. Without this, ffi_run_interactive_free would block
+        // forever waiting for a thread that never stops running.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(packet_handle, shutdown_task);
+        }
+
+        // Now safe to call — blocks only until the engine thread, having
+        // processed the shutdown task, returns.
         ffi_run_interactive_free(handle);
     }
 
     // 9. Cleanup
-    // Note: plugin and observer are owned by ctx, so don't free them
+    // Note: plugin and observer are owned by ctx, so don't free them.
+    // ctx itself was already consumed by ffi_run_interactive_start above —
+    // do NOT call ffi_ctx_free(ctx) here, that would be a double-free.
     ffi_packet_handle_free(packet_handle);
-    ffi_ctx_free(ctx);
     ffi_config_free(config);
 
     printf("\n=== Example finished ===\n");

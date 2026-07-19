@@ -1,0 +1,89 @@
+//! Full FFI lifecycle integration test: create -> run -> send task through the
+//! FFI boundary -> await shutdown -> free.
+//!
+//! `thryve_tests::tests_ffi::lifecycle` deliberately stops short of running the
+//! engine (see its `test_full_interactive_setup`, which "verifies the full
+//! interactive setup flow without actually running the engine (which would
+//! block)"). This test is the other half: it actually calls
+//! `ffi_run_interactive_start`, sends a task through the real FFI packet
+//! handle, and blocks on `ffi_run_interactive_free` until the engine drains
+//! and exits - the same sequence a real C/C++ consumer (see
+//! `thryve_ffi/examples/main.c`) drives through the extern "C" boundary.
+
+mod tests_ffi_full_lifecycle {
+    use std::ffi::CString;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use thryve_ffi::{
+        ffi_config_default, ffi_config_free, ffi_ctx_create, ffi_ctx_get_packet_handle,
+        ffi_packet_handle_free, ffi_packet_handle_send_task, ffi_run_interactive_free,
+        ffi_run_interactive_start, ffi_task_create, ffi_task_result_new, FfiStatus, FfiTaskResult,
+    };
+
+    static TASK_RAN: AtomicUsize = AtomicUsize::new(0);
+
+    extern "C" fn finishing_job() -> FfiTaskResult {
+        TASK_RAN.fetch_add(1, Ordering::SeqCst);
+        // "Fin" is the magic result_type the engine checks for in
+        // handle_result to know it should shut down (thryve_core's engine.rs).
+        //
+        // Must be 'static C-string literals, not `CString::new(...).unwrap()`:
+        // the caller (ffi_task_create's wrapper) reads these pointers via
+        // ffi_result_to_result *after* this function has already returned, so
+        // any CString local to this function's scope would already be dropped
+        // (its buffer freed) by then. ffi_task_result_new's own docs call this
+        // out ("Use static/const strings to avoid lifetime issues") - a
+        // dangling read here is exactly what caused this test to hang: the
+        // engine silently never saw "Fin" and looped forever.
+        ffi_task_result_new(c"Fin".as_ptr(), c"done via FFI".as_ptr(), c"Main".as_ptr())
+    }
+
+    #[test]
+    fn test_full_ffi_run_interactive_lifecycle_processes_task_and_exits() {
+        TASK_RAN.store(0, Ordering::SeqCst);
+
+        // Arrange
+        let config = ffi_config_default();
+        let ctx = ffi_ctx_create(config);
+        let pkt = ffi_ctx_get_packet_handle(ctx);
+        assert!(!pkt.is_null(), "packet handle should not be null");
+
+        // Act - start the engine on a background thread. This consumes `ctx`;
+        // it must NOT be freed separately afterward (see the fixed doc comment
+        // on ffi_run_interactive_start).
+        //
+        // ffi_run_interactive_start spawns run_interactive's thread under the
+        // hood, which calls init_panic_hook() - a process-wide hook with no
+        // test-scoping that calls std::process::exit(1) on ANY panic anywhere
+        // in this process (see engine_lifecycle.rs for the same note). Left
+        // in place, it silently turns every #[should_panic] test that runs
+        // afterward into a hard process crash instead of a caught unwind.
+        // Save and restore it around the engine's lifetime to keep that
+        // side effect contained.
+        let prev_hook = std::panic::take_hook();
+
+        let run_handle = ffi_run_interactive_start(ctx);
+        assert!(!run_handle.is_null(), "ffi_run_interactive_start should return a handle");
+
+        let task = ffi_task_create(CString::new("FfiShutdown").unwrap().as_ptr(), 0, finishing_job);
+        assert!(!task.is_null(), "task should not be null");
+
+        let send_status = ffi_packet_handle_send_task(pkt, task);
+        assert_eq!(send_status, FfiStatus::Ok);
+
+        // Assert - a successful join proves the engine actually received and
+        // processed the task through the real FFI boundary and exited on Fin;
+        // if the task were dropped or the engine never drained, this blocks
+        // forever instead of returning.
+        let join_status = ffi_run_interactive_free(run_handle);
+
+        std::panic::set_hook(prev_hook);
+
+        assert_eq!(join_status, FfiStatus::Ok);
+        assert_eq!(TASK_RAN.load(Ordering::SeqCst), 1, "the FFI job should have run exactly once");
+
+        // Cleanup - ctx was consumed by ffi_run_interactive_start above.
+        ffi_packet_handle_free(pkt);
+        ffi_config_free(config);
+    }
+}

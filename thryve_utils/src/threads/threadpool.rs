@@ -114,10 +114,15 @@ where
         packet_handle: PacketHandle,
         res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
     ) -> Self {
+        // Adopt the queue's own shutdown flag rather than allocating a
+        // separate one -- see Queue::exit_flag's doc comment for why two
+        // independent flags here is a shutdown race waiting to happen.
+        let pool_exit_flag = queue.exit_flag();
+
         Self {
             num_workers,
             workers: Vec::new(),
-            pool_exit_flag: Arc::new(AtomicBool::new(false)),
+            pool_exit_flag,
             pool_pause_flag: Arc::new(AtomicBool::new(false)),
             main_queue: Arc::new(queue),
             res_tx: res_tx,
@@ -176,6 +181,17 @@ where
                         }
 
                         let obj = queue.pop();
+
+                        // pop() can wake here because the queue was finalized
+                        // while this thread was blocked inside it, in which
+                        // case it returns a sentinel value rather than a real
+                        // task -- recheck before treating it as real work.
+                        if exit_flag.load(Ordering::SeqCst) == true {
+                            let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
+                            tx.send_notification(notif);
+                            break;
+                        }
+
                         tl_set_current_task_fingerprint(obj.get_callsite().this_callsite_fingerprint);
 
                         if let Some(res_container) = obj.process().take() {

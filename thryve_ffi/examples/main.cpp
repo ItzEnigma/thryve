@@ -25,7 +25,7 @@ extern "C" void my_plugin_cleanup(const void* core_ptr) {
 // Plugin entry point — called when the plugin's task is executed
 extern "C" FfiTaskResult my_plugin_entry_point(void) {
     std::cout << "Plugin entry point called" << std::endl;
-    
+
     FfiTaskResult result = {0};  // has_chain = 0, chain_task = NULL
     // Execute plugin logic here
     return result;
@@ -43,7 +43,7 @@ extern "C" void my_observer_cleanup(const void* core_ptr) {
 // Observer job function — called when the observer runs
 extern "C" void my_observer_job(FfiObserver observer) {
     std::cout << "Observer job called" << std::endl;
-    
+
     // IMPORTANT: The observer parameter is an Arc<Observer> clone.
     // You must drop it when done to prevent memory leaks.
     // Use the FFI free function or manually drop the Arc.
@@ -56,9 +56,18 @@ extern "C" void my_observer_job(FfiObserver observer) {
 
 extern "C" FfiTaskResult my_task_job(void) {
     std::cout << "Task job called" << std::endl;
-    
+
     FfiTaskResult result = {0};
     return result;
+}
+
+// Shutdown task job — returning a "Fin" result_type is what tells the engine
+// to finalize and set its exit flag. There is no separate "stop" FFI call;
+// submitting a task like this is the only way to make the engine loop exit,
+// which in turn is what lets ffi_run_interactive_free's join() return.
+extern "C" FfiTaskResult shutdown_task_job(void) {
+    std::cout << "Shutdown task job called" << std::endl;
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
 }
 
 // ============================================================================
@@ -76,24 +85,27 @@ int main() {
     }
     std::cout << "Config created" << std::endl;
 
-    // 2. Create PacketHandle from configuration (required for plugins/observers)
-    FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-    if (!packet_handle) {
-        std::cerr << "Failed to create packet handle" << std::endl;
-        ffi_config_free(config);
-        return 1;
-    }
-    std::cout << "PacketHandle created" << std::endl;
-
-    // 3. Create context from configuration
+    // 2. Create context from configuration
     FfiCtx ctx = ffi_ctx_create(config);
     if (!ctx) {
         std::cerr << "Failed to create context" << std::endl;
-        ffi_packet_handle_free(packet_handle);
         ffi_config_free(config);
         return 1;
     }
     std::cout << "Context created" << std::endl;
+
+    // 3. Get the engine's connected packet handle from ctx.
+    // Do NOT use a standalone packet handle here — it would not be wired to
+    // this ctx's engine, and any task/notification sent through it would be
+    // silently dropped once the engine starts running.
+    FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+    if (!packet_handle) {
+        std::cerr << "Failed to get packet handle" << std::endl;
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+        return 1;
+    }
+    std::cout << "PacketHandle created" << std::endl;
 
     // 4. Create a plugin
     FfiPlugin plugin = ffi_plugin_create(
@@ -104,7 +116,7 @@ int main() {
         my_plugin_cleanup,    // clean_up callback
         my_plugin_entry_point // entry_point callback
     );
-    
+
     if (!plugin) {
         std::cerr << "Failed to create plugin" << std::endl;
         ffi_packet_handle_free(packet_handle);
@@ -135,12 +147,12 @@ int main() {
         my_observer_cleanup,  // clean_up callback
         my_observer_job       // obs_job callback
     );
-    
+
     if (!observer) {
         std::cerr << "Failed to create observer" << std::endl;
     } else {
         std::cout << "Observer created" << std::endl;
-        
+
         // Add observer to context
         status = ffi_ctx_add_observer(ctx, observer);
         if (status != FfiStatus_Ok) {
@@ -156,40 +168,52 @@ int main() {
         0,                    // priority
         my_task_job           // job callback
     );
-    
+
     if (!task) {
         std::cerr << "Failed to create task" << std::endl;
     } else {
         std::cout << "Task created" << std::endl;
-        
-        // Send the task to the context
+
+        // Send the task to the context. ffi_ctx_send_task takes ownership of
+        // task — do NOT call ffi_task_free on it afterward, that would be a
+        // double-free.
         status = ffi_ctx_send_task(ctx, task);
         if (status != FfiStatus_Ok) {
             std::cerr << "Failed to send task: " << status << std::endl;
         } else {
             std::cout << "Task sent to context" << std::endl;
         }
-        
-        ffi_task_free(task);
     }
 
-    // 8. Start the engine (interactive mode)
+    // 8. Start the engine (interactive mode). This consumes ctx — after this
+    // call, ctx is no longer valid and must never be freed or otherwise used.
+    // packet_handle remains our only way to feed the now-running engine.
     std::cout << "\nStarting interactive engine..." << std::endl;
     std::cout << "Press Enter to stop..." << std::endl;
-    
+
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
         // Wait for user input to stop
         std::cin.get();
-        
-        // Stop the engine
+
+        // Submit a shutdown task so the engine actually finalizes and exits
+        // its loop. Without this, ffi_run_interactive_free would block
+        // forever waiting for a thread that never stops running.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(packet_handle, shutdown_task);
+        }
+
+        // Now safe to call — blocks only until the engine thread, having
+        // processed the shutdown task, returns.
         ffi_run_interactive_free(handle);
     }
 
     // 9. Cleanup
-    // Note: plugin and observer are owned by ctx, so don't free them
+    // Note: plugin and observer are owned by ctx, so don't free them.
+    // ctx itself was already consumed by ffi_run_interactive_start above —
+    // do NOT call ffi_ctx_free(ctx) here, that would be a double-free.
     ffi_packet_handle_free(packet_handle);
-    ffi_ctx_free(ctx);
     ffi_config_free(config);
 
     std::cout << "\n=== Example finished ===" << std::endl;

@@ -195,6 +195,16 @@ impl LoggerObserver {
             // calling the `handle_log` method.
             let notif = observer.obs_queue.pop();
 
+            // pop() can wake here because the queue was finalized while this
+            // thread was blocked inside it, in which case it returns a
+            // sentinel value rather than a real notification -- recheck
+            // before handing it to handle_log (which expects a real Log).
+            if observer.exit_flag.load(Ordering::SeqCst) == true {
+                let notif = Log::log("Logger Obs Thread Exited...".to_string(), "Main");
+                observer.obs_queue.push(notif);
+                return;
+            }
+
             self.handle_log(notif);
         }
     }

@@ -377,6 +377,7 @@ pub mod panic_hook{
             
             // Also print to stderr (for non-service mode debugging)
             eprintln!("[PANIC] {}: {} at {}", timestamp.format("%Y-%m-%d %H:%M:%S%.6f"), message, location);
+            let _ = std::io::stderr().flush();
             std::process::exit(1);
         }));
     }

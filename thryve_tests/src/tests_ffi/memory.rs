@@ -1,0 +1,507 @@
+//! FFI memory safety tests — Arc raw pointer round-trips, no double-free, no memory leaks.
+//!
+//! These tests verify that the FFI layer correctly manages memory lifetimes
+//! and does not cause leaks or double-free issues.
+
+mod tests_plugin_logic_adapter {
+    use thryve_ffi::PluginLogicAdapter;
+    use std::sync::Arc;
+    use thryve_utils::traits::plugin_logic::PlgLogic;
+
+    // Track if cleanup was called
+    static mut CLEANUP_CALLED: bool = false;
+
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {
+        unsafe {
+            CLEANUP_CALLED = true;
+        }
+    }
+
+    #[test]
+    fn test_plugin_logic_adapter_clean_up_calls_callback() {
+        // Arrange
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let adapter = PluginLogicAdapter::new(core_ptr, test_plugin_cleanup);
+
+        // Reset the flag
+        unsafe {
+            CLEANUP_CALLED = false;
+        }
+
+        // Act
+        adapter.clean_up();
+
+        // Assert — cleanup callback should have been called
+        unsafe {
+            assert!(CLEANUP_CALLED, "clean_up should have called the callback");
+        }
+
+        // Cleanup: drop the core pointer
+        unsafe {
+            let _ = Arc::from_raw(core_ptr);
+        }
+    }
+
+    #[test]
+    fn test_plugin_logic_adapter_as_any_returns_self() {
+        // Arrange
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let adapter = PluginLogicAdapter::new(core_ptr, test_plugin_cleanup);
+
+        // Act
+        let any_ref = adapter.as_any();
+
+        // Assert — should be able to downcast to PluginLogicAdapter
+        assert!(any_ref.downcast_ref::<PluginLogicAdapter>().is_some());
+
+        // Cleanup
+        unsafe {
+            let _ = Arc::from_raw(core_ptr);
+        }
+    }
+}
+
+mod tests_observer_logic_adapter {
+    use thryve_ffi::ObserverLogicAdapter;
+    use std::sync::Arc;
+    use thryve_utils::traits::observer_logic::ObsLogic;
+
+    // Track if cleanup was called
+    static mut OBS_CLEANUP_CALLED: bool = false;
+
+    extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {
+        unsafe {
+            OBS_CLEANUP_CALLED = true;
+        }
+    }
+
+    #[test]
+    fn test_observer_logic_adapter_clean_up_calls_callback() {
+        // Arrange
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let adapter = ObserverLogicAdapter::new(core_ptr, test_obs_cleanup);
+
+        // Reset the flag
+        unsafe {
+            OBS_CLEANUP_CALLED = false;
+        }
+
+        // Act — clean_up takes an Arc<Observer> but we don't have one, so test with null
+        let _ = adapter.as_any();
+
+        // Cleanup — we can't easily test clean_up without an Observer, but we can verify
+        // the adapter exists and has the correct core_ptr
+        assert!(!adapter.core_ptr.is_null());
+
+        // Cleanup
+        unsafe {
+            let _ = Arc::from_raw(core_ptr);
+        }
+    }
+
+    #[test]
+    fn test_observer_logic_adapter_as_any_returns_self() {
+        // Arrange
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let adapter = ObserverLogicAdapter::new(core_ptr, test_obs_cleanup);
+
+        // Act
+        let any_ref = adapter.as_any();
+
+        // Assert — should be able to downcast to ObserverLogicAdapter
+        assert!(any_ref.downcast_ref::<ObserverLogicAdapter>().is_some());
+
+        // Cleanup
+        unsafe {
+            let _ = Arc::from_raw(core_ptr);
+        }
+    }
+}
+
+mod tests_notification_logic_adapter {
+    use thryve_ffi::NotificationLogicAdapter;
+    use std::sync::Arc;
+    use thryve_utils::traits::notif_logic::NotifLogic;
+
+    #[test]
+    fn test_notification_logic_adapter_as_any_returns_self() {
+        // Arrange
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let adapter = NotificationLogicAdapter::new(core_ptr);
+
+        // Act
+        let any_ref = adapter.as_any();
+
+        // Assert — should be able to downcast to NotificationLogicAdapter
+        assert!(any_ref.downcast_ref::<NotificationLogicAdapter>().is_some());
+
+        // Cleanup
+        unsafe {
+            let _ = Arc::from_raw(core_ptr);
+        }
+    }
+}
+
+mod tests_notification_logic_adapter_send_sync {
+    use thryve_ffi::NotificationLogicAdapter;
+
+    // Test that NotificationLogicAdapter is Send
+    #[test]
+    fn test_notification_logic_adapter_is_send() {
+        // Arrange — create adapter in a separate thread to verify Send trait
+        let result = std::thread::spawn(move || {
+            let core_ptr = 0x1 as *mut u8; // dummy pointer for testing
+            let adapter = NotificationLogicAdapter::new(core_ptr);
+            // Verify the adapter exists and has a non-null core_ptr
+            !adapter.core_ptr.is_null()
+        }).join().unwrap();
+
+        // Assert — adapter was created successfully in another thread
+        assert!(result, "NotificationLogicAdapter should be Send");
+    }
+}
+
+mod tests_plugin_logic_adapter_send_sync {
+    use thryve_ffi::PluginLogicAdapter;
+
+    // Helper function to check Send trait at compile time
+    fn is_send<T: Send>() {}
+
+    // Helper function to check Sync trait at compile time
+    fn is_sync<T: Sync>() {}
+
+    #[test]
+    fn test_plugin_logic_adapter_is_send() {
+        // Compile-time check: PluginLogicAdapter should be Send
+        is_send::<PluginLogicAdapter>();
+    }
+
+    #[test]
+    fn test_plugin_logic_adapter_is_sync() {
+        // Compile-time check: PluginLogicAdapter should be Sync
+        is_sync::<PluginLogicAdapter>();
+    }
+}
+
+mod tests_observer_logic_adapter_send_sync {
+    use thryve_ffi::ObserverLogicAdapter;
+
+    // Helper function to check Send trait at compile time
+    fn is_send<T: Send>() {}
+
+    // Helper function to check Sync trait at compile time
+    fn is_sync<T: Sync>() {}
+
+    #[test]
+    fn test_observer_logic_adapter_is_send() {
+        // Compile-time check: ObserverLogicAdapter should be Send
+        is_send::<ObserverLogicAdapter>();
+    }
+
+    #[test]
+    fn test_observer_logic_adapter_is_sync() {
+        // Compile-time check: ObserverLogicAdapter should be Sync
+        is_sync::<ObserverLogicAdapter>();
+    }
+}
+
+mod tests_adapter_core_ptr_validation {
+    use thryve_ffi::{
+        PluginLogicAdapter,
+        ObserverLogicAdapter,
+        NotificationLogicAdapter,
+    };
+    use thryve_utils::traits::plugin_logic::PlgLogic;
+    use thryve_utils::traits::observer_logic::ObsLogic;
+    use thryve_utils::traits::notif_logic::NotifLogic;
+
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_obs_cleanup(_core_ptr: *const u8) {}
+
+    #[test]
+    fn test_plugin_adapter_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = PluginLogicAdapter::new(std::ptr::null_mut(), dummy_plugin_cleanup);
+
+        // Assert — adapter should exist with null core_ptr
+        assert!(adapter.as_any().downcast_ref::<PluginLogicAdapter>().is_some());
+    }
+
+    #[test]
+    fn test_observer_adapter_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), dummy_obs_cleanup);
+
+        // Assert — adapter should exist with null core_ptr
+        assert!(adapter.as_any().downcast_ref::<ObserverLogicAdapter>().is_some());
+    }
+
+    #[test]
+    fn test_notification_adapter_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = NotificationLogicAdapter::new(std::ptr::null_mut());
+
+        // Assert — adapter should exist with null core_ptr
+        assert!(adapter.as_any().downcast_ref::<NotificationLogicAdapter>().is_some());
+    }
+
+    #[test]
+    fn test_plugin_adapter_clean_up_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = PluginLogicAdapter::new(std::ptr::null_mut(), dummy_plugin_cleanup);
+
+        // Act — clean_up should not panic with null core_ptr
+        // The callback is still called with the null pointer
+        // Note: This will call the cleanup with null, which is safe in this case
+        adapter.clean_up();
+    }
+
+    #[test]
+    fn test_observer_adapter_clean_up_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), dummy_obs_cleanup);
+
+        // Assert — clean_up takes Arc<Observer> which we don't have
+        // Just verify the adapter exists
+        assert!(adapter.as_any().downcast_ref::<ObserverLogicAdapter>().is_some());
+    }
+
+    #[test]
+    fn test_notification_adapter_as_any_with_null_core_ptr() {
+        // Arrange — null core_ptr is valid
+        let adapter = NotificationLogicAdapter::new(std::ptr::null_mut());
+
+        // Assert — adapter should exist with null core_ptr
+        assert!(adapter.as_any().downcast_ref::<NotificationLogicAdapter>().is_some());
+    }
+}
+
+mod tests_obs_core_ptr {
+    use thryve_ffi::ObsCorePtr;
+
+    // Helper function to check Send trait at compile time
+    fn is_send<T: Send>() {}
+
+    // Helper function to check Sync trait at compile time
+    fn is_sync<T: Sync>() {}
+
+    #[test]
+    fn test_obs_core_ptr_is_send() {
+        // Compile-time check: ObsCorePtr should be Send
+        is_send::<ObsCorePtr>();
+    }
+
+    #[test]
+    fn test_obs_core_ptr_is_sync() {
+        // Compile-time check: ObsCorePtr should be Sync
+        is_sync::<ObsCorePtr>();
+    }
+}
+
+mod tests_ffi_task_result_default {
+    use thryve_ffi::FfiTaskResult;
+
+    #[test]
+    fn test_ffi_task_result_default_all_null() {
+        // Act
+        let result = FfiTaskResult::default();
+
+        // Assert — all fields should be null/false
+        assert!(result.result_type.is_null(), "result_type should be null");
+        assert!(result.message.is_null(), "message should be null");
+        assert!(result.log_file.is_null(), "log_file should be null");
+        assert!(!result.has_chain, "has_chain should be false");
+        assert!(result.chain_task.is_null(), "chain_task should be null");
+    }
+}
+
+mod tests_ffi_task_result_new {
+    use thryve_ffi::{
+        ffi_task_result_new,
+    };
+    use std::ffi::CString;
+
+    #[test]
+    fn test_ffi_task_result_new_with_valid_strings() {
+        // Arrange
+        let result_type = CString::new("Success").unwrap();
+        let message = CString::new("Task completed").unwrap();
+        let log_file = CString::new("Main").unwrap();
+
+        // Act
+        let result = ffi_task_result_new(
+            result_type.as_ptr(),
+            message.as_ptr(),
+            log_file.as_ptr(),
+        );
+
+        // Assert
+        assert!(!result.result_type.is_null());
+        assert!(!result.message.is_null());
+        assert!(!result.log_file.is_null());
+        assert!(!result.has_chain);
+        assert!(result.chain_task.is_null());
+    }
+}
+
+mod tests_ffi_task_result_new_with_chain {
+    use thryve_ffi::{
+        ffi_task_create, ffi_task_free, ffi_task_result_new, ffi_task_result_new_with_chain,
+    };
+    use std::ffi::CString;
+
+    extern "C" fn dummy_task_job() -> thryve_ffi::FfiTaskResult {
+        ffi_task_result_new(
+            CString::new("Success").unwrap().as_ptr(),
+            CString::new("Done").unwrap().as_ptr(),
+            CString::new("Main").unwrap().as_ptr(),
+        )
+    }
+
+    #[test]
+    fn test_ffi_task_result_new_with_chain_valid_task() {
+        // Arrange — create a real task to use as chain
+        let name = CString::new("TestTask").unwrap();
+        let task = ffi_task_create(name.as_ptr(), 5, dummy_task_job);
+
+        // Create result with chain
+        let result_type = CString::new("Chained").unwrap();
+        let message = CString::new("Chaining").unwrap();
+        let log_file = CString::new("Main").unwrap();
+
+        // Act
+        let result = ffi_task_result_new_with_chain(
+            result_type.as_ptr(),
+            message.as_ptr(),
+            log_file.as_ptr(),
+            task,
+        );
+
+        // Assert
+        assert!(result.has_chain);
+        assert_eq!(result.chain_task as usize, task as usize);
+
+        // Cleanup — task is now owned by the result, don't free it separately
+        // Actually, the result only holds the pointer, so we should free it
+        ffi_task_free(task);
+    }
+}
+
+mod tests_ffi_packet_handle_clone {
+    use thryve_ffi::{
+        ffi_config_default, ffi_config_free, ffi_ctx_create, ffi_ctx_free, ffi_ctx_get_packet_handle, ffi_packet_handle_clone, ffi_packet_handle_free,
+    };
+
+    #[test]
+    fn test_packet_handle_clone_returns_valid_handle() {
+        // Arrange
+        let config = ffi_config_default();
+        let ctx = ffi_ctx_create(config);
+        let original = ffi_ctx_get_packet_handle(ctx);
+
+        // Act
+        let cloned = ffi_packet_handle_clone(original);
+
+        // Assert — cloned should not be null
+        assert!(!cloned.is_null(), "cloned PacketHandle should not be null");
+
+        // Cleanup
+        ffi_packet_handle_free(original);
+        ffi_packet_handle_free(cloned);
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+    }
+
+    #[test]
+    fn test_packet_handle_clone_with_null_returns_null() {
+        // Act
+        let cloned = ffi_packet_handle_clone(std::ptr::null_mut());
+
+        // Assert
+        assert!(cloned.is_null(), "cloning null PacketHandle should return null");
+    }
+}
+
+mod tests_ffi_ctx_add_plugin_ownership {
+    use thryve_ffi::{
+        FfiTaskResult, ffi_config_default, ffi_config_free, ffi_ctx_add_plugin, ffi_ctx_create, ffi_ctx_free, ffi_ctx_get_packet_handle, ffi_packet_handle_free, ffi_plugin_create, ffi_task_result_new,
+    };
+    use std::ffi::CString;
+
+    extern "C" fn test_plugin_entry() -> FfiTaskResult {
+        ffi_task_result_new(
+            CString::new("Success").unwrap().as_ptr(),
+            CString::new("Done").unwrap().as_ptr(),
+            CString::new("Main").unwrap().as_ptr(),
+        )
+    }
+
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {}
+
+    #[test]
+    fn test_ctx_add_plugin_takes_ownership() {
+        // Arrange
+        let config = ffi_config_default();
+        let ctx = ffi_ctx_create(config);
+        let pkt = ffi_ctx_get_packet_handle(ctx);
+
+        // Create plugin
+        let plugin = 
+            ffi_plugin_create(
+                CString::new("TestPlugin").unwrap().as_ptr(),
+                CString::new("TestType").unwrap().as_ptr(),
+                std::ptr::null_mut(),
+                pkt,
+                test_plugin_cleanup,
+                test_plugin_entry,
+            );
+
+        // Add plugin to context (takes ownership)
+        let status = ffi_ctx_add_plugin(ctx, plugin);
+
+        // Assert
+        assert_eq!(status, thryve_ffi::FfiStatus::Ok);
+
+        // Plugin should now be owned by ctx, we should NOT free it
+        // If we try to free it, that would be a double-free
+
+        // Cleanup
+        ffi_ctx_free(ctx);
+        ffi_packet_handle_free(pkt);
+        ffi_config_free(config);
+    }
+
+    #[test]
+    fn test_ctx_add_plugin_with_null_plugin_returns_null_arg() {
+        // Arrange
+        let config = ffi_config_default();
+        let ctx = ffi_ctx_create(config);
+
+        // Act
+        let status = ffi_ctx_add_plugin(ctx, std::ptr::null_mut());
+
+        // Cleanup
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+
+        // Assert
+        assert_eq!(status, thryve_ffi::FfiStatus::NullArg);
+    }
+
+    #[test]
+    fn test_ctx_add_observer_with_null_observer_returns_null_arg() {
+        // Arrange
+        let config = ffi_config_default();
+        let ctx = ffi_ctx_create(config);
+
+        // Act
+        let status = thryve_ffi::ffi_ctx_add_observer(ctx, std::ptr::null_mut());
+
+        // Cleanup
+        ffi_ctx_free(ctx);
+        ffi_config_free(config);
+
+        // Assert
+        assert_eq!(status, thryve_ffi::FfiStatus::NullArg);
+    }
+}

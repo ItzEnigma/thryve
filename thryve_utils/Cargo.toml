@@ -2,7 +2,7 @@
     name = "thryve_utils"
     version = "0.1.0"
     edition = "2024"
-    publish = false # Prevents accidental cargo publish commands
+    publish = false # Explicitly list everything Cargo MUST include in the package
 
 [dependencies]
 

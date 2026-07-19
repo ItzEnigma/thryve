@@ -1,10 +1,14 @@
 .vscode
+.cargo
+.claude
+.roo
 
 todo
 log
 plugins
 target
 Cargo.lock
+CLAUDE.md
 
 mermaid
 thryve_utils/src/debug_logging.rs

@@ -225,6 +225,49 @@ use super::*;
             }
 
             #[test]
+            fn test_task_job_from_boxed_fnonce() {
+                // Arrange
+                let boxed: Box<dyn FnOnce() -> thryve_utils::res::Result + Send + Sync> =
+                    Box::new(|| thryve_utils::res::Result::new("FromBoxed", "Done".to_string(), "Main"));
+
+                // Act
+                let job: TaskJob = TaskJob::from(boxed);
+                let result = job.call_once();
+
+                // Assert
+                assert_eq!(result.result_type.inner(), "FromBoxed");
+                assert_eq!(result.message, "Done");
+            }
+
+            #[test]
+            fn test_obs_job_from_boxed_fn() {
+                // Arrange
+                let executed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let executed_clone = Arc::clone(&executed);
+                let boxed: Box<dyn Fn(Arc<thryve_utils::bases::observer::Observer>) -> () + Send + Sync> =
+                    Box::new(move |_observer| {
+                        executed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    });
+
+                // Act
+                let job: ObsJob = ObsJob::from(boxed);
+                let (task_tx, _) = crossbeam::channel::unbounded::<thryve_utils::packets::task::Task>();
+                let (notif_tx, _) = crossbeam::channel::unbounded::<thryve_utils::bases::notif::Notif>();
+                let packet_handle = thryve_utils::packets::packet_handle::PacketHandle::new(task_tx, notif_tx, false);
+                let observer = Arc::new(thryve_utils::bases::observer::Observer::new(
+                    "TestObserver",
+                    "TestType",
+                    Arc::new(TestObsLogic),
+                    job,
+                    packet_handle,
+                ));
+                observer.run_loop(observer.clone());
+
+                // Assert
+                assert!(executed.load(std::sync::atomic::Ordering::SeqCst));
+            }
+
+            #[test]
             fn test_obs_job_execution() {
                 // Arrange
                 let executed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -430,16 +473,86 @@ use super::*;
 
         // Tests for panic_hook module
         mod panic_hook_tests {
+            use thryve_utils::extras::panic_hook::init_panic_hook;
+            use thryve_utils::cfg::dir_data::DirData;
+            use thryve_utils::extras::dir_paths::DirName;
+            use std::collections::HashMap;
+            use std::path::PathBuf;
 
-            // Note: init_panic_hook replaces the global panic hook
-            // and causes process exit on panic, making it hard to test
-            // We can at least verify it compiles and doesn't crash on init
-            
+            // init_panic_hook() installs a process-global panic hook that
+            // calls std::process::exit(1) on any panic -- calling it
+            // in-process here would corrupt every other test sharing this
+            // test binary (the same class of bug fixed for the FFI
+            // service_run test). Instead this test re-invokes itself in a
+            // fresh child process via this env var as a marker, so the
+            // hook's real behavior (file write + exit code) only ever runs
+            // in an isolated, disposable process.
+            const CHILD_LOG_DIR_ENV_VAR: &str = "THRYVE_PANIC_HOOK_TEST_LOG_DIR";
+
             #[test]
             fn test_panic_hook_module_compiles() {
                 // This test just verifies the panic_hook module compiles
                 // Actual panic hook testing would require process-level testing
                 assert!(true);
+            }
+
+            #[test]
+            fn test_panic_hook_writes_to_error_log_and_exits_with_code_1() {
+                if let Ok(log_dir) = std::env::var(CHILD_LOG_DIR_ENV_VAR) {
+                    // Child mode: set up a log directory the same way
+                    // init_directories() would, install the real panic
+                    // hook, then panic to trigger it.
+                    let log_dir = PathBuf::from(log_dir);
+                    std::fs::create_dir_all(&log_dir).expect("failed to create child log dir");
+                    let mut dir_data = DirData::new(log_dir.clone(), HashMap::new());
+                    dir_data.set_path(DirName::Log, log_dir);
+
+                    init_panic_hook();
+                    panic!("triggered from panic_hook subprocess test");
+                }
+
+                // Parent mode: spawn a child process that runs this exact
+                // test with the marker env var set, then inspect what the
+                // hook produced from the outside.
+                let log_dir = std::env::temp_dir().join(format!("thryve_panic_hook_test_{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&log_dir);
+                std::fs::create_dir_all(&log_dir).expect("failed to create parent-side temp dir");
+
+                let exe = std::env::current_exe().expect("failed to resolve current test executable");
+                let output = std::process::Command::new(&exe)
+                    .arg("--exact")
+                    .arg("tests_utils::misc::tests_extras::tests::panic_hook_tests::test_panic_hook_writes_to_error_log_and_exits_with_code_1")
+                    // Without this, libtest captures eprintln! output into a
+                    // per-test buffer that's only flushed after the test fn
+                    // returns normally -- but the panic hook calls
+                    // process::exit(1) immediately, so that buffer would
+                    // never reach the child's real stderr for us to inspect.
+                    .arg("--nocapture")
+                    .env(CHILD_LOG_DIR_ENV_VAR, &log_dir)
+                    .output()
+                    .expect("failed to spawn child test process");
+
+                // Assert - the panic hook calls std::process::exit(1)
+                // synchronously from within the hook itself, so the child
+                // never returns to the test harness at all; it just exits.
+                assert_eq!(
+                    output.status.code(),
+                    Some(1),
+                    "child process should exit with code 1 from the panic hook; stderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(stderr.contains("[PANIC]"), "stderr should contain the panic hook's message: {}", stderr);
+                assert!(stderr.contains("triggered from panic_hook subprocess test"), "stderr: {}", stderr);
+
+                let error_log = log_dir.join("Error.log");
+                assert!(error_log.exists(), "panic hook should have written Error.log");
+                let contents = std::fs::read_to_string(&error_log).expect("Error.log should be readable");
+                assert!(contents.contains("[PANIC]"));
+                assert!(contents.contains("triggered from panic_hook subprocess test"));
+
+                let _ = std::fs::remove_dir_all(&log_dir);
             }
         }
 

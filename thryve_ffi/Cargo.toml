@@ -2,12 +2,10 @@
 name = "thryve_ffi"
 version = "0.1.0"
 edition = "2024"
-publish = false # Prevents accidental cargo publish commands
 
 [dependencies]
-thryve = { path = "../thryve" }
-thryve_utils = { path = "../thryve_utils" }
-thryve_run = { path = "../thryve_run" }
+thryve_utils = { path = "../thryve_utils" , version = "0.1.0" }
+thryve_run = { path = "../thryve_run" , version = "0.1.0" }
 crossbeam = { workspace = true }
 
 [build-dependencies]
@@ -17,4 +15,4 @@ cbindgen = "0.29"
 cbindgen = "0.29"
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]

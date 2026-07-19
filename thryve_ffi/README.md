@@ -46,7 +46,7 @@ The FFI layer handles:
 
 ## Quick Start
 
-Here's a minimal C example showing how to use the FFI layer. Note that a `PacketHandle` is required for plugin creation:
+Here's a minimal C example showing how to use the FFI layer. Note that a `PacketHandle` (obtained from `ctx`) is required for plugin creation:
 
 ```c
 #include "thryve.h"
@@ -68,22 +68,28 @@ FfiTaskResult my_plugin_entry_point(void) {
     return result;
 }
 
+// Shutdown task job — a "Fin" result_type is what tells the engine to
+// finalize and exit its loop. There is no separate "stop" FFI call.
+FfiTaskResult shutdown_task_job(void) {
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
+}
+
 int main(void) {
     // 1. Create configuration
     FfiConfig config = ffi_config_default();
     if (!config) return 1;
 
-    // 2. Create PacketHandle from configuration
-    FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-    if (!packet_handle) {
+    // 2. Create context from configuration
+    FfiCtx ctx = ffi_ctx_create(config);
+    if (!ctx) {
         ffi_config_free(config);
         return 1;
     }
 
-    // 3. Create context from configuration
-    FfiCtx ctx = ffi_ctx_create(config);
-    if (!ctx) {
-        ffi_packet_handle_free(packet_handle);
+    // 3. Get the engine's connected PacketHandle from ctx
+    FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+    if (!packet_handle) {
+        ffi_ctx_free(ctx);
         ffi_config_free(config);
         return 1;
     }
@@ -101,15 +107,21 @@ int main(void) {
     // 5. Add plugin to context (takes ownership of the plugin)
     ffi_ctx_add_plugin(ctx, plugin);
 
-    // 6. Start the engine
+    // 6. Start the engine. This consumes ctx — never touch or free ctx again.
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
+        // Submit a shutdown task so the engine finalizes and its loop
+        // exits — without this, ffi_run_interactive_free would hang forever.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(packet_handle, shutdown_task);
+        }
         ffi_run_interactive_free(handle);
     }
 
-    // 7. Cleanup - plugin is already in ctx, so don't free it again
+    // 7. Cleanup - plugin is already in ctx, and ctx was already consumed by
+    // ffi_run_interactive_start, so don't free either of them again
     ffi_packet_handle_free(packet_handle);
-    ffi_ctx_free(ctx);
     ffi_config_free(config);
 
     return 0;
@@ -135,6 +147,15 @@ All opaque pointers are `*mut u8` — foreign languages should treat them as opa
 | `FfiPacketHandle` | `*mut PacketHandle` | Packet handle for sending tasks/notifications |
 | `FfiTask` | `*mut Task` | Task instance |
 | `FfiNotif` | `*mut Notif` | Notification instance |
+
+`ffi_service_create` doesn't return a bare opaque pointer — it returns a small `#[repr(C)]` struct pairing a service with its matching context:
+
+```c
+typedef struct {
+    FfiService service;
+    FfiCtx ctx;
+} FfiServiceCreateResult;
+```
 
 ### Status Codes
 
@@ -244,30 +265,21 @@ The `FfiObsJob` callback receives a raw pointer to an `Arc<Observer>`. The Rust 
 2. Converting to raw pointer: `Arc::into_raw(observer_clone) as FfiObserver`
 3. Calling the FFI callback with this raw pointer
 
-**The FFI callback must**:
-1. Convert the raw pointer back to an Arc
-2. Run the main loop
-3. Drop the Arc when done
+**The FFI callback must** call `ffi_observer_free()` on the received handle before returning — this is what triggers Rust to reconstruct and drop the `Arc<Observer>` internally. There's no separate "convert back to an Arc" step on the C/C++ side: `Observer` is a Rust-only type, never exposed across the FFI boundary, so nothing to `static_cast` to.
 
 **C++ example**:
 ```cpp
 extern "C" void my_observer_job(FfiObserver obs) {
-    // Convert raw pointer back to Arc<Observer>
-    auto observer = std::shared_ptr<Observer>(
-        static_cast<Observer*>(obs),
-        [](Observer* p) { /* No-op: Arc will be dropped by Rust */ }
-    );
-    
-    // Use the observer
-    while (!observer->exit_flag) {
-        // Process notifications
-    }
-    
-    // Arc is automatically dropped when observer goes out of scope
+    // Do your observer work here using the opaque obs handle if needed
+    // (e.g., pass it to other ffi_* calls) ...
+
+    // Then drop it — this is the "3. Drop the Arc when done" step. Nothing
+    // does this automatically; skipping this call leaks the Observer.
+    ffi_observer_free(obs);
 }
 ```
 
-**Critical**: If the callback crashes or leaks the Arc, the Observer will be leaked.
+**Critical**: If the callback crashes or skips `ffi_observer_free`, the Observer will be leaked.
 
 ### Notification Callbacks
 
@@ -293,7 +305,13 @@ When passing data to Rust functions, ownership may be transferred. Follow these 
 
 4. **Context addition**: After calling `ffi_ctx_add_plugin` or `ffi_ctx_add_observer`, the plugin/observer is moved into the context's vectors. **Do not free it** — the context will clean it up.
 
-5. **PacketHandle**: The PacketHandle pointer is **cloned** inside the Rust side, so the foreign language can continue to use it after passing to plugin/observer creation.
+5. **PacketHandle**: Get it from `ffi_ctx_get_packet_handle(ctx)` — the engine's real, connected handle. It is **cloned** inside the Rust side, so the foreign language can continue to use its copy after passing to plugin/observer creation.
+
+6. **Sending tasks/notifications**: `ffi_ctx_send_task`, `ffi_ctx_send_notification`, `ffi_packet_handle_send_task`, and `ffi_packet_handle_send_notification` all **take ownership** of the task/notification passed in. **Do not** call `ffi_task_free`/`ffi_notification_free` on it afterward.
+
+7. **`ffi_ctx_create` vs `ffi_service_create`**: `ffi_ctx_create(config)` is for **interactive mode** only. Service mode doesn't use it — `ffi_service_create(config)` already returns its own matching `ctx` bundled together with the service (see [`FfiServiceCreateResult`](#types)).
+
+8. **`ffi_run_interactive_start`**: consumes `ctx` unconditionally. After calling it, `ctx` must never be freed or otherwise used again.
 
 ### Ownership Transfer Diagram
 
@@ -333,13 +351,16 @@ Every `create` function has a corresponding `free` function:
 | Create Function | Free Function |
 |-----------------|---------------|
 | `ffi_config_default()` / `ffi_config_from_file()` | `ffi_config_free()` |
-| `ffi_ctx_create()` | `ffi_ctx_free()` |
+| `ffi_ctx_create()` (interactive mode only) | `ffi_ctx_free()` (unless consumed by `ffi_run_interactive_start`) |
 | `ffi_plugin_create()` | `ffi_plugin_free()` |
 | `ffi_observer_create()` | `ffi_observer_free()` |
-| `ffi_task_create()` | `ffi_task_free()` |
-| `ffi_service_create()` | `ffi_service_free()` |
-| `ffi_packet_handle_create()` | `ffi_packet_handle_free()` |
-| `ffi_notification_create()` | `ffi_notification_free()` |
+| `ffi_task_create()` | `ffi_task_free()` (unless already sent via a `*_send_task` call) |
+| `ffi_service_create()` → `.service` | `ffi_service_free()` (unless consumed by `ffi_service_run`) |
+| `ffi_service_create()` → `.ctx` | `ffi_ctx_free()` (unless consumed by `ffi_service_run`) |
+| `ffi_ctx_get_packet_handle()` / `ffi_packet_handle_clone()` | `ffi_packet_handle_free()` |
+| `ffi_notification_create()` | `ffi_notification_free()` (unless already sent via a `*_send_notification` call) |
+
+There is no `ffi_packet_handle_create()` — a standalone packet handle would not be wired to any engine. `ffi_ctx_get_packet_handle(ctx)` is the only way to obtain one.
 
 ---
 
@@ -416,21 +437,23 @@ These files demonstrate how to include the generated headers and link against th
 
 | Function | Description |
 |----------|-------------|
-| `ffi_packet_handle_create(config)` | Creates a PacketHandle from a configuration. Returns `FfiPacketHandle` or NULL. |
 | `ffi_packet_handle_free(handle)` | Frees a PacketHandle instance. Safe to call with NULL. |
 | `ffi_packet_handle_clone(handle)` | Clones a PacketHandle. Returns a new `FfiPacketHandle`. |
+| `ffi_packet_handle_send_task(handle, task)` | Sends a task through the handle. **Takes ownership of `task`.** Returns `FfiStatus`. |
+| `ffi_packet_handle_send_notification(handle, notif)` | Sends a notification through the handle. **Takes ownership of `notif`.** Returns `FfiStatus`. |
 
 ### Ctx Wrappers
 
 | Function | Description |
 |----------|-------------|
-| `ffi_ctx_create(config)` | Creates a context from a configuration. Returns `FfiCtx` or NULL. |
-| `ffi_ctx_free(ctx)` | Frees a context instance. Safe to call with NULL. |
+| `ffi_ctx_create(config)` | Creates a context from a configuration (interactive mode only — service mode gets its ctx from `ffi_service_create`). Returns `FfiCtx` or NULL. |
+| `ffi_ctx_free(ctx)` | Frees a context instance. Safe to call with NULL. Do not call on a `ctx` already consumed by `ffi_run_interactive_start`/`ffi_service_run`. |
+| `ffi_ctx_get_packet_handle(ctx)` | Returns the engine's real, connected `FfiPacketHandle` for this ctx — the only correct way to obtain one. |
 | `ffi_ctx_add_plugin(ctx, plugin)` | Adds a plugin to the context. Returns `FfiStatus`. |
 | `ffi_ctx_add_observer(ctx, observer)` | Adds an observer to the context. Returns `FfiStatus`. |
 | `ffi_ctx_set_logging_file_names(ctx, file_names, count)` | Sets logging file names. `file_names` is an array of null-terminated C strings. |
-| `ffi_ctx_send_task(ctx, task)` | Sends a task to the engine. Returns `FfiStatus`. |
-| `ffi_ctx_send_notification(ctx, notif)` | Sends a notification to the engine. Returns `FfiStatus`. |
+| `ffi_ctx_send_task(ctx, task)` | Sends a task to the engine. **Takes ownership of `task`.** Returns `FfiStatus`. |
+| `ffi_ctx_send_notification(ctx, notif)` | Sends a notification to the engine. **Takes ownership of `notif`.** Returns `FfiStatus`. |
 
 ### Task Wrappers
 
@@ -452,9 +475,9 @@ These files demonstrate how to include the generated headers and link against th
 
 | Function | Description |
 |----------|-------------|
-| `ffi_service_create(config)` | Creates a service instance (for Windows service mode). Returns `FfiService` or NULL. |
-| `ffi_service_run(service, ctx)` | Runs the service (blocking). Returns `FfiStatus`. |
-| `ffi_service_free(service)` | Frees a service instance. Safe to call with NULL. |
+| `ffi_service_create(config)` | Creates a service instance bundled with its matching ctx (for Windows service mode). Returns `FfiServiceCreateResult { service, ctx }` — both NULL on failure. |
+| `ffi_service_run(service, ctx)` | Runs the service (blocking until SCM sends Stop). **Takes ownership of both `service` and `ctx`.** Returns `FfiStatus`. |
+| `ffi_service_free(service)` | Frees a service instance. Safe to call with NULL. Do not call on a `service` already consumed by `ffi_service_run`. |
 
 ### Plugin Wrappers
 
@@ -536,23 +559,30 @@ void my_observer_job(FfiObserver obs) {
     // manage the Arc lifecycle from C code.
 }
 
+// Shutdown task job — a "Fin" result_type is what tells the engine to
+// finalize and exit its loop. There is no separate "stop" FFI call.
+FfiTaskResult shutdown_task_job(void) {
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
+}
+
 // ===== Main =====
 int main(void) {
     // 1. Create configuration
     FfiConfig config = ffi_config_default();
     if (!config) return 1;
 
-    // 2. Create PacketHandle (required for plugin/observer creation)
-    FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-    if (!packet_handle) {
+    // 2. Create context
+    FfiCtx ctx = ffi_ctx_create(config);
+    if (!ctx) {
         ffi_config_free(config);
         return 1;
     }
 
-    // 3. Create context
-    FfiCtx ctx = ffi_ctx_create(config);
-    if (!ctx) {
-        ffi_packet_handle_free(packet_handle);
+    // 3. Get the engine's connected PacketHandle from ctx (required for
+    // plugin/observer creation)
+    FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+    if (!packet_handle) {
+        ffi_ctx_free(ctx);
         ffi_config_free(config);
         return 1;
     }
@@ -583,16 +613,22 @@ int main(void) {
     // 7. Add observer to context (takes ownership)
     ffi_ctx_add_observer(ctx, observer);
 
-    // 8. Start engine
+    // 8. Start engine. This consumes ctx — never touch or free ctx again.
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
+        // Submit a shutdown task so the engine finalizes and its loop
+        // exits — without this, ffi_run_interactive_free would hang forever.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(packet_handle, shutdown_task);
+        }
         ffi_run_interactive_free(handle);
     }
 
     // 9. Cleanup
-    // Plugin and observer are already in ctx, so don't free them here
+    // Plugin and observer are already in ctx, and ctx was already consumed
+    // by ffi_run_interactive_start, so don't free any of them here
     ffi_packet_handle_free(packet_handle);
-    ffi_ctx_free(ctx);
     ffi_config_free(config);
 
     return 0;
@@ -623,18 +659,17 @@ extern "C" void my_observer_cleanup(const void* core_ptr) {
 }
 
 extern "C" void my_observer_job(FfiObserver obs) {
-    // Convert raw pointer back to Arc<Observer>
-    auto observer = std::shared_ptr<Observer>(
-        static_cast<Observer*>(obs),
-        [](Observer* p) { /* No-op: Arc will be dropped by Rust */ }
-    );
-    
-    // Use the observer
-    while (!observer->exit_flag) {
-        // Process notifications
-    }
-    
-    // Arc is automatically dropped when observer goes out of scope
+    // Do your observer work here using the opaque obs handle if needed ...
+
+    // Then drop it — nothing does this automatically; skipping this call
+    // leaks the Observer.
+    ffi_observer_free(obs);
+}
+
+// Shutdown task job — a "Fin" result_type is what tells the engine to
+// finalize and exit its loop. There is no separate "stop" FFI call.
+extern "C" FfiTaskResult shutdown_task_job(void) {
+    return ffi_task_result_new("Fin", "Shutting down", "Main");
 }
 
 // ===== Main =====
@@ -643,17 +678,18 @@ int main(void) {
     FfiConfig config = ffi_config_default();
     if (!config) return 1;
 
-    // 2. Create PacketHandle (required for plugin/observer creation)
-    FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
-    if (!packet_handle) {
+    // 2. Create context
+    FfiCtx ctx = ffi_ctx_create(config);
+    if (!ctx) {
         ffi_config_free(config);
         return 1;
     }
 
-    // 3. Create context
-    FfiCtx ctx = ffi_ctx_create(config);
-    if (!ctx) {
-        ffi_packet_handle_free(packet_handle);
+    // 3. Get the engine's connected PacketHandle from ctx (required for
+    // plugin/observer creation)
+    FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
+    if (!packet_handle) {
+        ffi_ctx_free(ctx);
         ffi_config_free(config);
         return 1;
     }
@@ -684,16 +720,22 @@ int main(void) {
     // 7. Add observer to context (takes ownership)
     ffi_ctx_add_observer(ctx, observer);
 
-    // 8. Start engine
+    // 8. Start engine. This consumes ctx — never touch or free ctx again.
     FfiRunHandle handle = ffi_run_interactive_start(ctx);
     if (handle) {
+        // Submit a shutdown task so the engine finalizes and its loop
+        // exits — without this, ffi_run_interactive_free would hang forever.
+        FfiTask shutdown_task = ffi_task_create("Shutdown", 0, shutdown_task_job);
+        if (shutdown_task) {
+            ffi_packet_handle_send_task(packet_handle, shutdown_task);
+        }
         ffi_run_interactive_free(handle);
     }
 
     // 9. Cleanup
-    // Plugin and observer are already in ctx, so don't free them here
+    // Plugin and observer are already in ctx, and ctx was already consumed
+    // by ffi_run_interactive_start, so don't free any of them here
     ffi_packet_handle_free(packet_handle);
-    ffi_ctx_free(ctx);
     ffi_config_free(config);
 
     return 0;

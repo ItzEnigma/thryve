@@ -2,7 +2,8 @@
     name = "thryve_observers"
     version = "0.1.0"
     edition = "2024"
-    publish = false # Prevents accidental cargo publish commands
+    publish = false
+
 
 [dependencies]
     # Internal Dependencies

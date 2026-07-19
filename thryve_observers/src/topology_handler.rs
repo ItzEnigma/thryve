@@ -180,6 +180,18 @@ impl TopologyHandlerObserver{
 
             let notif = observer.obs_queue.pop();
 
+            // pop() can wake here because the queue was finalized while this
+            // thread was blocked inside it, in which case it returns a
+            // sentinel value rather than a real notification -- recheck
+            // before handing it to handle_entry (which expects a real
+            // TopologyModifier and will panic on anything else).
+            if observer.exit_flag.load(Ordering::SeqCst) {
+                let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
+                observer.tx.send_notification(notif);
+
+                return;
+            }
+
             self.handle_entry(notif);
         }
     }
@@ -266,12 +278,12 @@ impl TopologyHandlerObserver{
 impl TopologyHandlerObserver {
     /// Launches the GUI viewer for topology visualization.
     ///
-    /// Spawns an external process (`topology_test.exe`) that reads
+    /// Spawns an external process (`Topology.exe`) that reads
     /// the exported RON file and displays the topology graph.
     pub fn visualize_gui(&self) {
         if let Some(current_execution_dir) = self.topology_dir.clone().parent(){
             // Path conversion failure is fatal - indicates corrupted path data
-            let command = format!("{}\\topology_test.exe" , current_execution_dir.to_str().expect("Topology directory path contains invalid UTF-8"));
+            let command = format!("{}\\Topology.exe" , current_execution_dir.to_str().expect("Topology directory path contains invalid UTF-8"));
             println!("Command: {}" , command);
             // Stdout flush failure is fatal - indicates corrupted stdout
             std::io::stdout().flush().expect("Failed to flush stdout");
@@ -293,7 +305,7 @@ impl TopologyHandlerObserver {
             // These are non-fatal - we log the error and continue
             if let Some(parent) = self.topology_dir.clone().parent() {
                 if let Some(path_str) = parent.to_str() {
-                    println!("{}\\topology_test.exe" , path_str);
+                    println!("{}\\Topology.exe" , path_str);
                 } else {
                     println!("Topology directory path contains invalid UTF-8");
                 }

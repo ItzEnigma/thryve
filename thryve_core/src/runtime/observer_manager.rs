@@ -150,6 +150,15 @@ impl ObserverManager {
                     }
 
                     let obj = queue.pop();
+
+                    // pop() can wake here because the queue was finalized
+                    // while this thread was blocked inside it, in which case
+                    // it returns a sentinel value rather than a real routed
+                    // notification -- discard it instead of forwarding it.
+                    if exit_flag.load(Ordering::SeqCst) == true {
+                        continue;
+                    }
+
                     // Non-fatal: if target observer not found, skip the notification
                     if let Some(target_obs) = arc_observers.get(&obj.notif_receiver) {
                         target_obs.obs_queue.push(obj);

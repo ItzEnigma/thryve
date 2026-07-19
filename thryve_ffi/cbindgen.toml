@@ -39,6 +39,7 @@ include = [
     "FfiNotif",
     "FfiStatus",
     "FfiTaskResult",
+    "FfiServiceCreateResult",
     "FfiTaskJob",
     "FfiPluginCleanUp",
     "FfiPluginEntryPoint",

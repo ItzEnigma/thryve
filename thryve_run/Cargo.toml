@@ -2,7 +2,8 @@
     name = "thryve_run"
     version = "0.1.0"
     edition = "2024"
-    publish = false # Prevents accidental cargo publish commands
+    publish = false
+
 
 [dependencies]
     thryve_core = { path = "../thryve_core" , version = "0.1.0"}

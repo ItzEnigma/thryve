@@ -231,6 +231,11 @@ impl Engine {
             }
 
             self.handle_result(task_result);
+
+             if self.exit_flag {
+                break;  // finalize() ran inside handle_result() above -- stop
+                        // draining more results into a torn-down observer manager
+            }
         };
 
         received_results

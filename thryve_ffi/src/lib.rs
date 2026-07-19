@@ -47,7 +47,7 @@
 //!
 //! - **`FfiTaskJob`**: A function pointer that takes no arguments and returns a `FfiTaskResult`.
 //!   Used for plugin entry points and task execution.
-//! - **`FfiTaskResult`**: A struct containing:
+//! - **`FfiTaskResult`**: A pub struct containing:
 //!   - `result_type`: A null-terminated string describing the result type (e.g., "Success", "Failed")
 //!   - `message`: A null-terminated string with a human-readable result message
 //!   - `log_file`: A null-terminated string specifying the log file name for the result
@@ -165,11 +165,11 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 
-use thryve::utils::jobs::ObsJob;
-use thryve::utils::jobs::TaskJob;
-use thryve::utils::traits::NotifLogic;
-use thryve::utils::traits::ObsLogic;
-use thryve::utils::traits::PlgLogic;
+use thryve_utils::extras::jobs::ObsJob;
+use thryve_utils::extras::jobs::TaskJob;
+use thryve_utils::traits::notif_logic::NotifLogic;
+use thryve_utils::traits::observer_logic::ObsLogic;
+use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_run::service::service::Thryve;
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
@@ -235,7 +235,7 @@ pub enum FfiStatus {
 
 /// FFI-safe result for task execution.
 ///
-/// This struct represents the result of a task or plugin execution, allowing the
+/// This pub struct represents the result of a task or plugin execution, allowing the
 /// foreign language implementation to communicate the outcome back to the Rust runtime.
 ///
 /// # Fields
@@ -281,11 +281,11 @@ pub enum FfiStatus {
 ///   Do NOT free the chained task manually.
 #[repr(C)]
 pub struct FfiTaskResult {
-    result_type: *const c_char,
-    message: *const c_char,
-    log_file: *const c_char,
-    has_chain: bool,
-    chain_task: FfiTask,
+    pub result_type: *const c_char,
+    pub message: *const c_char,
+    pub log_file: *const c_char,
+    pub has_chain: bool,
+    pub chain_task: FfiTask,
 }
 
 impl Default for FfiTaskResult {
@@ -368,7 +368,7 @@ impl FfiTaskResult {
 
 /// Converts an `FfiTaskResult` to a `res::Result`.
 ///
-/// This function takes the FFI result struct and converts it into a proper
+/// This function takes the FFI result pub struct and converts it into a proper
 /// `res::Result` that the Rust runtime can use. If the result contains a
 /// chained task pointer, that task is taken ownership of and chained
 /// to the result.
@@ -382,7 +382,7 @@ impl FfiTaskResult {
 /// A `res::Result` with the appropriate fields set based on the FFI result.
 /// If `has_chain` is true and `chain_task` is not NULL, the chained task
 /// is taken ownership of and attached to the result.
-fn ffi_result_to_result(result: FfiTaskResult) -> res::Result {
+pub fn ffi_result_to_result(result: FfiTaskResult) -> res::Result {
     // Extract the string fields from FFI result, falling back to defaults
     let result_type = if result.result_type.is_null() {
         NamedInput::new("Error")
@@ -445,7 +445,7 @@ fn ffi_result_to_result(result: FfiTaskResult) -> res::Result {
 /// ```c
 /// FfiTaskResult result = ffi_task_result_new("Success", "Task completed", "Main");
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_task_result_new(
     result_type: *const c_char,
     message: *const c_char,
@@ -472,7 +472,7 @@ pub extern "C" fn ffi_task_result_new(
 /// ```c
 /// FfiTaskResult result = ffi_task_result_new_with_chain("Chained", "Chaining to next task", "Main", my_chained_task);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_task_result_new_with_chain(
     result_type: *const c_char,
     message: *const c_char,
@@ -544,7 +544,7 @@ pub type FfiNotifLogic = extern "C" fn(*const u8);
 /// FfiConfig config = ffi_config_default();
 /// ffi_config_free(config);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_config_default() -> FfiConfig {
     let config = Config::load_def_config();
     let boxed = Box::into_raw(Box::new(config)) as FfiConfig;
@@ -572,7 +572,7 @@ pub extern "C" fn ffi_config_default() -> FfiConfig {
 ///     ffi_config_free(config);
 /// }
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_config_from_file(path: *const c_char) -> FfiConfig {
     if path.is_null() {
         return std::ptr::null_mut();
@@ -601,7 +601,7 @@ pub extern "C" fn ffi_config_from_file(path: *const c_char) -> FfiConfig {
 /// FfiConfig config = ffi_config_default();
 /// ffi_config_free(config);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_config_free(config: FfiConfig) {
     if !config.is_null() {
         unsafe {
@@ -614,40 +614,13 @@ pub extern "C" fn ffi_config_free(config: FfiConfig) {
 // PacketHandle Wrappers
 // ============================================================================
 
-/// Creates a PacketHandle from a configuration.
-///
-/// # Arguments
-///
-/// * `config` - The opaque pointer to the Config instance
-///
-/// # Returns
-///
-/// An opaque pointer to the PacketHandle instance, or NULL on failure.
-#[unsafe(no_mangle)]
-pub extern "C" fn ffi_packet_handle_create(config: FfiConfig) -> FfiPacketHandle {
-    if config.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let config = unsafe { &*(config as *const Config) };
-    let (task_tx, _task_rx) = crossbeam::channel::bounded(config.pipes.task_pipe_capacity);
-    let (notif_tx, _notif_rx) = crossbeam::channel::bounded(config.pipes.notif_pipe_capacity);
-    
-    let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-    let boxed = Box::into_raw(Box::new(packet_handle)) as FfiPacketHandle;
-    if boxed.is_null() {
-        return std::ptr::null_mut();
-    }
-    boxed
-}
-
 /// Frees a PacketHandle instance.
 ///
 /// # Arguments
 ///
 /// * `handle` - The opaque pointer to the PacketHandle instance to free.
 ///              If NULL, this function does nothing.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_packet_handle_free(handle: FfiPacketHandle) {
     if !handle.is_null() {
         unsafe {
@@ -665,7 +638,7 @@ pub extern "C" fn ffi_packet_handle_free(handle: FfiPacketHandle) {
 /// # Returns
 ///
 /// A new opaque pointer to the cloned PacketHandle instance, or NULL on failure.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_packet_handle_clone(handle: FfiPacketHandle) -> FfiPacketHandle {
     if handle.is_null() {
         return std::ptr::null_mut();
@@ -689,6 +662,10 @@ pub extern "C" fn ffi_packet_handle_clone(handle: FfiPacketHandle) -> FfiPacketH
 /// This function sets up the communication channels and creates a Ctx instance
 /// ready for use with the Thryve engine.
 ///
+/// **Interactive mode only.** Service-mode callers should not call this — use the
+/// `ctx` field returned by [`ffi_service_create`] instead, which is already wired
+/// to the service's engine.
+///
 /// # Arguments
 ///
 /// * `config` - The opaque pointer to the Config instance
@@ -707,7 +684,7 @@ pub extern "C" fn ffi_packet_handle_clone(handle: FfiPacketHandle) -> FfiPacketH
 /// }
 /// ffi_config_free(config);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_create(config: FfiConfig) -> FfiCtx {
     if config.is_null() {
         return std::ptr::null_mut();
@@ -735,7 +712,7 @@ pub extern "C" fn ffi_ctx_create(config: FfiConfig) -> FfiCtx {
 /// FfiCtx ctx = ffi_ctx_create(config);
 /// ffi_ctx_free(ctx);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_free(ctx: FfiCtx) {
     if !ctx.is_null() {
         unsafe {
@@ -760,7 +737,7 @@ pub extern "C" fn ffi_ctx_free(ctx: FfiCtx) {
 /// ffi_plugin_free(plugin);
 /// ffi_ctx_free(ctx);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_add_plugin(ctx: FfiCtx, plugin: FfiPlugin) -> FfiStatus {
     if ctx.is_null() || plugin.is_null() {
         return FfiStatus::NullArg;
@@ -791,7 +768,7 @@ pub extern "C" fn ffi_ctx_add_plugin(ctx: FfiCtx, plugin: FfiPlugin) -> FfiStatu
 /// ffi_observer_free(observer);
 /// ffi_ctx_free(ctx);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_add_observer(ctx: FfiCtx, observer: FfiObserver) -> FfiStatus {
     if ctx.is_null() || observer.is_null() {
         return FfiStatus::NullArg;
@@ -822,7 +799,7 @@ pub extern "C" fn ffi_ctx_add_observer(ctx: FfiCtx, observer: FfiObserver) -> Ff
 /// ffi_ctx_set_logging_file_names(ctx, log_files, 2);
 /// ffi_ctx_free(ctx);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_set_logging_file_names(ctx: FfiCtx, file_names: *const *const c_char, count: i32) -> FfiStatus {
     if ctx.is_null() || file_names.is_null() || count <= 0 {
         return FfiStatus::NullArg;
@@ -853,7 +830,7 @@ pub extern "C" fn ffi_ctx_set_logging_file_names(ctx: FfiCtx, file_names: *const
 ///
 /// * `FfiStatus::Ok` if the task was sent successfully
 /// * `FfiStatus::NullArg` if ctx or task is NULL
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_send_task(ctx: FfiCtx, task: FfiTask) -> FfiStatus {
     if ctx.is_null() || task.is_null() {
         return FfiStatus::NullArg;
@@ -896,7 +873,7 @@ pub extern "C" fn ffi_ctx_send_task(ctx: FfiCtx, task: FfiTask) -> FfiStatus {
 /// }
 /// ffi_ctx_free(ctx);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_get_packet_handle(ctx: FfiCtx) -> FfiPacketHandle {
     if ctx.is_null() {
         return std::ptr::null_mut();
@@ -928,7 +905,7 @@ pub extern "C" fn ffi_ctx_get_packet_handle(ctx: FfiCtx) -> FfiPacketHandle {
 ///
 /// * `FfiStatus::Ok` if the task was sent successfully
 /// * `FfiStatus::NullArg` if handle or task is NULL
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_packet_handle_send_task(handle: FfiPacketHandle, task: FfiTask) -> FfiStatus {
     if handle.is_null() || task.is_null() {
         return FfiStatus::NullArg;
@@ -953,7 +930,7 @@ pub extern "C" fn ffi_packet_handle_send_task(handle: FfiPacketHandle, task: Ffi
 ///
 /// * `FfiStatus::Ok` if the notification was sent successfully
 /// * `FfiStatus::NullArg` if handle or notif is NULL
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_packet_handle_send_notification(handle: FfiPacketHandle, notif: FfiNotif) -> FfiStatus {
     if handle.is_null() || notif.is_null() {
         return FfiStatus::NullArg;
@@ -982,7 +959,7 @@ pub extern "C" fn ffi_packet_handle_send_notification(handle: FfiPacketHandle, n
 /// # Returns
 ///
 /// An opaque pointer to the Task instance, or NULL on failure.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_task_create(name: *const c_char, priority: u8, job: FfiTaskJob) -> FfiTask {
     if name.is_null() {
         return std::ptr::null_mut();
@@ -1013,7 +990,7 @@ pub extern "C" fn ffi_task_create(name: *const c_char, priority: u8, job: FfiTas
 ///
 /// * `task` - The opaque pointer to the Task instance to free.
 ///           If NULL, this function does nothing.
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_task_free(task: FfiTask) {
     if !task.is_null() {
         unsafe {
@@ -1033,7 +1010,10 @@ pub extern "C" fn ffi_task_free(task: FfiTask) {
 ///
 /// # Arguments
 ///
-/// * `ctx` - The opaque pointer to the Ctx instance
+/// * `ctx` - The opaque pointer to the Ctx instance. **Ownership is
+///   transferred**: this function consumes `ctx` (via `Box::from_raw`) and
+///   hands it to the spawned engine thread. Do not call `ffi_ctx_free` on it
+///   afterward - that would be a double-free.
 ///
 /// # Returns
 ///
@@ -1044,14 +1024,14 @@ pub extern "C" fn ffi_task_free(task: FfiTask) {
 /// ```c
 /// FfiCtx ctx = ffi_ctx_create(config);
 /// FfiPacketHandle pkt = ffi_ctx_get_packet_handle(ctx);
-/// FfiRunHandle handle = ffi_run_interactive_start(ctx);
+/// FfiRunHandle handle = ffi_run_interactive_start(ctx); // ctx is consumed here
 /// if (handle != NULL) {
 ///     ffi_run_interactive_free(handle);
 /// }
 /// ffi_packet_handle_free(pkt);
-/// ffi_ctx_free(ctx);
+/// // Do NOT call ffi_ctx_free(ctx) here - ctx was already consumed above.
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_run_interactive_start(ctx: FfiCtx) -> FfiRunHandle {
     if ctx.is_null() {
         return std::ptr::null_mut();
@@ -1093,7 +1073,7 @@ pub extern "C" fn ffi_run_interactive_start(ctx: FfiCtx) -> FfiRunHandle {
 ///     ffi_run_interactive_free(handle);
 /// }
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_run_interactive_free(handle: FfiRunHandle) -> FfiStatus {
     if handle.is_null() {
         return FfiStatus::NullArg;
@@ -1111,9 +1091,24 @@ pub extern "C" fn ffi_run_interactive_free(handle: FfiRunHandle) -> FfiStatus {
 // Service Wrappers
 // ============================================================================
 
-/// Creates a service instance from a configuration.
+/// The result of [`ffi_service_create`]: the service instance paired with its
+/// matching Ctx.
 ///
-/// This function constructs a Thryve service ready for execution as a Windows service.
+/// Add plugins/observers to `ctx` (e.g. via [`ffi_ctx_add_plugin`]/[`ffi_ctx_add_observer`]),
+/// then pass both `service` and `ctx` to [`ffi_service_run`]. Do not call [`ffi_ctx_create`]
+/// for service mode — `ctx` here is already the one the service will run.
+///
+/// If `config` was NULL, both fields are NULL.
+#[repr(C)]
+pub struct FfiServiceCreateResult {
+    pub service: FfiService,
+    pub ctx: FfiCtx,
+}
+
+/// Creates a service instance from a configuration, together with its Ctx.
+///
+/// This function constructs a Thryve service ready for execution as a Windows service,
+/// along with the Ctx that must be passed to [`ffi_service_run`] alongside it.
 ///
 /// # Arguments
 ///
@@ -1121,32 +1116,37 @@ pub extern "C" fn ffi_run_interactive_free(handle: FfiRunHandle) -> FfiStatus {
 ///
 /// # Returns
 ///
-/// An opaque pointer to the Thryve service instance, or NULL on failure.
+/// An [`FfiServiceCreateResult`] with both `service` and `ctx` set, or both NULL on failure.
 ///
 /// # Examples
 ///
 /// ```c
 /// FfiConfig config = ffi_config_default();
-/// FfiService service = ffi_service_create(config);
-/// if (service != NULL) {
-///     ffi_service_free(service);
+/// FfiServiceCreateResult created = ffi_service_create(config);
+/// if (created.service != NULL && created.ctx != NULL) {
+///     ffi_service_run(created.service, created.ctx);
 /// }
 /// ffi_config_free(config);
 /// ```
-#[unsafe(no_mangle)]
-pub extern "C" fn ffi_service_create(config: FfiConfig) -> FfiService {
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub extern "C" fn ffi_service_create(config: FfiConfig) -> FfiServiceCreateResult {
     if config.is_null() {
-        return std::ptr::null_mut();
+        return FfiServiceCreateResult {
+            service: std::ptr::null_mut(),
+            ctx: std::ptr::null_mut(),
+        };
     }
 
     let config = unsafe { &*(config as *const Config) };
-    let (service, _ctx) = inner_create_service(*config);
-    
-    let boxed = Box::into_raw(Box::new(service)) as FfiService;
-    if boxed.is_null() {
-        return std::ptr::null_mut();
+    let (service, ctx) = inner_create_service(*config);
+
+    let service_boxed = Box::into_raw(Box::new(service)) as FfiService;
+    let ctx_boxed = Box::into_raw(Box::new(ctx)) as FfiCtx;
+
+    FfiServiceCreateResult {
+        service: service_boxed,
+        ctx: ctx_boxed,
     }
-    boxed
 }
 
 /// Runs the service with the given context.
@@ -1168,13 +1168,12 @@ pub extern "C" fn ffi_service_create(config: FfiConfig) -> FfiService {
 ///
 /// ```c
 /// FfiConfig config = ffi_config_default();
-/// FfiService service = ffi_service_create(config);
-/// FfiCtx ctx = ffi_ctx_create(config);
-/// if (service != NULL && ctx != NULL) {
-///     ffi_service_run(service, ctx);
+/// FfiServiceCreateResult created = ffi_service_create(config);
+/// if (created.service != NULL && created.ctx != NULL) {
+///     ffi_service_run(created.service, created.ctx);
 /// }
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_service_run(service: FfiService, ctx: FfiCtx) -> FfiStatus {
     if service.is_null() || ctx.is_null() {
         return FfiStatus::NullArg;
@@ -1200,10 +1199,10 @@ pub extern "C" fn ffi_service_run(service: FfiService, ctx: FfiCtx) -> FfiStatus
 /// # Examples
 ///
 /// ```c
-/// FfiService service = ffi_service_create(config);
-/// ffi_service_free(service);
+/// FfiServiceCreateResult created = ffi_service_create(config);
+/// ffi_service_free(created.service);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_service_free(service: FfiService) {
     if !service.is_null() {
         unsafe {
@@ -1242,14 +1241,15 @@ pub extern "C" fn ffi_service_free(service: FfiService) {
 ///
 /// # PacketHandle Usage
 ///
-/// To use `tx`, you must first create a PacketHandle:
+/// To use `tx`, get the engine's connected PacketHandle from a Ctx:
 ///
 /// ```c
-/// // Create a configuration first
+/// // Create a configuration and context first
 /// FfiConfig config = ffi_config_default();
+/// FfiCtx ctx = ffi_ctx_create(config);
 ///
-/// // Create a PacketHandle from the config
-/// FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
+/// // Get the engine's connected PacketHandle from ctx
+/// FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
 ///
 /// // Now use it when creating the plugin
 /// FfiPlugin plugin = ffi_plugin_create(
@@ -1290,7 +1290,7 @@ pub extern "C" fn ffi_service_free(service: FfiService) {
 ///     my_plugin_entry_point
 /// );
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_plugin_create(
     plg_name: *const c_char,
     plg_type: *const c_char,
@@ -1356,7 +1356,7 @@ pub extern "C" fn ffi_plugin_create(
 /// ffi_ctx_add_plugin(ctx, plugin);
 /// ffi_plugin_free(plugin);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_plugin_free(plugin: FfiPlugin) {
     if !plugin.is_null() {
         unsafe {
@@ -1396,14 +1396,15 @@ pub extern "C" fn ffi_plugin_free(plugin: FfiPlugin) {
 ///
 /// # PacketHandle Usage
 ///
-/// To use `tx`, you must first create a PacketHandle:
+/// To use `tx`, get the engine's connected PacketHandle from a Ctx:
 ///
 /// ```c
-/// // Create a configuration first
+/// // Create a configuration and context first
 /// FfiConfig config = ffi_config_default();
+/// FfiCtx ctx = ffi_ctx_create(config);
 ///
-/// // Create a PacketHandle from the config
-/// FfiPacketHandle packet_handle = ffi_packet_handle_create(config);
+/// // Get the engine's connected PacketHandle from ctx
+/// FfiPacketHandle packet_handle = ffi_ctx_get_packet_handle(ctx);
 ///
 /// // Now use it when creating the observer
 /// FfiObserver observer = ffi_observer_create(
@@ -1442,7 +1443,7 @@ pub extern "C" fn ffi_plugin_free(plugin: FfiPlugin) {
 ///     my_observer_job
 /// );
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_observer_create(
     obs_name: *const c_char,
     obs_type: *const c_char,
@@ -1512,7 +1513,7 @@ pub extern "C" fn ffi_observer_create(
 /// ffi_ctx_add_observer(ctx, observer);
 /// ffi_observer_free(observer);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_observer_free(observer: FfiObserver) {
     if !observer.is_null() {
         unsafe {
@@ -1556,7 +1557,7 @@ pub extern "C" fn ffi_observer_free(observer: FfiObserver) {
 ///     my_core_data
 /// );
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_notification_create(
     notif_type: *const c_char,
     notif_receiver: *const c_char,
@@ -1601,7 +1602,7 @@ pub extern "C" fn ffi_notification_create(
 /// // ... use notif ...
 /// ffi_notification_free(notif);
 /// ```
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_notification_free(notif: FfiNotif) {
     if !notif.is_null() {
         unsafe {
@@ -1621,7 +1622,7 @@ pub extern "C" fn ffi_notification_free(notif: FfiNotif) {
 ///
 /// * `FfiStatus::Ok` if the notification was sent successfully
 /// * `FfiStatus::NullArg` if ctx or notif is NULL
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn ffi_ctx_send_notification(ctx: FfiCtx, notif: FfiNotif) -> FfiStatus {
     if ctx.is_null() || notif.is_null() {
         return FfiStatus::NullArg;
@@ -1640,13 +1641,13 @@ pub extern "C" fn ffi_ctx_send_notification(ctx: FfiCtx, notif: FfiNotif) -> Ffi
 // ============================================================================
 
 /// Adapter for PlgLogic trait to support FFI callbacks.
-struct PluginLogicAdapter {
-    core_ptr: *mut u8,
-    clean_up: FfiPluginCleanUp,
+pub struct PluginLogicAdapter {
+    pub core_ptr: *mut u8,
+    pub clean_up: FfiPluginCleanUp,
 }
 
 impl PluginLogicAdapter {
-    fn new(core_ptr: *mut u8, clean_up: FfiPluginCleanUp) -> Self {
+    pub fn new(core_ptr: *mut u8, clean_up: FfiPluginCleanUp) -> Self {
         Self { core_ptr, clean_up }
     }
 }
@@ -1666,13 +1667,13 @@ impl PlgLogic for PluginLogicAdapter {
 }
 
 /// Adapter for ObsLogic trait to support FFI callbacks.
-struct ObserverLogicAdapter {
-    core_ptr: *mut u8,
-    clean_up: FfiObserverCleanUp,
+pub struct ObserverLogicAdapter {
+    pub core_ptr: *mut u8,
+    pub clean_up: FfiObserverCleanUp,
 }
 
 impl ObserverLogicAdapter {
-    fn new(core_ptr: *mut u8, clean_up: FfiObserverCleanUp) -> Self {
+    pub fn new(core_ptr: *mut u8, clean_up: FfiObserverCleanUp) -> Self {
         Self { core_ptr, clean_up }
     }
 }
@@ -1692,12 +1693,12 @@ impl ObsLogic for ObserverLogicAdapter {
 }
 
 /// Adapter for NotifLogic trait to support FFI callbacks.
-struct NotificationLogicAdapter {
-    core_ptr: *mut u8,
+pub struct NotificationLogicAdapter {
+    pub core_ptr: *mut u8,
 }
 
 impl NotificationLogicAdapter {
-    fn new(core_ptr: *mut u8) -> Self {
+    pub fn new(core_ptr: *mut u8) -> Self {
         Self { core_ptr }
     }
 }
@@ -1713,7 +1714,7 @@ impl thryve_utils::traits::notif_logic::NotifLogic for NotificationLogicAdapter 
 
 /// Wrapper for *mut u8 that implements Send + Sync so it can be captured by closures
 /// used in ObsJob (which requires Send + Sync).
-struct ObsCorePtr(*mut u8);
+pub struct ObsCorePtr(pub *mut u8);
 
 unsafe impl Send for ObsCorePtr {}
 unsafe impl Sync for ObsCorePtr {}
