@@ -1,0 +1,24 @@
+[package]
+name = "thryve_utils-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+toml = "1.1.2"
+
+[dependencies.thryve_utils]
+path = ".."
+
+[[bin]]
+name = "toml_config"
+path = "fuzz_targets/toml_config.rs"
+test = false
+doc = false
+bench = false

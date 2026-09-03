@@ -50,9 +50,10 @@ Tasks are units of work submitted to the engine for execution:
 
 ```rust
 use thryve_utils::packets::task::Task;
+use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::res::Result;
 
-let task = Task::new("MyTask", 2, Box::new(|| {
+let task = Task::new("MyTask", 2, TaskJob::new(|| {
     // Task execution logic
     Result::new("Success", "Task completed".to_string(), "Main")
 }));
@@ -71,15 +72,16 @@ Results represent task execution outcomes and enable task chaining:
 ```rust
 use thryve_utils::res::Result;
 use thryve_utils::packets::task::Task;
+use thryve_utils::extras::jobs::TaskJob;
 
 // Terminal result
 let result = Result::new("Success", "Done".to_string(), "Main");
 
-// Chained result (executes next task)
-let next = Some(Task::new("NextTask", 1, Box::new(|| {
+// Chained result — executes the next task once this one completes
+let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
     Result::new("Ok", "".to_string(), "Main")
-})));
-let chained = Result::new_tasked_res("Chained", "Moving on".to_string(), "Main", next);
+}));
+let chained = Result::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
 ```
 
 ### Observers
@@ -88,8 +90,10 @@ Observers are long-running components that process notifications:
 
 ```rust
 use thryve_observers::logger::LoggerObserver;
-use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::cfg::config::Config;
+use thryve_run::run::run_interactive::summon_requirements;
 
+let ctx = summon_requirements(Config::load_def_config());
 let logger = LoggerObserver::new(&ctx);
 ```
 
@@ -98,8 +102,8 @@ let logger = LoggerObserver::new(&ctx);
 Plugins extend functionality without modifying the core:
 
 ```rust
-use thryve_utils::bases::plugin::Plugin;
-use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
+use thryve_utils::traits::plugin_logic::PlgLogic;
+use thryve_utils::impl_as_any;
 
 // Implement PlgLogic for your plugin
 struct MyPlugin;
@@ -108,7 +112,8 @@ impl PlgLogic for MyPlugin {
     fn clean_up(&self) {
         // Cleanup logic
     }
-    // impl_as_any macro required
+
+    impl_as_any!(MyPlugin);
 }
 ```
 
@@ -218,147 +223,273 @@ log_tasks= false
 
 ```rust
 use thryve_utils::packets::task::Task;
+use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::res::Result;
 use thryve_utils::packets::packet_handle::PacketHandle;
 
-fn main() {
-    // Get packet handle from context
-    let handle: PacketHandle = /* ... */;
-    
-    // Create and send task
-    let task = Task::new("CalculateSum", 1, Box::new(|| {
+fn send_calculation(handle: &PacketHandle) {
+    let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
         let result = 2 + 2;
         Result::new("Success", format!("Result: {}", result), "Main")
     }));
-    
+
     handle.send_task(task);
 }
 ```
 
 ### Creating a Plugin
 
+The idiomatic pattern is to give your plugin's logic type its own `new` that builds and returns the whole `Plugin` — rather than a separate free function:
+
 ```rust
 use std::sync::Arc;
 use thryve_utils::bases::plugin::Plugin;
-use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
+use thryve_utils::traits::plugin_logic::PlgLogic;
+use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::impl_as_any;
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::res;
+use thryve_utils::res::Result;
 
-struct MyPlugin {
-    handle: PacketHandle,
+struct MyPlugin;
+
+impl MyPlugin {
+    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+        let core = Arc::new(Self);
+        let core_clone = Arc::clone(&core);
+        let tx_clone = tx.clone();
+
+        // The task job calls back into the plugin's own logic, so it has
+        // access to whatever state the plugin needs.
+        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+
+        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+    }
+
+    fn task_a(&self, _tx: PacketHandle) -> Result {
+        Result::new("Success", "Task A completed".to_string(), "Main")
+    }
 }
 
 impl PlgLogic for MyPlugin {
     fn clean_up(&self) {
         println!("Cleaning up plugin");
     }
-    
-    impl_as_any!(MyPlugin);
-}
 
-fn create_plugin(handle: PacketHandle) -> Plugin {
-    let core = Arc::new(MyPlugin { handle: handle.clone() });
-    
-    let init_fn = Box::new(move || {
-        // Initialization task
-        res::Result::new("Init", "Plugin initialized".to_string(), "Main")
-    });
-    
-    Plugin::new("MyPlugin", "MyPluginType", core, handle, init_fn)
+    impl_as_any!(MyPlugin);
 }
 ```
 
 ### Creating an Observer
 
+Observers follow the same self-constructing pattern as plugins:
+
 ```rust
 use std::sync::Arc;
 use thryve_utils::bases::observer::Observer;
-use thryve_utils::traits::observer_logic::{ObsLogic, ObsB};
+use thryve_utils::traits::observer_logic::ObsLogic;
+use thryve_utils::traits::queue::Queue;
+use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::impl_as_any;
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::bases::notif::Notif;
 
-struct MyObserver {
-    handle: PacketHandle,
+struct MyObserver;
+
+impl MyObserver {
+    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+        let core = Arc::new(Self);
+
+        let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
+            loop {
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // `pop` blocks until a notification arrives or the queue is
+                // finalized, in which case it wakes with a sentinel value —
+                // recheck before treating it as real work.
+                let _notif = observer.obs_queue.pop();
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // Handle the notification.
+            }
+        });
+
+        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+    }
 }
 
 impl ObsLogic for MyObserver {
-    fn clean_up(&self, observer: Arc<Observer>) {
+    fn clean_up(&self, _observer: Arc<Observer>) {
         println!("Cleaning up observer");
     }
-    
-    impl_as_any!(MyObserver);
-}
 
-fn create_observer(handle: PacketHandle) -> Observer {
-    let core = Arc::new(MyObserver { handle: handle.clone() });
-    
-    let run_fn = Box::new(move |observer: Arc<Observer>| {
-        // Observer main loop
-        loop {
-            if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                return;
-            }
-            
-            let notif = observer.obs_queue.pop();
-            // Process notification
-        }
-    });
-    
-    Observer::new("MyObserver", "MyObserverType", core, run_fn, handle)
+    impl_as_any!(MyObserver);
 }
 ```
 
 ### Full Sample Service
-Refer to [Creating a Plugin](#creating-a-plugin) and [Creating an Observer](#creating-an-observer) sections for the `create_plugin` and `create_observer` functions respectively.
-```rust
-use thryve::run::run_service;
-use thryve::utils::cfg::Config;
 
-fn main(){
+These restate the same `MyPlugin`/`MyObserver` shape from [Creating a Plugin](#creating-a-plugin) and [Creating an Observer](#creating-an-observer) so the sample is fully self-contained. Marked `no_run` since actually executing it attempts to install and run a real Windows service.
+
+```rust,no_run
+use std::sync::Arc;
+use thryve_run::run::run_service;
+use thryve_utils::cfg::config::Config;
+use thryve_utils::bases::plugin::Plugin;
+use thryve_utils::bases::observer::Observer;
+use thryve_utils::traits::plugin_logic::PlgLogic;
+use thryve_utils::traits::observer_logic::ObsLogic;
+use thryve_utils::traits::queue::Queue;
+use thryve_utils::extras::jobs::{TaskJob, ObsJob};
+use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::res::Result;
+use thryve_utils::impl_as_any;
+
+struct MyPlugin;
+impl MyPlugin {
+    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+        let core = Arc::new(Self);
+        let core_clone = Arc::clone(&core);
+        let tx_clone = tx.clone();
+        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+    }
+    fn task_a(&self, _tx: PacketHandle) -> Result {
+        Result::new("Success", "Task A completed".to_string(), "Main")
+    }
+}
+impl PlgLogic for MyPlugin {
+    fn clean_up(&self) {}
+    impl_as_any!(MyPlugin);
+}
+
+struct MyObserver;
+impl MyObserver {
+    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+        let core = Arc::new(Self);
+        let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
+            loop {
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // `pop` blocks until a notification arrives or the queue is
+                // finalized, in which case it wakes with a sentinel value —
+                // recheck before treating it as real work.
+                let _notif = observer.obs_queue.pop();
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // Handle the notification.
+            }
+        });
+        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+    }
+}
+impl ObsLogic for MyObserver {
+    fn clean_up(&self, _observer: Arc<Observer>) {}
+    impl_as_any!(MyObserver);
+}
+
+fn main() {
     let config = Config::load_def_config();
+    let (svc, mut ctx) = run_service::create_service(config);
 
-    let (svc , mut ctx) = run_service::create_service(config);
+    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
+    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
 
-    let test_plg = create_plugin(ctx.packet_handle())
-    let test_obs = create_observer(ctx.packet_handle())
+    ctx.plugins.push(plugin);
+    ctx.observers.push(observer);
 
-    ctx.plugins.push(test_plg);
-    ctx.observers.push(test_obs);
-    
     // A TestFile is added to the logging files.
-    let mut extra_logging_file: String = "TestFile".to_string();
-    ctx.logging_file_names.append(&mut extra_logging_file);
+    ctx.logging_file_names.push("TestFile".to_string());
 
-
-    run_service::try_run_as_service(svc , ctx);
+    run_service::try_run_as_service(svc, ctx);
 }
 ```
 
 ### Full Sample Interactive
-Refer to [Creating a Plugin](#creating-a-plugin) and [Creating an Observer](#creating-an-observer) sections for the `create_plugin` and `create_observer` functions respectively.
-```rust
-use thryve::run::run_interactive;
-use thryve::utils::cfg::Config;
 
-fn main(){
+```rust,no_run
+use std::sync::Arc;
+use thryve_run::run::run_interactive;
+use thryve_utils::cfg::config::Config;
+use thryve_utils::bases::plugin::Plugin;
+use thryve_utils::bases::observer::Observer;
+use thryve_utils::traits::plugin_logic::PlgLogic;
+use thryve_utils::traits::observer_logic::ObsLogic;
+use thryve_utils::traits::queue::Queue;
+use thryve_utils::extras::jobs::{TaskJob, ObsJob};
+use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::res::Result;
+use thryve_utils::impl_as_any;
+
+struct MyPlugin;
+impl MyPlugin {
+    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+        let core = Arc::new(Self);
+        let core_clone = Arc::clone(&core);
+        let tx_clone = tx.clone();
+        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+    }
+    fn task_a(&self, _tx: PacketHandle) -> Result {
+        Result::new("Success", "Task A completed".to_string(), "Main")
+    }
+}
+impl PlgLogic for MyPlugin {
+    fn clean_up(&self) {}
+    impl_as_any!(MyPlugin);
+}
+
+struct MyObserver;
+impl MyObserver {
+    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+        let core = Arc::new(Self);
+        let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
+            loop {
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // `pop` blocks until a notification arrives or the queue is
+                // finalized, in which case it wakes with a sentinel value —
+                // recheck before treating it as real work.
+                let _notif = observer.obs_queue.pop();
+                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+
+                // Handle the notification.
+            }
+        });
+        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+    }
+}
+impl ObsLogic for MyObserver {
+    fn clean_up(&self, _observer: Arc<Observer>) {}
+    impl_as_any!(MyObserver);
+}
+
+fn main() {
     let config = Config::load_def_config();
-
     let mut ctx = run_interactive::summon_requirements(config);
 
-    let test_plg = create_plugin(ctx.packet_handle())
-    let test_obs = create_observer(ctx.packet_handle())
+    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
+    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
 
-    ctx.plugins.push(test_plg);
-    ctx.observers.push(test_obs);
-    
+    ctx.plugins.push(plugin);
+    ctx.observers.push(observer);
+
     // A TestFile is added to the logging files.
-    let mut extra_logging_file: String = "TestFile".to_string();
-    ctx.logging_file_names.append(&mut extra_logging_file);
+    ctx.logging_file_names.push("TestFile".to_string());
 
-
-    run_service::run_interactive(ctx);
+    if let Some(handle) = run_interactive::run_interactive(ctx) {
+        let _ = handle.join();
+    }
 }
 ```
 
@@ -402,7 +533,7 @@ The graph visualization system consists of:
 
 ### Prerequisites
 
-- Rust 1.75+ 
+- Rust 1.85+ 
 - Cargo
 
 ### Build Commands
@@ -432,7 +563,7 @@ Key dependencies:
 
 The priority queue uses an aging mechanism to prevent starvation:
 
-```
+```text
 effective_priority = min(base_priority + aging_boost, max_priority)
 ```
 
@@ -440,12 +571,12 @@ Where `aging_boost` increases based on wait time. Tasks inserted with a priority
 
 ## Log Output Format
 
-```
+```text
 Log_Creation: 2024-01-15 10:30:45, [ LOGGING ], Event_Type: Log, Message: Hello
 ```
 
 Logs are organized by module:
-```
+```text
 log/
   2024_01_15_10_30/
     Main.log
@@ -482,7 +613,7 @@ For closed-source commercial projects that cannot comply with AGPL-3.0 requireme
 - 🔒 No requirement to disclose modifications
 - 🔒 Suitable for proprietary SaaS applications
 
-**Contact for licensing:** [Insert your email or website]
+**Contact for licensing:** [thryve-framework.com](https://thryve-framework.com)
 
 See [`COMMERCIAL.md`](COMMERCIAL.md) for more information.
 

@@ -1,0 +1,15 @@
+[package]
+    name = "thryve"
+    version = "0.1.0"
+    edition.workspace = true
+    license.workspace = true
+    homepage.workspace = true
+    repository.workspace = true
+    readme = "README.md"
+    description = "A pluggable task/plugin/observer runtime for Rust, runnable interactively or as a Windows service."
+    keywords = ["multithreading", "automation", "runtime", "plugin", "observer"]
+
+
+[dependencies]
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
+    thryve_run = { path = "../thryve_run" , version = "0.1.0"}

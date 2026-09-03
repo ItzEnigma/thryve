@@ -1,0 +1,30 @@
+[package]
+    name = "thryve_tests"
+    version = "0.1.0"
+    edition.workspace = true
+    license.workspace = true
+    homepage.workspace = true
+    repository.workspace = true
+    readme.workspace = true
+    description = "tests the entire Thryve workspace to make sure all tested scenarios run normally."   # per-crate, not shared
+
+
+[dependencies]
+    thryve_core = { path = "../crates/thryve_core" , version = "0.1.0"}
+    thryve_utils = { path = "../crates/thryve_utils" , version = "0.1.0"}
+    thryve_observers = { path = "../crates/thryve_observers" , version = "0.1.0"}
+    thryve_run = { path = "../crates/thryve_run" , version = "0.1.0" }
+    thryve_ffi = { path = "../crates/thryve_ffi" , version = "0.1.0" }
+
+    windows-services.workspace = true
+    strum.workspace = true
+    strum_macros.workspace = true
+    chrono.workspace = true
+    crossbeam.workspace = true
+    crossbeam-skiplist.workspace = true
+    ron.workspace = true
+    petgraph.workspace = true
+    serde.workspace = true
+
+[dev-dependencies]
+    image = "0.25"

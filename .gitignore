@@ -11,6 +11,9 @@ Cargo.lock
 CLAUDE.md
 
 mermaid
-thryve_utils/src/debug_logging.rs
-thryve_ffi/dist
-thryve_ffi/out
+crates/thryve_utils/src/debug_logging.rs
+crates/thryve_ffi/out
+graphify-out
+
+licensing
+licensing-backups

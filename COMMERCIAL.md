@@ -9,9 +9,9 @@ Thryve is available under two licensing options:
 
 For commercial licensing options that allow closed-source development, please visit:
 
-🔗 **[https://yourdomain.com/thryve/licensing](https://yourdomain.com/thryve/licensing)**
+🔗 **[https://thryve-framework.com](https://thryve-framework.com)**
 
-Or contact us at: **licensing@yourdomain.com**
+The full terms are in [`COMMERCIAL_LICENSING.md`](COMMERCIAL_LICENSING.md) — read it before reaching out. In short: it's a one-time fee, perpetual, with free updates for as long as they're released, scoped to either a single named project or a specific list of projects (see the Agreement's License Tiers section).
 
 ---
 

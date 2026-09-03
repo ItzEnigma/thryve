@@ -30,14 +30,14 @@ Thank you for your interest in contributing to Thryve! This document provides gu
 
 ### Prerequisites
 
-- **Rust 1.75+** - [Install Rust](https://rustup.rs/)
+- **Rust 1.85+** - [Install Rust](https://rustup.rs/)
 - **Git** - Version control
 - **GitHub account** - For submitting pull requests
 
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/Thryve.git
+git clone https://github.com/JoJoAbdellatif/Thryve.git
 cd Thryve
 ```
 
@@ -71,7 +71,7 @@ cargo clippy
 
 ### Finding Issues to Work On
 
-1. Check the [Issues](https://github.com/YOUR_USERNAME/Thryve/issues) tab
+1. Check the [Issues](https://github.com/JoJoAbdellatif/Thryve/issues) tab
 2. Look for issues labeled `good first issue` or `help wanted`
 3. Comment on issues you'd like to work on
 
@@ -310,46 +310,52 @@ Brief description of changes.
 The Contributor License Agreement (CLA) is a legal agreement that:
 
 1. **Confirms ownership**: You confirm you own the rights to your contribution
-2. **Grants license**: You grant the project maintainers rights to use your contribution
-3. **Enables dual-licensing**: Allows contributions in both AGPL and Commercial licenses
+2. **Grants license**: You grant the project maintainer rights to use your contribution
+3. **Enables dual-licensing**: Allows contributions to be included in both the AGPL-3.0-or-later and Commercial license editions of Thryve
+
+The full text is in [`CLA-INDIVIDUAL.md`](CLA-INDIVIDUAL.md) — read it before signing.
 
 ### Why Do We Need It?
 
-Thryve uses a **dual-licensing model** (AGPL-3.0 + Commercial). The CLA ensures:
+Thryve uses a **dual-licensing model** (AGPL-3.0-or-later + Commercial, see
+[`COMMERCIAL.md`](COMMERCIAL.md)). The CLA ensures:
 
 - ✅ Contributors retain copyright ownership
-- ✅ Project can include contributions in both license types
+- ✅ The project can include contributions in both license editions
 - ✅ Commercial licensing is legally viable
 - ✅ Future-proofing for the project
 
-### What the CLA Covers
+### How to Sign (Individual Contributors)
 
-By submitting a contribution, you agree that:
+Almost all contributors should sign [`CLA-INDIVIDUAL.md`](CLA-INDIVIDUAL.md).
+It is verified automatically the first time you open a Pull Request:
 
-1. **You own the contribution** or have permission to contribute it
-2. **You grant a license** to the project maintainers:
-   - Perpetual, worldwide, non-exclusive
-   - Royalty-free
-   - Rights to use, modify, distribute, sublicense
-3. **Patent grant**: You grant patent rights for your contributions
-4. **No warranty**: Contributions are provided "as is"
+1. Submit your Pull Request.
+2. The CLA Assistant bot will comment with a link to the agreement and
+   instructions.
+3. Reply on the Pull Request with the comment text the bot asks for to
+   record your signature.
+4. Your PR will be marked as CLA-signed. You only need to do this once —
+   it covers all your future contributions.
 
-### How to Sign
+### Contributing on Behalf of a Company
 
-The CLA will be verified automatically when you submit a Pull Request.
-
-**First-time contributors:**
-1. Submit your Pull Request
-2. CLA bot will comment requesting signature
-3. Follow the link to sign (electronically)
-4. Your PR will be marked as CLA-signed
+If your employer owns the rights to your contribution and you want your
+organization — not you personally — to be the one granting the license,
+see [`CLA-ENTITY.md`](CLA-ENTITY.md). This one is **not** bot-automated:
+reach out via [thryve-framework.com](https://thryve-framework.com) first to
+arrange signing it. (Alternatively, `CLA-INDIVIDUAL.md` §3(c) lets an
+individual contributor's employer simply approve their signing it instead —
+the Entity agreement is only needed if the company wants to be the
+contracting party itself.)
 
 ### Questions About CLA?
 
 - The CLA does **not** transfer copyright ownership to the project
 - You retain ownership of your contributions
-- The CLA only grants necessary licensing rights
-- Contact maintainers for questions
+- The CLA only grants the licensing rights described in
+  [`CLA-INDIVIDUAL.md`](CLA-INDIVIDUAL.md) / [`CLA-ENTITY.md`](CLA-ENTITY.md)
+- Contact the maintainer via [thryve-framework.com](https://thryve-framework.com) for questions
 
 ---
 

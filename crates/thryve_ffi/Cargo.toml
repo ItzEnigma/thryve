@@ -1,0 +1,28 @@
+[package]
+    name = "thryve_ffi"
+    version = "0.1.0"
+    edition.workspace = true
+    license.workspace = true
+    homepage.workspace = true
+    repository.workspace = true
+    readme = "README.md"
+    description = "C-compatible FFI bindings for the Thryve runtime, for use from C, C++, and other native languages."
+    keywords = ["multithreading", "ffi", "c-bindings", "automation", "runtime"]
+    exclude = ["out/"]
+
+[package.metadata.release]
+    verify = false
+
+[dependencies]
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0" }
+    thryve_run = { path = "../thryve_run" , version = "0.1.0" }
+    crossbeam.workspace = true
+
+[build-dependencies]
+    cbindgen = "0.29"
+
+[dev-dependencies]
+    cbindgen = "0.29"
+
+[lib]
+    crate-type = ["cdylib", "staticlib", "rlib"]

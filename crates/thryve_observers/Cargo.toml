@@ -1,0 +1,21 @@
+[package]
+    name = "thryve_observers"
+    version = "0.1.0"
+    edition.workspace = true
+    license.workspace = true
+    homepage.workspace = true
+    repository.workspace = true
+    readme.workspace = true
+    description = "Observers core to the Thryve runtime which Thryve cannot survive without. This is an internal crate, not meant for direct use"   # per-crate, not shared
+    keywords = ["observers", "logger", "graphing", "internal"]
+
+
+[dependencies]
+    # Internal Dependencies
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
+    
+    # External Dependencies
+    chrono.workspace = true
+    crossbeam.workspace = true
+    ron.workspace = true
+    anyhow.workspace = true

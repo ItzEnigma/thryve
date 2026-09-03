@@ -1,0 +1,62 @@
+name: "CLA Assistant"
+
+# Automates signing of CLA-INDIVIDUAL.md on first pull request.
+#
+# CLA-ENTITY.md is intentionally NOT wired up here — companies wanting to
+# contribute under their own name should reach out via thryve-framework.com
+# to arrange signing it directly, per CONTRIBUTING.md.
+#
+# Signatures are stored in a separate public repo (JoJoAbdellatif/Thryve-cla-signatures),
+# not in this repo, so that main can stay branch-protected and the CLA
+# record-keeping stays out of the source history — see CONTRIBUTING.md for
+# the reasoning.
+#
+# One-time setup required before this workflow can run:
+#   1. Create a public repo named `Thryve-cla-signatures` under the
+#      JoJoAbdellatif account (empty is fine — the bot creates the file on
+#      first signature).
+#   2. Generate a Personal Access Token with `repo` scope (classic) or
+#      "Contents: read/write" (fine-grained, scoped to just that repo).
+#   3. In this repo's Settings -> Secrets and variables -> Actions, add it
+#      as a secret named PERSONAL_ACCESS_TOKEN.
+#
+# Note: this repo's default "Workflow permissions" setting can stay
+# read-only — the `permissions:` block below explicitly grants what this
+# specific workflow needs (an explicit permissions block replaces, rather
+# than being capped by, the repo-wide default). Leaving the repo-wide
+# default at read-only is safer for every other workflow that doesn't
+# declare its own block.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  CLAAssistant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "CLA Assistant"
+        if: >
+          (github.event.comment.body == 'recheck' ||
+           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
+          github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          remote-organization-name: JoJoAbdellatif
+          remote-repository-name: Thryve-cla-signatures
+          path-to-signatures: "signatures/cla-individual-v1.json"
+          path-to-document: "https://github.com/JoJoAbdellatif/Thryve/blob/main/CLA-INDIVIDUAL.md"
+          branch: "main"
+          allowlist: dependabot[bot],bot*
+          custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"

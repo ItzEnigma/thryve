@@ -1,0 +1,18 @@
+[package]
+    name = "thryve_core"
+    version = "0.1.0"
+    edition.workspace = true
+    license.workspace = true
+    homepage.workspace = true
+    repository.workspace = true
+    readme.workspace = true
+    description = "Thryve runtime logic for the engine and plugin and observer managers. This is an internal crate, not meant for direct use."
+    keywords = ["runtime", "core", "engine", "manager", "internal"]
+
+
+[dependencies]
+    thryve_utils = { path = "../thryve_utils" , version = "0.1.0"}
+
+    # External Dependencies.
+    crossbeam.workspace = true
+    thiserror.workspace = true

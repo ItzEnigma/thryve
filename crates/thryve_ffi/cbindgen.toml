@@ -1,0 +1,64 @@
+# cbindgen configuration for Thryve FFI
+#
+# This file configures cbindgen to generate C-compatible headers.
+# The generated header is used by cbindgen::Builder in build.rs.
+
+# License/copyright banner written at the top of the generated header.
+header = """/*
+ * Thryve FFI — generated C header. Do not edit by hand.
+ *
+ * Copyright (c) 2026 Youssef Mostafa Abdellatif
+ *
+ * This file is part of Thryve, dual-licensed under the GNU Affero General
+ * Public License v3.0 (or later) and a separate Commercial License.
+ * See LICENSE and COMMERCIAL.md in the Thryve repository root, or visit
+ * https://thryve-framework.com for licensing options.
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */"""
+
+# C-compatible output (not C++)
+language = "C"
+
+# Include version in header
+include_version = true
+
+# Include guard for header
+include_guard = "THRYVE_H"
+
+# Disable Rust-specific documentation (it won't make sense in C)
+documentation = false
+
+# Use typedef instead of using (C-style)
+style = "type"
+
+# Use size_t for usize
+usize_is_size_t = true
+
+# Enum configuration: prefix enum values with enum name
+[enum]
+prefix_with_name = true
+
+# Export configuration
+[export]
+include = [
+    "ThryveConfig",
+    "ThryveCtx",
+    "ThryveRunHandle",
+    "ThryveService",
+    "ThryvePlugin",
+    "ThryveObserver",
+    "ThryvePacketHandle",
+    "ThryveTask",
+    "ThryveNotif",
+    "ThryveStatus",
+    "ThryveTaskResult",
+    "ThryveServiceCreateResult",
+    "ThryveTaskJob",
+    "ThryvePluginCleanUp",
+    "ThryvePluginEntryPoint",
+    "ThryveObserverCleanUp",
+    "ThryveObserverMainLoop",
+    "ThryveObsJob",
+    "ThryveNotifLogic",
+]
