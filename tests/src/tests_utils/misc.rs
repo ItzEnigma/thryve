@@ -1037,7 +1037,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
 
         // Act
         let pool = ThreadPool::new(2, queue, packet_handle, None);
@@ -1055,7 +1055,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
 
         // Act
         let pool = ThreadPool::new(0, queue, packet_handle, None);
@@ -1070,7 +1070,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle, None);
         let notif = Log::log("test_message".to_string(), "Main");
 
@@ -1091,7 +1091,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
 
         // Act
         let pool = ThreadPool::new(5, queue, packet_handle, None);
@@ -1106,7 +1106,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Act
@@ -1124,7 +1124,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Assert initially not paused
@@ -1143,7 +1143,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Pause first
@@ -1183,7 +1183,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Create a mock logger observer
@@ -1216,7 +1216,7 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle.clone());
+        let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle, None);
 
         // Create a dummy thread handle

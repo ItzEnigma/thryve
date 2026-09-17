@@ -8,6 +8,7 @@
     readme = "README.md"
     description = "A pluggable task/plugin/observer runtime for Rust, runnable interactively or as a Windows service."
     keywords = ["multithreading", "automation", "runtime", "plugin", "observer"]
+    categories = ["concurrency", "development-tools", "asynchronous"]
 
 
 [dependencies]

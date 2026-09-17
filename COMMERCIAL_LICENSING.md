@@ -1,4 +1,4 @@
-> **Draft status:** This is a first draft, written to reflect the terms discussed and agreed on with the maintainer. It is **not legal advice** and has not been reviewed by a lawyer. Before this is used to actually collect a signature or a payment from a real customer, it should be reviewed by a lawyer qualified in the governing jurisdiction (Section 13.1). Treat this as a strong starting point, not a finished contract.
+> **Draft status:** This is a first draft, written to reflect the terms discussed and agreed on. **THIS IS NOT A FINAL RELEASE FOR THE LICENSE TERMS. COMMERCIAL LICENSE TERMS ARE SUBJECT TO CHANGE**
 
 # Thryve Commercial License Agreement
 

@@ -30,11 +30,10 @@ mod tests_config_errors {
 
     #[test]
     fn test_config_from_file_with_invalid_max_priority_does_not_panic_across_ffi() {
-        // Arrange — a config file with max_priority >= 15 used to trip an
-        // assert!() inside Config::load_config_from_file, which would panic
-        // across this extern "C" boundary (undefined behavior). It must now
-        // fall back to defaults instead, whether via the fixed assert or via
-        // ffi_guard catching a future regression.
+        // Arrange — a config file with max_priority >= 15 must fall back to
+        // defaults rather than panic inside Config::load_config_from_file: a
+        // panic crossing this extern "C" boundary is undefined behavior.
+        // ffi_guard is the backstop if that invariant is ever violated.
         use std::fs::File;
         use std::io::Write;
 

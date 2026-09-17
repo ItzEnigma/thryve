@@ -8,6 +8,7 @@
     readme = "README.md"
     description = "C-compatible FFI bindings for the Thryve runtime, for use from C, C++, and other native languages."
     keywords = ["multithreading", "ffi", "c-bindings", "automation", "runtime"]
+    categories = ["concurrency", "development-tools", "external-ffi-bindings"]
     exclude = ["out/"]
 
 [package.metadata.release]

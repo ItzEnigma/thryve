@@ -31,21 +31,29 @@
 //!
 //! # Thread Safety
 //!
-//! The queue is designed for concurrent access, using atomic operations
-//! and condition variables to coordinate between producers and consumers.
+//! `main_queue` is a lock-free [`SkipMap`], so `push()`'s insert and the fast
+//! path of `pop()` never touch a lock at all. When `pop()` finds nothing, it
+//! registers on a [`WorkerRegistry`] (see that module's docs for the
+//! invariants this depends on), spins briefly via
+//! [`Backoff`], then parks -- no mutex or condvar
+//! anywhere in the path.
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam_skiplist::SkipMap;
+use crossbeam::utils::Backoff;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::bases::observer::Observer;
 use crate::bases::queue::QueueBase;
 use crate::cfg::config::{Config, TaskConfig};
 use crate::extras::jobs::TaskJob;
+use crate::extras::thread_local;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
 use crate::res::Result;
+use crate::threads::thread_registry::WorkerRegistry;
 use crate::traits::queue::Queue;
 
 /// Type alias for the priority queue child structure.
@@ -130,7 +138,7 @@ impl Queue<Task> for PQChild<Task> {
 
         // Notify waiting threads if not paused.
         if !self.pause_flag.load(Ordering::SeqCst) {
-            self.condition_var.notify_one();
+            self.worker_registry.notify_one();
         }
     }
 
@@ -152,9 +160,11 @@ impl Queue<Task> for PQChild<Task> {
             }
             // Wait if paused.
             else if self.pause_flag.load(Ordering::SeqCst) {
-                // Mutex lock failure indicates poisoned mutex - fatal error.
-                // Condvar wait failure also indicates poisoned mutex - fatal error.
-                let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
+                let idx = thread_local::tl_get_worker_park_idx();
+                
+                self.worker_registry.set_idle(idx);
+                thread::park();
+                self.worker_registry.clear_idle(idx);
             }
 
             // Try to pop a task.
@@ -167,12 +177,35 @@ impl Queue<Task> for PQChild<Task> {
                 }
             }
 
+            let idx = thread_local::tl_get_worker_park_idx();
+            self.worker_registry.set_idle(idx);
+
+            // 2. Medium Path: Spin backoff before committing to sleep
+            let backoff = Backoff::new();
+            
+            while !backoff.is_completed() {
+                // Try to pop a task.
+                if let Some(entry) = self.main_queue.pop_front() {
+                    let mut wrapper = entry.value().take();
+
+                    // Atomically extract the task.
+                    if let Some(moved_task) = wrapper.take() {
+                        self.worker_registry.clear_idle(idx);
+                        return moved_task.task;
+                    }
+                }
+                // snooze(), not spin(): only snooze() advances Backoff past
+                // its spin-only phase, so is_completed() can ever become true
+                // and this loop can fall through to a real park() below.
+                backoff.snooze();
+            }
+
+
             // Check for shutdown.
             // Wait for notification.
-            // Mutex lock failure indicates poisoned mutex - fatal error.
-            // Condvar wait failure also indicates poisoned mutex - fatal error.
             if !self.exit_flag.load(Ordering::SeqCst) {
-                let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
+                thread::park();
+                self.worker_registry.clear_idle(idx);
             }
         }
 
@@ -191,7 +224,7 @@ impl Queue<Task> for PQChild<Task> {
     fn finalize(&self, _: Option<Arc<Observer>>) {
         self.main_queue.clear();
         self.exit_flag.store(true, Ordering::SeqCst);
-        self.condition_var.notify_all();
+        self.worker_registry.notify_all();
 
         let notif = Log::log("Task Queue Finalized".to_string(), "Main");
         self.packet_handle.send_notification(notif);
@@ -240,8 +273,7 @@ impl PQChild<Task> {
         Self {
             task_config: Some(Arc::new(config.tasks)),
             main_queue: SkipMap::new(),
-            gate: Mutex::new(()),
-            condition_var: Condvar::new(),
+            worker_registry: Arc::new(WorkerRegistry::new(config.threads.worker_count)),
             exit_flag: Arc::new(AtomicBool::new(false)),
             pause_flag: Arc::new(AtomicBool::new(false)),
             packet_handle,

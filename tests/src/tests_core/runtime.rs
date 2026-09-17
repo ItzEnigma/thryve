@@ -1329,8 +1329,11 @@ mod tests_observer_manager_init {
         // Act
         let manager = ObserverManager::new(&ctx);
 
-        // Assert - threadpool should be created with num_workers = 0 + 2 = 2
-        assert_eq!(manager.threadpool.num_workers(), 2);
+        // Assert - the observer manager's threadpool never spawns threads by
+        // worker count: the sorter thread and each observer's thread are
+        // spawned individually (init_obs_sorter_thread, load_observer), so
+        // num_workers is unused for this pool and left at 0.
+        assert_eq!(manager.threadpool.num_workers(), 0);
     }
 
     #[test]

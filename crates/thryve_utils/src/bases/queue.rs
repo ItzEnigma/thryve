@@ -19,21 +19,31 @@
 //! implementations, providing:
 //! - Task configuration for queue behavior
 //! - A main queue for storing items
-//! - Synchronization primitives for thread-safe access
+//! - A lock-free registry for parking and waking idle worker threads
 //! - Control flags for pause/resume and exit functionality
 //! - A packet handle for communication with the engine
+//!
+//! # Synchronization model
+//!
+//! Idle threads register themselves in the [`WorkerRegistry`]'s lock-free
+//! bitset, spin briefly, then park via [`std::thread::park`]; wakers scan the
+//! bitset and call [`Thread::unpark`](std::thread::Thread::unpark) directly --
+//! no mutex or condvar is involved. See [`WorkerRegistry`]'s own docs for the
+//! correctness invariants this depends on, in particular why a thread must
+//! register *before* its spin/backoff window rather than only right before
+//! parking.
 //!
 //! # Usage
 //!
 //! Queue implementations embed [`QueueBase`] to inherit its functionality,
-//! then implement the [`Queue`](Crate::traits::queue::Queue) trait to provide type-specific behavior.
+//! then implement the [`Queue`](crate::traits::queue::Queue) trait to provide type-specific behavior.
 
 use std::{
     marker::PhantomData,
-    sync::{Arc, Condvar, Mutex, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicBool},
 };
 
-use crate::cfg::config::TaskConfig;
+use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 use crate::packets::packet_handle::PacketHandle;
 
 /// Base structure for all queue implementations in the Thryve system.
@@ -51,8 +61,7 @@ use crate::packets::packet_handle::PacketHandle;
 ///
 /// - `task_config`: Optional configuration for task-related queue behavior
 /// - `main_queue`: The underlying queue storing items
-/// - `gate`: Mutex for synchronizing access to the condition variable
-/// - `condition_var`: Condition variable for waiting on queue state changes
+/// - `worker_registry`: Lock-free registry for parking and waking idle workers
 /// - `exit_flag`: Atomic flag indicating whether the queue should terminate
 /// - `pause_flag`: Atomic flag indicating whether the queue is paused
 /// - `packet_handle`: Handle for communicating with the engine
@@ -68,10 +77,10 @@ pub struct QueueBase<Q, P> {
     pub task_config: Option<Arc<TaskConfig>>,
     /// The underlying queue storing items.
     pub main_queue: Q,
-    /// Mutex for synchronizing access to the condition variable.
-    pub gate: Mutex<()>,
-    /// Condition variable for waiting on queue state changes.
-    pub condition_var: Condvar,
+    /// Lock-free registry idle workers park on and wakers scan to unpark one
+    /// (or all) of them; sized to exactly the number of threads that call
+    /// [`pop`](crate::traits::queue::Queue::pop) on this specific queue instance.
+    pub worker_registry: Arc<WorkerRegistry>,
     /// Atomic flag indicating whether the queue should terminate.
     pub exit_flag: Arc<AtomicBool>,
     /// Atomic flag indicating whether the queue is paused.

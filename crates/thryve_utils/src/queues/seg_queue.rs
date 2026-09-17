@@ -25,14 +25,26 @@
 //! - Lock-free concurrent access via SegQueue
 //! - Pause/resume support for controlled shutdown
 //! - Integration with the observer logging system
+//!
+//! # Thread Safety
+//!
+//! `main_queue` is a lock-free [`SegQueue`], so `push()` and the fast path of
+//! `pop()` never touch a lock at all. When `pop()` finds nothing, it
+//! registers on a [`WorkerRegistry`] (see that module's docs for the
+//! invariants this depends on), spins briefly via [`Backoff`], then parks --
+//! no mutex or condvar anywhere in the path.
 
 use crossbeam::queue::SegQueue;
+use crossbeam::utils::Backoff;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+use std::thread;
 
 use crate::bases::observer::Observer;
 use crate::bases::{notif::Notif, queue::QueueBase};
+use crate::extras::thread_local;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
+use crate::threads::thread_registry::WorkerRegistry;
 use crate::traits::queue::Queue;
 
 /// Type alias for the notification segmented queue.
@@ -55,7 +67,7 @@ impl Queue<Notif> for QChild {
         self.main_queue.push(value);
 
         if !self.pause_flag.load(Ordering::SeqCst) {
-            self.condition_var.notify_one();
+            self.worker_registry.notify_one();
         }
     }
 
@@ -78,7 +90,11 @@ impl Queue<Notif> for QChild {
             else if self.pause_flag.load(Ordering::SeqCst) {
                 // Mutex lock failure indicates poisoned mutex - fatal error.
                 // Condvar wait failure also indicates poisoned mutex - fatal error.
-                let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
+                let idx = thread_local::tl_get_worker_park_idx();
+                
+                self.worker_registry.set_idle(idx);
+                thread::park();
+                self.worker_registry.clear_idle(idx);
             }
 
             // Try to pop a notification.
@@ -86,12 +102,30 @@ impl Queue<Notif> for QChild {
                 return notif;
             }
 
+            let idx = thread_local::tl_get_worker_park_idx();
+            self.worker_registry.set_idle(idx);
+
+            // 2. Medium Path: Spin backoff before committing to sleep
+            let backoff = Backoff::new();
+            
+            while !backoff.is_completed() {
+                // Try to pop a notification.
+                if let Some(notif) = self.main_queue.pop() {
+                    self.worker_registry.clear_idle(idx);
+                    return notif;
+                }
+                
+                // snooze(), not spin(): only snooze() advances Backoff past
+                // its spin-only phase, so is_completed() can ever become true
+                // and this loop can fall through to a real park() below.
+                backoff.snooze();
+            }
+
             // Check for shutdown.
             // Wait for notification.
-            // Mutex lock failure indicates poisoned mutex - fatal error.
-            // Condvar wait failure also indicates poisoned mutex - fatal error.
             if !self.exit_flag.load(Ordering::SeqCst) {
-                let _unused = self.condition_var.wait(self.gate.lock().unwrap()).unwrap();
+                thread::park();
+                self.worker_registry.clear_idle(idx);
             }
         }
 
@@ -114,7 +148,7 @@ impl Queue<Notif> for QChild {
     /// * `logger` - The logger observer for draining notifications
     fn finalize(&self, logger: Option<Arc<Observer>>) {
         self.exit_flag.store(true, Ordering::SeqCst);
-        self.condition_var.notify_all();
+        self.worker_registry.notify_all();
 
         let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
         let obs = logger.expect(
@@ -161,12 +195,11 @@ impl QChild {
     /// # Returns
     ///
     /// A new `QChild` instance.
-    pub fn new(packet_handle: PacketHandle) -> Self {
+    pub fn new(q_size: usize , packet_handle: PacketHandle) -> Self {
         Self {
             task_config: None,
             main_queue: SegQueue::new(),
-            gate: Mutex::new(()),
-            condition_var: Condvar::new(),
+            worker_registry: Arc::new(WorkerRegistry::new(q_size)),
             exit_flag: Arc::new(AtomicBool::new(false)),
             pause_flag: Arc::new(AtomicBool::new(false)),
             packet_handle,

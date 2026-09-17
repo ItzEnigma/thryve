@@ -24,9 +24,12 @@
 //!
 //! # Thread Pool
 //!
-//! The thread pool is sized to `ctx.observers.len() + 2`, accounting
-//! for the sorter thread and the logging observer thread in addition
-//! to one thread per observer.
+//! The manager's [`ThreadPool`] never spawns threads by worker count for
+//! this pool: the sorter thread ([`init_obs_sorter_thread`](ObserverManager::init_obs_sorter_thread))
+//! and each observer's thread ([`load_observer`](ObserverManager::load_observer))
+//! are each spawned individually, one at a time, as they're added. Its own
+//! main queue has exactly one consumer -- the sorter thread -- so it's sized
+//! accordingly.
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
@@ -55,9 +58,9 @@ use std::thread;
 ///
 /// # Thread Pool Sizing
 ///
-/// The thread pool is sized to `ctx.observers.len() + 2`, accounting
-/// for the sorter thread and the logging observer thread in addition
-/// to one thread per observer.
+/// Threads are spawned individually as observers are added, not by a worker
+/// count: see the [module docs](self) for why `num_workers` is unused for
+/// this particular pool.
 ///
 /// # Example
 ///
@@ -76,10 +79,10 @@ pub struct ObserverManager {
 impl ObserverManager {
     /// Creates a new observer manager.
     ///
-    /// Initializes a new observer manager with the given context.
-    /// The thread pool is created with `ctx.observers.len() + 2` workers,
-    /// accounting for the sorter thread, logging observer thread, and
-    /// one thread per observer.
+    /// Initializes a new observer manager with the given context. Its main
+    /// queue has exactly one consumer -- the sorter thread, started
+    /// separately via [`init_obs_sorter_thread`](Self::init_obs_sorter_thread)
+    /// -- so it's sized to 1, not to a worker count.
     ///
     /// # Arguments
     ///
@@ -95,8 +98,8 @@ impl ObserverManager {
     /// let manager = ObserverManager::new(&ctx);
     /// ```
     pub fn new(ctx: &Ctx) -> Self {
-        let queue = QChild::new(ctx.packet_handle());
-        let num_workers = ctx.observers.len() + 2;
+        let queue = QChild::new(1 ,ctx.packet_handle());
+        let num_workers = 0;
 
         ObserverManager {
             observers: HashMap::new(),

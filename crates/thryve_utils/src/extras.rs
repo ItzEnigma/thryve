@@ -237,10 +237,9 @@ pub mod jobs {
     impl From<Box<dyn FnOnce() -> res::Result + Send + Sync>> for TaskJob {
         /// Converts a `Box<dyn FnOnce() -> Result + Send + Sync>` into a `TaskJob`.
         ///
-        /// This implementation allows seamless migration from the old type alias
-        /// pattern to the new struct pattern. Code using `Box::new(|| { ... })`
-        /// can continue to work with `TaskJob::from(boxed_closure)` or via
-        /// the `Into` trait.
+        /// Lets callers construct a `TaskJob` directly from a boxed closure via
+        /// `TaskJob::from(boxed_closure)` or the `Into` trait, without going
+        /// through [`TaskJob::new`].
         fn from(boxed: Box<dyn FnOnce() -> res::Result + Send + Sync>) -> Self {
             TaskJob { inner: boxed }
         }
@@ -323,9 +322,8 @@ pub mod jobs {
     impl From<Box<dyn Fn(Arc<Observer>) + Send + Sync>> for ObsJob {
         /// Converts a boxed closure into an `ObsJob`.
         ///
-        /// This implementation allows seamless migration from the old type alias
-        /// pattern to the new struct pattern. Code using `Box::new(move |observer| { ... })`
-        /// can continue to work with `ObsJob::from(boxed_closure)`.
+        /// Lets callers construct an `ObsJob` directly from a boxed closure via
+        /// `ObsJob::from(boxed_closure)`, without going through [`ObsJob::new`].
         fn from(boxed: Box<dyn Fn(Arc<Observer>) + Send + Sync>) -> Self {
             ObsJob { inner: boxed }
         }
@@ -424,11 +422,13 @@ pub mod panic_hook {
 /// the current fingerprint is read and attached to the new task's
 /// call site as the `current_executing_task_fingerprint`.
 pub mod thread_local {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     thread_local! {
         /// Thread-local storage for the currently executing task's fingerprint.
         static CURRENT_TASK_FINGERPRINT: RefCell<String> = RefCell::new(String::default());
+
+        static WORKER_PARK_IDX: Cell<usize> = Cell::new(0);
     }
 
     /// Sets the current task fingerprint for the calling thread.
@@ -455,6 +455,14 @@ pub mod thread_local {
     /// The fingerprint string, or an empty string if not set
     pub fn tl_get_current_task_fingerprint() -> String {
         CURRENT_TASK_FINGERPRINT.with(|data| data.borrow().clone())
+    }
+
+    pub fn tl_set_worker_park_idx(idx: usize) {
+        WORKER_PARK_IDX.with(|c| c.set(idx));
+    }
+
+    pub fn tl_get_worker_park_idx() -> usize {
+        WORKER_PARK_IDX.with(Cell::get)
     }
 }
 

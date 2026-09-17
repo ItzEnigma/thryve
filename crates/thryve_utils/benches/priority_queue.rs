@@ -18,6 +18,7 @@ use criterion::{
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::config::Config;
 use thryve_utils::extras::jobs::TaskJob;
+use thryve_utils::extras::thread_local;
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
 use thryve_utils::queues::priority_queue::PQChild;
@@ -27,12 +28,23 @@ use thryve_utils::traits::queue::Queue;
 /// A fresh, empty queue backed by a real `Config` and a real packet channel,
 /// matching how `run_interactive::summon_requirements` wires one up.
 ///
+/// `worker_count` must equal the number of popper threads this queue will
+/// actually be used with: it sizes the `WorkerRegistry`, and each popper
+/// thread must separately call `tl_set_worker_park_idx` with a distinct
+/// index in `0..worker_count` before calling `pop()` -- see `run_scenario`.
+/// A mismatch (or every thread defaulting to index 0) means multiple
+/// genuinely-parked threads share one registry bit and one stored `Thread`
+/// handle, so `notify_one()` wakes the wrong thread while the real waiters
+/// never get a corresponding wakeup.
+///
 /// Returns the receivers too, and the caller must keep them alive for as
 /// long as the queue is in use: `finalize()` calls `send_notification`,
 /// which panics if the receiver has already been dropped (dropping them
 /// immediately here was the bug that made the watchdog's rescue call panic
 /// instead of rescuing anything).
-fn make_queue() -> (
+fn make_queue(
+    worker_count: usize,
+) -> (
     PQChild<Task>,
     crossbeam::channel::Receiver<Task>,
     crossbeam::channel::Receiver<Notif>,
@@ -40,7 +52,9 @@ fn make_queue() -> (
     let (task_tx, task_rx) = crossbeam::channel::bounded(1);
     let (notif_tx, notif_rx) = crossbeam::channel::bounded(1);
     let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-    (PQChild::new(&Config::default(), packet_handle), task_rx, notif_rx)
+    let mut config = Config::default();
+    config.threads.worker_count = worker_count;
+    (PQChild::new(&config, packet_handle), task_rx, notif_rx)
 }
 
 fn no_op_task() -> Task {
@@ -60,18 +74,16 @@ fn no_op_task() -> Task {
 /// been handed to some thread's in-flight `pop()` call, so there's nothing
 /// left for it to legitimately discard.
 fn run_scenario(pushers: usize, poppers: usize, total_tasks: usize) {
-    let (queue, _task_rx, _notif_rx) = make_queue();
+    let (queue, _task_rx, _notif_rx) = make_queue(poppers);
     let push_claimed = AtomicUsize::new(0);
     let pop_claimed = AtomicUsize::new(0);
     // Incremented only after a pop() call has actually returned. `pop_claimed`
     // alone isn't enough to know when we're done: a thread bumps it and then
     // may sit blocked inside queue.pop() for a while, but other threads keep
     // racing ahead and can drive `pop_claimed` past total_tasks long before
-    // that call returns. Checking `pop_claimed` from the watchdog previously
-    // meant "every slot has been picked up by someone" looked identical to
-    // "everyone actually finished" - so a genuinely stuck thread went
-    // unrescued while the watchdog happily saw the claim count satisfied and
-    // returned early. `pop_completed` can only reach total_tasks once every
+    // that call returns -- "every slot has been picked up by someone" is not
+    // the same as "everyone actually finished," and the watchdog below needs
+    // the latter. `pop_completed` can only reach total_tasks once every
     // pop() call has genuinely returned.
     let pop_completed = AtomicUsize::new(0);
 
@@ -86,11 +98,12 @@ fn run_scenario(pushers: usize, poppers: usize, total_tasks: usize) {
             });
         }
 
-        for _ in 0..poppers {
+        for idx in 0..poppers {
             let queue = &queue;
             let pop_claimed = &pop_claimed;
             let pop_completed = &pop_completed;
             s.spawn(move || {
+                thread_local::tl_set_worker_park_idx(idx);
                 while pop_claimed.fetch_add(1, Ordering::Relaxed) < total_tasks {
                     black_box(queue.pop());
                     pop_completed.fetch_add(1, Ordering::Relaxed);
@@ -121,7 +134,29 @@ fn bench_priority_queue(c: &mut Criterion) {
     // 4 matches the framework's default worker_count; 8/12/16/20/24 trace the
     // scaling curve on this 12-core/24-thread machine; 32 pushes past full
     // oversubscription.
-    for &poppers in &[4usize, 8, 12, 16, 20, 24, 32] {
+    //
+    // Criterion's default 5s measurement window isn't enough to collect a
+    // full 100 samples once popper count rises -- each individual iteration
+    // gets slower (more threads contending, occasional missed-wakeup
+    // stalls), so criterion was silently falling back to fewer samples and
+    // printing "Unable to complete 100 samples in 5.0s" for every count
+    // above 4. These per-count budgets are set from the actual "you may
+    // wish to increase target time to Xs" values observed across multiple
+    // runs (including the noisier unfixed variant, which needs the most
+    // headroom), plus a safety margin so a full 100-sample run completes
+    // cleanly every time rather than only when the machine gets lucky.
+    let measurement_secs: &[(usize, u64)] = &[
+        (4, 15),
+        (8, 40),
+        (12, 55),
+        (16, 70),
+        (20, 115),
+        (24, 120),
+        (32, 135),
+    ];
+
+    for &(poppers, secs) in measurement_secs {
+        group.measurement_time(Duration::from_secs(secs));
         group.throughput(Throughput::Elements(total_tasks as u64));
         group.bench_with_input(
             BenchmarkId::new("poppers", poppers),

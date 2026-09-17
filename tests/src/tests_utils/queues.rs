@@ -39,7 +39,7 @@ mod tests_seg_queue {
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
 
         // Assert
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
@@ -53,7 +53,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
         let notif = Log::log("test message".to_string(), "Main");
 
         // Act - push notification
@@ -77,7 +77,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
         let mut count = 5;
 
         // Act - push multiple notifications
@@ -114,7 +114,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
 
         // Assert initially not paused
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
@@ -132,7 +132,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
 
         // Pause first
         queue.pause();
@@ -151,7 +151,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
 
         // Create a mock logger observer
         let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
@@ -183,7 +183,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
 
         // Set exit flag
         queue.exit_flag.store(true, Ordering::SeqCst);
@@ -206,7 +206,7 @@ mod tests_seg_queue {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(packet_handle);
+        let queue = QChild::new(1, packet_handle);
         let notif = Log::log("test".to_string(), "Main");
 
         // Act - push should notify (queue not paused)

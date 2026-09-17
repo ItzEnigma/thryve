@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crate::bases::observer::Observer;
-use crate::extras::thread_local::tl_set_current_task_fingerprint;
+use crate::extras::thread_local::{self, tl_set_current_task_fingerprint};
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
 use crate::res;
 use crate::traits::{packets::Packet, queue::Queue};
@@ -73,7 +73,7 @@ use crate::traits::{packets::Packet, queue::Queue};
 /// ```
 pub struct ThreadPool<Q, P> {
     /// Number of worker threads to spawn.
-    num_workers: usize,
+    pub num_workers: usize,
     /// Collection of worker thread handles for lifecycle management.
     pub workers: Vec<JoinHandle<()>>,
     /// Flag for graceful shutdown.
@@ -185,6 +185,7 @@ where
             let handle = thread::Builder::new()
                 .name(thread_name)
                 .spawn(move || {
+                    thread_local::tl_set_worker_park_idx(i);
                     loop {
                         if exit_flag.load(Ordering::SeqCst) {
                             let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");

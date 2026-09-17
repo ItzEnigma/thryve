@@ -113,7 +113,9 @@ impl Observer {
         Self {
             obs_name: obs_name.to_string(),
             obs_type: NamedInput::new(obs_type),
-            obs_queue: QChild::new(tx.clone()),
+            // Capacity 1: this observer's own dedicated thread (run via
+            // `run_loop`) is the only thread that ever pops from obs_queue.
+            obs_queue: QChild::new(1, tx.clone()),
             obs_core,
             exit_flag: AtomicBool::new(false),
             tx,
