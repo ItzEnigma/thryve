@@ -107,7 +107,12 @@ impl WorkerRegistry {
             while cur != 0 {
                 let bit_pos = cur.trailing_zeros();
                 let mask = 1u64 << bit_pos;
-                match word.compare_exchange_weak(cur, cur & !mask, Ordering::AcqRel, Ordering::Relaxed) {
+                match word.compare_exchange_weak(
+                    cur,
+                    cur & !mask,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
                     Ok(_) => {
                         let idx = w_idx * 64 + bit_pos as usize;
                         if let Some(t) = self.threads[idx].get() {

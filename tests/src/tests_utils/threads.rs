@@ -65,8 +65,14 @@ mod tests_worker_registry {
         reg.set_idle(64);
         reg.set_idle(69);
 
-        assert_eq!(reg.words[0].load(Ordering::SeqCst), (1u64 << 0) | (1u64 << 63));
-        assert_eq!(reg.words[1].load(Ordering::SeqCst), (1u64 << 0) | (1u64 << 5));
+        assert_eq!(
+            reg.words[0].load(Ordering::SeqCst),
+            (1u64 << 0) | (1u64 << 63)
+        );
+        assert_eq!(
+            reg.words[1].load(Ordering::SeqCst),
+            (1u64 << 0) | (1u64 << 5)
+        );
     }
 
     #[test]
@@ -81,7 +87,10 @@ mod tests_worker_registry {
     fn set_idle_records_the_calling_thread() {
         let reg = WorkerRegistry::new(1);
         reg.set_idle(0);
-        assert_eq!(reg.threads[0].get().map(|t| t.id()), Some(thread::current().id()));
+        assert_eq!(
+            reg.threads[0].get().map(|t| t.id()),
+            Some(thread::current().id())
+        );
     }
 
     #[test]
@@ -172,23 +181,33 @@ mod tests_worker_registry {
 
         // Wait until both threads have registered as idle before waking any
         // of them, so notify_one() has something deterministic to find.
-        wait_until(Duration::from_secs(2), "threads never registered as idle", || {
-            reg.words[0].load(Ordering::SeqCst) == 0b11
-        });
+        wait_until(
+            Duration::from_secs(2),
+            "threads never registered as idle",
+            || reg.words[0].load(Ordering::SeqCst) == 0b11,
+        );
 
         reg.notify_one();
-        wait_until(Duration::from_secs(2), "notify_one() did not wake any thread", || {
-            woke.load(Ordering::SeqCst) == 1
-        });
+        wait_until(
+            Duration::from_secs(2),
+            "notify_one() did not wake any thread",
+            || woke.load(Ordering::SeqCst) == 1,
+        );
         // Give the still-parked thread a moment it shouldn't need -- it must
         // still be blocked, not woken by the same notify_one() call.
         thread::sleep(Duration::from_millis(50));
-        assert_eq!(woke.load(Ordering::SeqCst), 1, "notify_one() woke more than one thread");
+        assert_eq!(
+            woke.load(Ordering::SeqCst),
+            1,
+            "notify_one() woke more than one thread"
+        );
 
         reg.notify_one();
-        wait_until(Duration::from_secs(2), "second notify_one() did not wake the remaining thread", || {
-            woke.load(Ordering::SeqCst) == 2
-        });
+        wait_until(
+            Duration::from_secs(2),
+            "second notify_one() did not wake the remaining thread",
+            || woke.load(Ordering::SeqCst) == 2,
+        );
 
         t0.join().unwrap();
         t1.join().unwrap();
@@ -212,15 +231,19 @@ mod tests_worker_registry {
             })
             .collect();
 
-        wait_until(Duration::from_secs(5), "not every thread registered as idle in time", || {
-            reg.threads.iter().all(|t| t.get().is_some())
-        });
+        wait_until(
+            Duration::from_secs(5),
+            "not every thread registered as idle in time",
+            || reg.threads.iter().all(|t| t.get().is_some()),
+        );
 
         reg.notify_all();
 
-        wait_until(Duration::from_secs(5), "notify_all() failed to wake every parked thread", || {
-            woke.load(Ordering::SeqCst) == N
-        });
+        wait_until(
+            Duration::from_secs(5),
+            "notify_all() failed to wake every parked thread",
+            || woke.load(Ordering::SeqCst) == N,
+        );
 
         for h in handles {
             h.join().unwrap();

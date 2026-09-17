@@ -43,8 +43,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 use crate::packets::packet_handle::PacketHandle;
+use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 
 /// Base structure for all queue implementations in the Thryve system.
 ///

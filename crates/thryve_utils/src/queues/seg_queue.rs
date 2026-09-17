@@ -36,8 +36,8 @@
 
 use crossbeam::queue::SegQueue;
 use crossbeam::utils::Backoff;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use crate::bases::observer::Observer;
@@ -91,7 +91,7 @@ impl Queue<Notif> for QChild {
                 // Mutex lock failure indicates poisoned mutex - fatal error.
                 // Condvar wait failure also indicates poisoned mutex - fatal error.
                 let idx = thread_local::tl_get_worker_park_idx();
-                
+
                 self.worker_registry.set_idle(idx);
                 thread::park();
                 self.worker_registry.clear_idle(idx);
@@ -107,14 +107,14 @@ impl Queue<Notif> for QChild {
 
             // 2. Medium Path: Spin backoff before committing to sleep
             let backoff = Backoff::new();
-            
+
             while !backoff.is_completed() {
                 // Try to pop a notification.
                 if let Some(notif) = self.main_queue.pop() {
                     self.worker_registry.clear_idle(idx);
                     return notif;
                 }
-                
+
                 // snooze(), not spin(): only snooze() advances Backoff past
                 // its spin-only phase, so is_completed() can ever become true
                 // and this loop can fall through to a real park() below.
@@ -195,7 +195,7 @@ impl QChild {
     /// # Returns
     ///
     /// A new `QChild` instance.
-    pub fn new(q_size: usize , packet_handle: PacketHandle) -> Self {
+    pub fn new(q_size: usize, packet_handle: PacketHandle) -> Self {
         Self {
             task_config: None,
             main_queue: SegQueue::new(),

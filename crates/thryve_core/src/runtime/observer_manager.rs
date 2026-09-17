@@ -98,7 +98,7 @@ impl ObserverManager {
     /// let manager = ObserverManager::new(&ctx);
     /// ```
     pub fn new(ctx: &Ctx) -> Self {
-        let queue = QChild::new(1 ,ctx.packet_handle());
+        let queue = QChild::new(1, ctx.packet_handle());
         let num_workers = 0;
 
         ObserverManager {

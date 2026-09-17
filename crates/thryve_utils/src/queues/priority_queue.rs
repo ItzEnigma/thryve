@@ -39,10 +39,10 @@
 //! anywhere in the path.
 
 use crossbeam::atomic::AtomicCell;
-use crossbeam_skiplist::SkipMap;
 use crossbeam::utils::Backoff;
+use crossbeam_skiplist::SkipMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -161,7 +161,7 @@ impl Queue<Task> for PQChild<Task> {
             // Wait if paused.
             else if self.pause_flag.load(Ordering::SeqCst) {
                 let idx = thread_local::tl_get_worker_park_idx();
-                
+
                 self.worker_registry.set_idle(idx);
                 thread::park();
                 self.worker_registry.clear_idle(idx);
@@ -182,7 +182,7 @@ impl Queue<Task> for PQChild<Task> {
 
             // 2. Medium Path: Spin backoff before committing to sleep
             let backoff = Backoff::new();
-            
+
             while !backoff.is_completed() {
                 // Try to pop a task.
                 if let Some(entry) = self.main_queue.pop_front() {
@@ -199,7 +199,6 @@ impl Queue<Task> for PQChild<Task> {
                 // and this loop can fall through to a real park() below.
                 backoff.snooze();
             }
-
 
             // Check for shutdown.
             // Wait for notification.
