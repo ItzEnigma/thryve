@@ -704,4 +704,4 @@ The CLA ensures that:
 
 ---
 
-**Thank you for contributing to Thryve!** 🚀
+**Thank you for contributing to Thryve!**
