@@ -9,7 +9,6 @@
 
 pub mod bases;
 pub mod cfg;
-pub mod debug_logging;
 pub mod errors;
 pub mod extras;
 pub mod graphs;
