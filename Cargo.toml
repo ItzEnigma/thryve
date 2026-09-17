@@ -14,7 +14,7 @@
     edition = "2024"
     license = "AGPL-3.0-or-later"
     homepage = "https://thryve-framework.com"
-    repository = "<pending — see below>"
+    repository = "https://github.com/thryveframework/thryve"
     readme = "README.md"
 
 [workspace.dependencies]
