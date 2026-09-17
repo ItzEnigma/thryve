@@ -56,7 +56,7 @@ use std::{
 use windows_services::{Command, Service};
 
 use thryve_utils::cfg::{config::Config, ctx::Ctx};
-use thryve_utils::debug_logging::log;
+use thryve_utils::packets::notif_log::Log;
 use thryve_utils::packets::packet_handle::PacketHandle;
 
 use crate::init::init::init_engine;
@@ -232,6 +232,7 @@ impl<'a> Thryve<'a> {
 
         let len_obs_tasks = ctx.observers.len();
         let len_plugin_tasks = ctx.plugins.len();
+        let packet_handle = ctx.packet_handle();
         let mut ctx = Some(ctx);
 
         // The service instance will call the closure whenever a command is received.
@@ -326,7 +327,10 @@ impl<'a> Thryve<'a> {
                     if let Err(e) = handle.join() {
                         // Thread join error indicates the engine thread panicked
                         // This is a critical failure that requires immediate attention
-                        log(format!("Engine thread join error (thread panicked): {:?}", e));
+                        packet_handle.send_notification(Log::err(format!(
+                            "Engine thread join error (thread panicked): {:?}",
+                            e
+                        )));
                     }
                 }
             }
