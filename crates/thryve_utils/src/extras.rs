@@ -428,7 +428,7 @@ pub mod thread_local {
         /// Thread-local storage for the currently executing task's fingerprint.
         static CURRENT_TASK_FINGERPRINT: RefCell<String> = RefCell::new(String::default());
 
-        static WORKER_PARK_IDX: Cell<usize> = Cell::new(0);
+        static WORKER_PARK_IDX: Cell<usize> = const { Cell::new(0) };
     }
 
     /// Sets the current task fingerprint for the calling thread.

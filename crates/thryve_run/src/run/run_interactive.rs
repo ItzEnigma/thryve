@@ -80,11 +80,10 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 /// # Examples
 ///
 /// ```no_run
-/// use thryve_utils::cfg::{config::Config, ctx::Ctx};
-/// use thryve_run::run::run_interactive::run_interactive;
+/// use thryve_utils::cfg::config::Config;
+/// use thryve_run::run::run_interactive::{run_interactive, summon_requirements};
 ///
-/// let config = Config::default();
-/// let ctx = Ctx::new(config);
+/// let ctx = summon_requirements(Config::load_def_config());
 /// run_interactive(ctx);
 /// ```
 pub fn run_interactive(mut ctx: Ctx) -> Option<JoinHandle<()>> {

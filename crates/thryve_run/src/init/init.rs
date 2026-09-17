@@ -23,8 +23,12 @@
 //! # Example
 //!
 //! ```no_run
-//! use thryve_run::init::init_engine;
+//! use thryve_run::init::init::{init_directories, init_engine};
+//! use thryve_run::run::run_interactive::summon_requirements;
+//! use thryve_utils::cfg::config::Config;
 //!
+//! let mut ctx = summon_requirements(Config::load_def_config());
+//! init_directories(&mut ctx);
 //! let engine = init_engine(&ctx);
 //! ```
 
@@ -69,8 +73,12 @@ use thryve_utils::{
 /// # Example
 ///
 /// ```no_run
-/// use thryve_run::init::init_engine;
+/// use thryve_run::init::init::{init_directories, init_engine};
+/// use thryve_run::run::run_interactive::summon_requirements;
+/// use thryve_utils::cfg::config::Config;
 ///
+/// let mut ctx = summon_requirements(Config::load_def_config());
+/// init_directories(&mut ctx);
 /// let engine = init_engine(&ctx);
 /// ```
 pub fn init_engine(ctx: &Ctx) -> Engine {
@@ -106,9 +114,15 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 /// # Example
 ///
 /// ```no_run
-/// use thryve_run::init::init_logger;
+/// use thryve_core::runtime::engine::Engine;
+/// use thryve_run::init::init::{init_directories, init_logger};
+/// use thryve_run::run::run_interactive::summon_requirements;
+/// use thryve_utils::cfg::config::Config;
 ///
-/// init_logger(&ctx, &mut engine, vec!["Main".to_string(), "Error".to_string()]);
+/// let mut ctx = summon_requirements(Config::load_def_config());
+/// init_directories(&mut ctx);
+/// let mut engine = Engine::new(&ctx);
+/// init_logger(&ctx, &mut engine);
 /// ```
 pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
     // Create a new instance of the `LoggerObserver` struct, passing the
@@ -172,8 +186,11 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) {
 /// # Example
 ///
 /// ```no_run
-/// use thryve_run::init::init_directories;
+/// use thryve_run::init::init::init_directories;
+/// use thryve_run::run::run_interactive::summon_requirements;
+/// use thryve_utils::cfg::config::Config;
 ///
+/// let mut ctx = summon_requirements(Config::load_def_config());
 /// init_directories(&mut ctx);
 /// ```
 pub fn init_directories(ctx: &mut Ctx) {
