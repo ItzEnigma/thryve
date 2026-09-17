@@ -240,7 +240,7 @@ impl ObserverManager {
             self.check_observer(&notif.notif_receiver),
             "Observer Manager Cannot Find Requested Observer: {}.
             Check that the receiver of the notification is written correctly.",
-            &notif.notif_receiver
+            notif.notif_receiver
         );
 
         self.threadpool.main_queue.push(notif);
