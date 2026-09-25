@@ -104,7 +104,7 @@ impl Config {
     /// # Example
     ///
     /// ```no_run
-    /// use thryve_utils::cfg::Config;
+    /// use thryve_utils::cfg::config::Config;
     ///
     /// let config = Config::load_def_config();
     /// ```

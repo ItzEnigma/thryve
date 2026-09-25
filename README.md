@@ -51,11 +51,11 @@ Tasks are units of work submitted to the engine for execution:
 ```rust
 use thryve_utils::packets::task::Task;
 use thryve_utils::extras::jobs::TaskJob;
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 
 let task = Task::new("MyTask", 2, TaskJob::new(|| {
     // Task execution logic
-    Result::new("Success", "Task completed".to_string(), "Main")
+    TaskResult::new("Success", "Task completed".to_string(), "Main")
 }));
 ```
 
@@ -63,25 +63,25 @@ let task = Task::new("MyTask", 2, TaskJob::new(|| {
 - **Unique ID**: Automatically assigned for tracking
 - **Name**: Human-readable identifier
 - **Priority**: Higher values = more urgent (0-14)
-- **Execution Function**: Closure returning a `Result`
+- **Execution Function**: Closure returning a `TaskResult`
 
 ### Results
 
 Results represent task execution outcomes and enable task chaining:
 
 ```rust
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 use thryve_utils::packets::task::Task;
 use thryve_utils::extras::jobs::TaskJob;
 
 // Terminal result
-let result = Result::new("Success", "Done".to_string(), "Main");
+let result = TaskResult::new("Success", "Done".to_string(), "Main");
 
 // Chained result — executes the next task once this one completes
 let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
-    Result::new("Ok", "".to_string(), "Main")
+    TaskResult::new("Ok", "".to_string(), "Main")
 }));
-let chained = Result::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
+let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
 ```
 
 ### Observers
@@ -138,7 +138,7 @@ Core utilities, data structures, and traits.
 | `Task` | Unit of work with priority and unique ID |
 | `Notif` | Notification structure for observer communication |
 | `Log` | Logging notification implementation |
-| `Result` | Task execution outcome with chaining capability |
+| `TaskResult` | Task execution outcome with chaining capability |
 | `ThreadPool` | Generic thread pool for tasks and notifications |
 | `PQChild` | Priority queue with aging mechanism |
 | `QChild` | Segmented queue for notifications |
@@ -224,13 +224,13 @@ log_tasks= false
 ```rust
 use thryve_utils::packets::task::Task;
 use thryve_utils::extras::jobs::TaskJob;
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 use thryve_utils::packets::packet_handle::PacketHandle;
 
 fn send_calculation(handle: &PacketHandle) {
     let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
         let result = 2 + 2;
-        Result::new("Success", format!("Result: {}", result), "Main")
+        TaskResult::new("Success", format!("Result: {}", result), "Main")
     }));
 
     handle.send_task(task);
@@ -248,7 +248,7 @@ use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::impl_as_any;
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 
 struct MyPlugin;
 
@@ -265,8 +265,8 @@ impl MyPlugin {
         Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
     }
 
-    fn task_a(&self, _tx: PacketHandle) -> Result {
-        Result::new("Success", "Task A completed".to_string(), "Main")
+    fn task_a(&self, _tx: PacketHandle) -> TaskResult {
+        TaskResult::new("Success", "Task A completed".to_string(), "Main")
     }
 }
 
@@ -344,7 +344,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 use thryve_utils::impl_as_any;
 
 struct MyPlugin;
@@ -356,8 +356,8 @@ impl MyPlugin {
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
         Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
     }
-    fn task_a(&self, _tx: PacketHandle) -> Result {
-        Result::new("Success", "Task A completed".to_string(), "Main")
+    fn task_a(&self, _tx: PacketHandle) -> TaskResult {
+        TaskResult::new("Success", "Task A completed".to_string(), "Main")
     }
 }
 impl PlgLogic for MyPlugin {
@@ -424,7 +424,7 @@ use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::res::Result;
+use thryve_utils::res::TaskResult;
 use thryve_utils::impl_as_any;
 
 struct MyPlugin;
@@ -436,8 +436,8 @@ impl MyPlugin {
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
         Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
     }
-    fn task_a(&self, _tx: PacketHandle) -> Result {
-        Result::new("Success", "Task A completed".to_string(), "Main")
+    fn task_a(&self, _tx: PacketHandle) -> TaskResult {
+        TaskResult::new("Success", "Task A completed".to_string(), "Main")
     }
 }
 impl PlgLogic for MyPlugin {

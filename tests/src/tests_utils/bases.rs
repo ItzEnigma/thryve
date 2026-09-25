@@ -16,7 +16,7 @@ mod tests_plugin {
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::{PlgLogic, PluginB};
 
     // Test implementation of PlgLogic
@@ -35,7 +35,7 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
@@ -52,7 +52,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new("plugin123", "type456", plg_core, packet_handle, job);
@@ -69,7 +70,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new("TestPlugin", "TestType", plg_core, packet_handle, job);
@@ -86,7 +88,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         let mut plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
 
@@ -117,7 +120,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         let plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
 
@@ -132,7 +136,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new("a", "b", plg_core, packet_handle, job);
@@ -151,7 +156,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
         let plugin = Plugin::new(&long_name, &long_type, plg_core, packet_handle, job);
@@ -169,7 +175,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type cannot be empty
         let _plugin = Plugin::new("test_plugin", "", plg_core, packet_handle, job);
@@ -183,7 +190,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type must be alphanumeric
         let _plugin = Plugin::new("test_plugin", "test-type", plg_core, packet_handle, job);
@@ -197,7 +205,8 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob =
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act & Assert - should panic because plg_type must be alphanumeric
         let _plugin = Plugin::new("test_plugin", "Test_Type", plg_core, packet_handle, job);
@@ -232,7 +241,7 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {
             // No-op test function
         });
 
@@ -241,7 +250,7 @@ mod tests_observer {
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
 
@@ -258,10 +267,10 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("observer123", "type456", obs_core, fn_to_run, packet_handle);
+        let observer = Observer::new("observer123", "type456", obs_core, obs_job, packet_handle);
 
         // Assert
         assert_eq!(observer.obs_name, "observer123");
@@ -275,14 +284,14 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
             "TestObserver",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
 
@@ -298,14 +307,14 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
 
@@ -320,13 +329,13 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         ));
 
@@ -347,10 +356,10 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("a", "b", obs_core, fn_to_run, packet_handle);
+        let observer = Observer::new("a", "b", obs_core, obs_job, packet_handle);
 
         // Assert
         assert_eq!(observer.obs_name, "a");
@@ -366,10 +375,10 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new(&long_name, &long_type, obs_core, fn_to_run, packet_handle);
+        let observer = Observer::new(&long_name, &long_type, obs_core, obs_job, packet_handle);
 
         // Assert
         assert_eq!(observer.obs_name, long_name);
@@ -384,10 +393,10 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type cannot be empty
-        let _observer = Observer::new("test_observer", "", obs_core, fn_to_run, packet_handle);
+        let _observer = Observer::new("test_observer", "", obs_core, obs_job, packet_handle);
     }
 
     #[test]
@@ -398,14 +407,14 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type must be alphanumeric
         let _observer = Observer::new(
             "test_observer",
             "test-type",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
     }
@@ -418,14 +427,14 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act & Assert - should panic because obs_type must be alphanumeric
         let _observer = Observer::new(
             "test_observer",
             "Test_Type",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
     }
@@ -437,13 +446,13 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         ));
 
@@ -461,14 +470,14 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
         let observer = Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
 
@@ -478,7 +487,7 @@ mod tests_observer {
     }
 
     #[test]
-    fn test_observer_fn_to_run_is_stored() {
+    fn test_observer_obs_job_is_stored() {
         // Arrange
         let executed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let executed_clone = Arc::clone(&executed);
@@ -487,7 +496,7 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {
             executed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
 
@@ -496,12 +505,12 @@ mod tests_observer {
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         );
 
         let obs_arc = Arc::new(observer);
-        // Execute the fn_to_run
+        // Execute the obs_job
         obs_arc.run_loop(obs_arc.clone());
 
         // Assert - the function should have been executed
@@ -515,10 +524,10 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("Observer123", "Type456", obs_core, fn_to_run, packet_handle);
+        let observer = Observer::new("Observer123", "Type456", obs_core, obs_job, packet_handle);
 
         // Assert
         assert_eq!(observer.obs_name, "Observer123");
@@ -532,13 +541,13 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         ));
 
@@ -559,13 +568,13 @@ mod tests_observer {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         let observer = Arc::new(Observer::new(
             "test_observer",
             "TestType",
             obs_core,
-            fn_to_run,
+            obs_job,
             packet_handle,
         ));
 

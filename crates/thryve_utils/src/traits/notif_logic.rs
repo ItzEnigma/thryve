@@ -44,19 +44,18 @@ use crate::traits::packets::Packet;
 ///
 /// ```no_run
 /// use thryve_utils::traits::notif_logic::NotifLogic;
-/// use thryve_utils::traits::packets::Packet;
 ///
 /// pub struct MyNotifLogic {
 ///     // fields...
 /// }
 ///
+/// // `Packet` is implemented automatically via NotifLogic's blanket impl -
+/// // implementing it explicitly here would conflict with that blanket impl.
 /// impl NotifLogic for MyNotifLogic {
 ///     fn as_any(&self) -> &dyn std::any::Any {
 ///         self
 ///     }
 /// }
-///
-/// impl Packet for MyNotifLogic {}
 /// ```
 pub trait NotifLogic: Packet {
     /// Returns a reference to `self` as `dyn Any`.
@@ -73,8 +72,17 @@ pub trait NotifLogic: Packet {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use thryve_utils::traits::notif_logic::NotifLogic;
+    /// #
+    /// # struct MyNotifLogic;
+    /// # impl NotifLogic for MyNotifLogic {
+    /// #     fn as_any(&self) -> &dyn std::any::Any { self }
+    /// # }
+    /// #
+    /// # let notif_core: Arc<dyn NotifLogic> = Arc::new(MyNotifLogic);
     /// // Downcasting example in an observer:
-    /// let notif_as_any = notif.notif_core.as_any();
+    /// let notif_as_any = notif_core.as_any();
     /// if let Some(concrete) = notif_as_any.downcast_ref::<MyNotifLogic>() {
     ///     // Access concrete type methods
     /// }

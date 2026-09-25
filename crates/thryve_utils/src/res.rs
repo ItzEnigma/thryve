@@ -7,9 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Result type for task execution.
+//! TaskResult — the result type for task execution.
 //!
-//! This module defines the [`Result`] struct, which represents the outcome
+//! This module defines the [`TaskResult`] struct, which represents the outcome
 //! of task execution in the Thryve system. Results serve as the mechanism
 //! for tasks to communicate their completion status and trigger follow-up
 //! actions.
@@ -38,9 +38,9 @@ use crate::extras::thread_local;
 use crate::packets::task::Task;
 use crate::traits::packets::Packet;
 
-/// Result of task execution.
+/// The result of a task's execution.
 ///
-/// The `Result` struct represents the outcome of a task execution.
+/// The `TaskResult` struct represents the outcome of a task execution.
 /// It serves as the mechanism for tasks to communicate their
 /// completion status and trigger follow-up actions.
 ///
@@ -62,20 +62,23 @@ use crate::traits::packets::Packet;
 /// # Example
 ///
 /// ```no_run
-/// use thryve_utils::res::Result;
+/// use thryve_utils::res::TaskResult;
+/// use thryve_utils::packets::task::Task;
+/// use thryve_utils::extras::jobs::TaskJob;
 ///
 /// // Regular result (terminal)
-/// let result = Result::new("Success", "Done".to_string(), "Main");
+/// let result = TaskResult::new("Success", "Done".to_string(), "Main");
 ///
 /// // Tasked result (chains to next task)
-/// let next = Some(Task::new("NextTask", 1, Box::new(|| {
-///     Result::new("Ok", "".to_string(), "Main")
-/// })));
-/// let chained = Result::new_tasked_res("Chained", "Moving on".to_string(), "Main", next);
+/// let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
+///     TaskResult::new("Ok", "".to_string(), "Main")
+/// }));
+/// let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main")
+///     .chain(next_task);
 /// ```
 ///
 #[derive(Default)]
-pub struct Result {
+pub struct TaskResult {
     /// Type identifier for the result.
     pub result_type: NamedInput,
     /// Human-readable result message.
@@ -90,13 +93,13 @@ pub struct Result {
     pub plugin: Option<Plugin>,
 }
 
-impl Display for Result {
+impl Display for TaskResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Message: {}", self.message)
     }
 }
 
-impl Result {
+impl TaskResult {
     /// Creates a new regular result.
     ///
     /// Creates a result that represents a terminal node in the task
@@ -111,18 +114,18 @@ impl Result {
     ///
     /// # Returns
     ///
-    /// A new `Result` with no follow-up actions.
+    /// A new `TaskResult` with no follow-up actions.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
     ///
-    /// let result = Result::new("Success", "Task completed".to_string(), "Main");
+    /// let result = TaskResult::new("Success", "Task completed".to_string(), "Main");
     /// assert!(result.next_task.is_none());
     /// ```
     pub fn new(res_type: &str, msg: String, logging_file: &str) -> Self {
-        Result {
+        TaskResult {
             result_type: NamedInput::new(res_type),
             message: msg,
             log_msg_to_file: NamedInput::new(logging_file),
@@ -153,44 +156,46 @@ impl Result {
     ///
     /// # Returns
     ///
-    /// The modified `Result` with the task attached, enabling method chaining.
+    /// The modified `TaskResult` with the task attached, enabling method chaining.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
+    /// use thryve_utils::extras::jobs::TaskJob;
     ///
     /// // Create a result and chain a follow-up task
-    /// let next_task = Task::new("FollowUp", 1, Box::new(|| {
-    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// let next_task = Task::new("FollowUp", 1, TaskJob::new(|| {
+    ///     TaskResult::new("Done", "Completed".to_string(), "Main")
     /// }));
     ///
-    /// let chained_result = Result::new("Step1", "First step".to_string(), "Main")
+    /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
     ///     .chain(next_task);
     ///
     /// assert!(chained_result.next_task.is_some());
     /// ```
     ///
     /// ```no_run
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
+    /// use thryve_utils::extras::jobs::TaskJob;
     ///
     /// // Create a result and chain a follow-up task
-    /// let next_task_1 = Task::new("FollowUp2", 1, Box::new(|| {
-    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// let next_task_1 = Task::new("FollowUp2", 1, TaskJob::new(|| {
+    ///     TaskResult::new("Done", "Completed".to_string(), "Main")
     /// }));
     ///
     ///
-    /// let next_task_2 = Task::new("FollowUp2", 1, Box::new(|| {
-    ///     Result::new("Done", "Completed".to_string(), "Main")
+    /// let next_task_2 = Task::new("FollowUp2", 1, TaskJob::new(|| {
+    ///     TaskResult::new("Done", "Completed".to_string(), "Main")
     /// }));
     ///
     /// // A double chain should make next_task_2 overwrite next_task_1
-    /// let chained_result = Result::new("Step1", "First step".to_string(), "Main")
+    /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
     ///     .chain(next_task_1).chain(next_task_2);
     ///
-    /// assert!(chained_result.next_task.task_name.inner() == "FollowUp2");
+    /// assert!(chained_result.next_task.unwrap().task_name.inner() == "FollowUp2");
     /// ```
     pub fn chain(mut self, mut task: Task) -> Self {
         if thread_local::tl_get_current_task_fingerprint() != String::default() {
@@ -230,9 +235,9 @@ impl Result {
     }
 }
 
-impl Result {
+impl TaskResult {
     pub fn fin() -> Self {
-        Result {
+        TaskResult {
             result_type: NamedInput::new("Fin"),
             message: String::from("finishing capture: starting exit now."),
             log_msg_to_file: NamedInput::new("Main"),

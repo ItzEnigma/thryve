@@ -52,7 +52,7 @@ use crate::cfg::config::{Config, TaskConfig};
 use crate::extras::jobs::TaskJob;
 use crate::extras::thread_local;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
-use crate::res::Result;
+use crate::res::TaskResult;
 use crate::threads::thread_registry::WorkerRegistry;
 use crate::traits::queue::Queue;
 
@@ -209,7 +209,7 @@ impl Queue<Task> for PQChild<Task> {
         }
 
         // Return special "Fin" task on shutdown.
-        Task::new("Fin", 0, TaskJob::new(Result::fin))
+        Task::new("Fin", 0, TaskJob::new(TaskResult::fin))
     }
 
     /// Finalizes the queue for shutdown.

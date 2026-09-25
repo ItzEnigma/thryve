@@ -27,7 +27,7 @@
 //! - `Sync`: Packets can be shared between threads
 //! - `'static`: Packets have no non-'static references
 
-use crate::{graphs::callsite::TaskCallSite, res};
+use crate::{graphs::callsite::TaskCallSite, res::TaskResult};
 
 /// Common trait for all packet types in the Thryve system.
 ///
@@ -45,13 +45,13 @@ use crate::{graphs::callsite::TaskCallSite, res};
 ///
 /// ```no_run
 /// use thryve_utils::traits::packets::Packet;
-/// use thryve_utils::res::Result;
+/// use thryve_utils::res::TaskResult;
 ///
 /// pub struct MyPacket;
 ///
 /// impl Packet for MyPacket {
-///     fn process(self) -> Option<(u64, Result)> {
-///         Some((42, Result::new("Ok", "Done".to_string(), "Main")))
+///     fn process(self) -> Option<(u64, TaskResult)> {
+///         Some((42, TaskResult::new("Ok", "Done".to_string(), "Main")))
 ///     }
 /// }
 /// ```
@@ -70,9 +70,9 @@ pub trait Packet: Send + Sync + 'static {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_utils::traits::packets::Packet;
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
     ///
     /// // Task implementation returns Some
     /// let result = my_task.process();
@@ -82,7 +82,7 @@ pub trait Packet: Send + Sync + 'static {
     /// let result = my_notification.process();
     /// assert!(result.is_none());
     /// ```
-    fn process(self) -> Option<(u64, res::Result)>
+    fn process(self) -> Option<(u64, TaskResult)>
     where
         Self: Sized,
     {

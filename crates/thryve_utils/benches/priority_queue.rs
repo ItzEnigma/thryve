@@ -20,7 +20,7 @@ use thryve_utils::extras::thread_local;
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
 use thryve_utils::queues::priority_queue::PQChild;
-use thryve_utils::res::Result as TResult;
+use thryve_utils::res::TaskResult;
 use thryve_utils::traits::queue::Queue;
 
 /// A fresh, empty queue backed by a real `Config` and a real packet channel,
@@ -56,7 +56,7 @@ fn make_queue(
 }
 
 fn no_op_task() -> Task {
-    Task::new("Bench", 1, TaskJob::new(TResult::default))
+    Task::new("Bench", 1, TaskJob::new(TaskResult::default))
 }
 
 /// Pushes `total_tasks` (split across `pushers` threads) and pops the same

@@ -54,7 +54,7 @@ use crate::traits::queue::Queue;
 /// - `obs_core`: Core logic implementing custom observer behavior
 /// - `exit_flag`: Atomic flag for graceful shutdown coordination
 /// - `tx`: Packet handle for communicating with the engine
-/// - `fn_to_run`: Initialization closure that starts the observer's main loop
+/// - `obs_job`: Initialization closure that starts the observer's main loop
 ///
 /// # Example
 ///
@@ -76,7 +76,7 @@ pub struct Observer {
     /// Packet handle for communicating with the engine.
     pub tx: PacketHandle,
     /// Initialization closure that starts the observer's main loop.
-    pub fn_to_run: ObsJob,
+    pub obs_job: ObsJob,
 }
 
 impl ObsB for Observer {}
@@ -93,7 +93,7 @@ impl Observer {
     /// * `obs_name` - Unique identifier for the observer
     /// * `obs_type` - Type classifier for routing notifications
     /// * `obs_core` - Core logic implementing custom observer behavior
-    /// * `func` - Closure that runs the observer's main processing loop
+    /// * `obs_job`  - Closure that runs the observer's main processing loop
     /// * `tx` - Packet handle for communicating with the engine
     ///
     /// # Returns
@@ -103,7 +103,7 @@ impl Observer {
         obs_name: &str,
         obs_type: &str,
         obs_core: Arc<dyn ObsLogic>,
-        func: ObsJob,
+        obs_job: ObsJob,
         tx: PacketHandle,
     ) -> Self {
         if obs_type.is_empty() {
@@ -119,7 +119,7 @@ impl Observer {
             obs_core,
             exit_flag: AtomicBool::new(false),
             tx,
-            fn_to_run: func,
+            obs_job,
         }
     }
 
@@ -139,7 +139,7 @@ impl Observer {
 
     /// Extracts and returns the initialization function.
     ///
-    /// Returns the `fn_to_run` closure and replaces it with a default
+    /// Returns the `obs_job` closure and replaces it with a default
     /// error function. This ensures the initialization function is only executed
     /// once when the observer is first loaded.
     ///
@@ -149,6 +149,6 @@ impl Observer {
     /// called multiple times.
     pub fn run_loop(&self, arc_obs: Arc<Observer>) {
         // Take the ObsJob and replace it with a default one (similar to Task::process)
-        self.fn_to_run.call_once(arc_obs);
+        self.obs_job.call_once(arc_obs);
     }
 }

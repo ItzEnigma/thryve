@@ -54,15 +54,18 @@ use crate::bases::observer::Observer;
 /// # Example
 ///
 /// ```no_run
+/// # use crossbeam::channel::bounded;
+/// # use thryve_utils::packets::notif_log::Log;
+/// # use thryve_utils::packets::packet_handle::PacketHandle;
+/// # use thryve_utils::queues::seg_queue::QChild;
 /// use thryve_utils::traits::queue::Queue;
 ///
-/// // Using a priority queue
-/// let pq = /* ... */;
-/// pq.push(my_task);
-/// let task = pq.pop();
-///
+/// # let (task_tx, _task_rx) = bounded(1);
+/// # let (notif_tx, _notif_rx) = bounded(1);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, false);
 /// // Using a segmented queue
-/// let sq = /* ... */;
+/// let sq = QChild::new(1, handle);
+/// # let my_notification = Log::log("hello".to_string(), "Main");
 /// sq.push(my_notification);
 /// let notif = sq.pop();
 /// ```
@@ -80,6 +83,16 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::notif_log::Log;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
+    /// # let my_item = Log::log("hello".to_string(), "Main");
     /// queue.push(my_item);
     /// ```
     fn push(&self, value: T);
@@ -98,6 +111,14 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
     /// let item = queue.pop();
     /// ```
     fn pop(&self) -> T;
@@ -115,7 +136,16 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
-    /// queue.finalize(Some(logger.clone()));
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
+    /// # let logger: Option<std::sync::Arc<thryve_utils::bases::observer::Observer>> = None;
+    /// queue.finalize(logger);
     /// ```
     fn finalize(&self, logger: Option<Arc<Observer>>);
 
@@ -127,6 +157,14 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
     /// queue.pause();
     /// // pop() will block here
     /// queue.resume();
@@ -140,6 +178,14 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
     /// queue.resume();
     /// // pop() will now continue
     /// ```
@@ -157,6 +203,14 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::queues::seg_queue::QChild;
+    /// # use thryve_utils::traits::queue::Queue;
+    /// #
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
     /// let shared_flag = queue.exit_flag();
     /// ```
     fn exit_flag(&self) -> Arc<AtomicBool>;

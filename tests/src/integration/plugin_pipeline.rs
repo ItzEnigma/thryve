@@ -36,11 +36,11 @@ mod tests_plugin_pipeline {
     use thryve_utils::impl_as_any;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
     /// Real plugin core logic: on load, scans `input_dir` and fans out one
-    /// "compress" task per image, exactly like `ImgCompression::initial_fn_to_run`
+    /// "compress" task per image, exactly like `ImgCompression::initial_obs_job`
     /// -> `load_img` does.
     struct ImgPipelinePlugin {
         input_dir: PathBuf,
@@ -66,7 +66,7 @@ mod tests_plugin_pipeline {
             Plugin::new("ImgPipeline", "Test", core, tx, entry)
         }
 
-        fn load_images(&self, tx: PacketHandle) -> res::Result {
+        fn load_images(&self, tx: PacketHandle) -> TaskResult {
             let mut entries: Vec<PathBuf> = fs::read_dir(&self.input_dir)
                 .expect("test fixture input dir should exist")
                 .filter_map(|e| e.ok().map(|e| e.path()))
@@ -88,7 +88,7 @@ mod tests_plugin_pipeline {
                 tx.send_task(Task::new("CompressImage", 1, job));
             }
 
-            res::Result::new("Ok", format!("queued {} images", total), "Main")
+            TaskResult::new("Ok", format!("queued {} images", total), "Main")
         }
     }
 
@@ -96,7 +96,11 @@ mod tests_plugin_pipeline {
     /// as `ImgCompression::process_img`), write it to `output_dir`, and once
     /// every image has been processed, return a `Fin` result so the engine
     /// shuts down - exactly how a real plugin signals it's done.
-    fn compress_one(path: &Path, output_dir: &Path, remaining: &Arc<AtomicUsize>) -> res::Result {
+    fn compress_one(
+        path: &Path,
+        output_dir: &Path,
+        remaining: &Arc<AtomicUsize>,
+    ) -> TaskResult {
         let img = image::open(path)
             .unwrap_or_else(|e| {
                 panic!(
@@ -130,10 +134,10 @@ mod tests_plugin_pipeline {
             .unwrap_or_else(|e| panic!("failed to save compressed image: {e}"));
 
         if remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
-            return res::Result::fin();
+            return TaskResult::fin();
         }
 
-        res::Result::new("Ok", "compressed one image".to_string(), "Main")
+        TaskResult::new("Ok", "compressed one image".to_string(), "Main")
     }
 
     fn make_synthetic_image(path: &Path, width: u32, height: u32) {

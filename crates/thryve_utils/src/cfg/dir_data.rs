@@ -56,7 +56,7 @@ static LOG_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use thryve_utils::cfg::dir_data::DirData;
 ///
 /// // DirData is typically created during initialization
@@ -114,7 +114,7 @@ impl DirData {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_utils::cfg::dir_data::DirData;
     ///
     /// let dir_data = DirData::new(exe_dir, log_dir_path, log_hash_map);

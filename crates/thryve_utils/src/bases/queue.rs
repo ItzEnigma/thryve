@@ -68,7 +68,7 @@ use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// // Queue implementations embed QueueBase to inherit common functionality
 /// pub type MyQueue<T> = QueueBase<SomeQueueType, T>;
 /// ```

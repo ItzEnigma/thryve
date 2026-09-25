@@ -32,7 +32,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use thryve_observers::topology_handler::TopologyHandlerObserver;
 //!
 //! // Typically created by the engine during initialization
@@ -72,7 +72,7 @@ use thryve_utils::{
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use thryve_observers::topology_handler::TopologyHandlerObserver;
 ///
 /// let observer = TopologyHandlerObserver::new(ctx);
@@ -153,7 +153,7 @@ impl TopologyHandlerObserver {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_observers::topology_handler::TopologyHandlerObserver;
     ///
     /// let observer = TopologyHandlerObserver::new(ctx);

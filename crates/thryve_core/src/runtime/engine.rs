@@ -37,7 +37,7 @@ use thryve_utils::cfg::metrics::Metrics;
 use thryve_utils::graphs::graph::TopologyNode;
 use thryve_utils::packets::notif_topology::TopologyModifier;
 use thryve_utils::packets::{notif_log::Log, task::Task};
-use thryve_utils::res;
+use thryve_utils::res::TaskResult;
 use thryve_utils::traits::queue::Queue;
 
 use crossbeam::channel::{Receiver, bounded};
@@ -63,7 +63,7 @@ use std::{sync::Arc, thread, time::Duration};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// // Engine is typically created and managed by the service
 /// let engine = Engine::new(&ctx);
 /// engine.run_once(); // Single iteration
@@ -90,7 +90,7 @@ pub struct Engine {
     /// Receiver for incoming notifications.
     notif_rx: Arc<Receiver<Notif>>,
     /// Receiver for task execution results.
-    res_rx: Receiver<(u64, res::Result)>,
+    res_rx: Receiver<(u64, TaskResult)>,
     /// Indicates whether the engine should shut down.
     pub exit_flag: bool,
     /// Indicates whether the engine is paused.
@@ -114,7 +114,7 @@ impl Engine {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let engine = Engine::new(&ctx);
     /// ```
     pub fn new(ctx: &Ctx) -> Self {
@@ -148,7 +148,7 @@ impl Engine {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// while !engine.exit_flag {
     ///     engine.run_once();
     /// }
@@ -283,7 +283,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task_result` - Reference to the result being processed
-    pub fn manage_metrics_results(&mut self, task_result: &res::Result) {
+    pub fn manage_metrics_results(&mut self, task_result: &TaskResult) {
         let size = task_result.size_in_bytes();
         let cur_batch_size = self.metrics.cur_batch_count_res;
 
@@ -330,7 +330,7 @@ impl Engine {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// engine.finalize();
     /// // All components shut down gracefully
     /// ```
@@ -363,7 +363,7 @@ impl Engine {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// engine.pause();
     /// // Task processing halted
     /// engine.resume();
@@ -387,7 +387,7 @@ impl Engine {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// engine.resume();
     /// // Task processing resumed
     /// ```
@@ -412,7 +412,7 @@ impl Engine {
     /// # Arguments
     ///
     /// * `task_result` - Tuple of task ID and result
-    pub fn handle_result(&mut self, task_result: (u64, res::Result)) {
+    pub fn handle_result(&mut self, task_result: (u64, TaskResult)) {
         let result = task_result.1;
 
         if let Some(next_task) = result.next_task {

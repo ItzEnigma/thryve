@@ -197,7 +197,7 @@ use thryve_run::run::run_interactive::{
 use thryve_run::run::run_service::{
     create_service as inner_create_service, try_run_as_service as inner_try_run_as_service,
 };
-use thryve_utils::res;
+use thryve_utils::res::TaskResult;
 
 // ============================================================================
 // Opaque Pointer Types
@@ -432,10 +432,10 @@ impl ThryveTaskResult {
     }
 }
 
-/// Converts an `ThryveTaskResult` to a `res::Result`.
+/// Converts an `ThryveTaskResult` to a `TaskResult`.
 ///
 /// This function takes the FFI result pub struct and converts it into a proper
-/// `res::Result` that the Rust runtime can use. If the result contains a
+/// `TaskResult` that the Rust runtime can use. If the result contains a
 /// chained task pointer, that task is taken ownership of and chained
 /// to the result.
 ///
@@ -445,10 +445,10 @@ impl ThryveTaskResult {
 ///
 /// # Returns
 ///
-/// A `res::Result` with the appropriate fields set based on the FFI result.
+/// A `TaskResult` with the appropriate fields set based on the FFI result.
 /// If `has_chain` is true and `chain_task` is not NULL, the chained task
 /// is taken ownership of and attached to the result.
-pub fn ffi_result_to_result(result: ThryveTaskResult) -> res::Result {
+pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
     // Extract the string fields from FFI result, falling back to defaults
     let result_type = if result.result_type.is_null() {
         NamedInput::new("Error")
@@ -483,7 +483,7 @@ pub fn ffi_result_to_result(result: ThryveTaskResult) -> res::Result {
         )
     };
 
-    let mut res = res::Result {
+    let mut res = TaskResult {
         result_type,
         message,
         log_msg_to_file: log_file,
@@ -1121,7 +1121,7 @@ pub unsafe extern "C" fn thryve_task_create(
             // Create the TaskJob wrapper — wrap the FFI function pointer in a TaskJob closure
             let task_job = TaskJob::new(move || {
                 let ffi_result = (job)();
-                // Convert ThryveTaskResult to res::Result
+                // Convert ThryveTaskResult to TaskResult
                 ffi_result_to_result(ffi_result)
             });
             let task = Task::new(&task_name, priority, task_job);
@@ -1498,7 +1498,7 @@ pub unsafe extern "C" fn thryve_plugin_create(
         // Create the TaskJob wrapper — wrap the FFI function pointer in a TaskJob closure
         let task_job = TaskJob::new(move || {
             let ffi_result = (entry_point)();
-            // Convert ThryveTaskResult to res::Result
+            // Convert ThryveTaskResult to TaskResult
             ffi_result_to_result(ffi_result)
         });
 

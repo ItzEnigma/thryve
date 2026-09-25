@@ -133,9 +133,19 @@ impl Ctx {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::cfg::config::Config;
+    /// # use thryve_utils::cfg::ctx::Ctx;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// #
+    /// # let config = Config::default();
+    /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
+    /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
     /// // During engine initialization
     /// for observer in ctx.observers() {
-    ///     engine.obs_manager.load_observer(observer);
+    ///     // load the observer into the engine's observer manager
     /// }
     /// ```
     pub fn observers(&mut self) -> Vec<Observer> {
@@ -155,9 +165,19 @@ impl Ctx {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::cfg::config::Config;
+    /// # use thryve_utils::cfg::ctx::Ctx;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// #
+    /// # let config = Config::default();
+    /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
+    /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
     /// // During engine initialization
     /// for plugin in ctx.plugins() {
-    ///     engine.plugin_manager.load_plugin(plugin);
+    ///     // load the plugin into the engine's plugin manager
     /// }
     /// ```
     pub fn plugins(&mut self) -> Vec<Plugin> {
@@ -177,6 +197,20 @@ impl Ctx {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::cfg::config::Config;
+    /// # use thryve_utils::cfg::ctx::Ctx;
+    /// # use thryve_utils::extras::jobs::TaskJob;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::packets::task::Task;
+    /// # use thryve_utils::res::TaskResult;
+    /// #
+    /// # let config = Config::default();
+    /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
+    /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// # let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+    /// # let my_task = Task::new("Example", 0, TaskJob::new(|| TaskResult::new("", "".to_string(), "")));
     /// let handle = ctx.packet_handle();
     /// handle.send_task(my_task);
     /// ```

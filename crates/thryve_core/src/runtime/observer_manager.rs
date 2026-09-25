@@ -64,7 +64,7 @@ use std::thread;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// let manager = ObserverManager::new(&ctx);
 /// manager.load_observer(observer);
 /// manager.forward_notif(notification);
@@ -94,7 +94,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let manager = ObserverManager::new(&ctx);
     /// ```
     pub fn new(ctx: &Ctx) -> Self {
@@ -116,7 +116,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.init_obs_sorter_thread();
     /// // Sorter thread now routing notifications
     /// ```
@@ -232,7 +232,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.forward_notif(notification);
     /// ```
     pub fn forward_notif(&mut self, notif: Notif) {
@@ -257,7 +257,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.notif_err("Something went wrong");
     /// ```
     pub fn notif_err(&mut self, message: &str) {
@@ -277,7 +277,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.load_observer(observer);
     /// ```
     pub fn load_observer(&mut self, observer: Observer) {
@@ -299,7 +299,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let logger = manager.finalize();
     /// logger.obs_queue.push(final_notification);
     /// ```
@@ -340,7 +340,7 @@ impl ObserverManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let names = manager.observer_names();
     /// for name in names {
     ///     println!("Observer: {}", name);

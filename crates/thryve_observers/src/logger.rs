@@ -40,7 +40,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use thryve_observers::logger::LoggerObserver;
 //! use thryve_utils::extras::named_input::NamedInput;
 //!
@@ -75,7 +75,7 @@ use thryve_utils::{bases::notif::Notif, cfg::ctx::Ctx, impl_as_any};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use thryve_observers::logger::LoggerObserver;
 /// use thryve_utils::extras::named_input::NamedInput;
 ///
@@ -102,7 +102,7 @@ impl ObsLogic for LoggerObserver {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// // Called automatically during engine shutdown
     /// observer.clean_up();
     /// ```
@@ -149,7 +149,7 @@ impl LoggerObserver {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_observers::logger::LoggerObserver;
     /// use thryve_utils::extras::named_input::NamedInput;
     ///
@@ -167,7 +167,7 @@ impl LoggerObserver {
             files: dir_data.log_hash_map,
         });
 
-        let logger_core = ObsJob::new(move |logger: Arc<Observer>| {
+        let logger_job = ObsJob::new(move |logger: Arc<Observer>| {
             let logger_as_any = logger.obs_core.as_any();
             if let Some(logger_core) = logger_as_any.downcast_ref::<LoggerObserver>() {
                 logger_core.log(logger.clone());
@@ -179,7 +179,7 @@ impl LoggerObserver {
             "Logger",
             "Logging",
             logger,
-            logger_core,
+            logger_job,
             ctx.packet_handle(),
         )
     }

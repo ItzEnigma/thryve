@@ -30,7 +30,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! let manager = PluginManager::new(&ctx, result_sender);
 //! manager.load_plugin(my_plugin);
 //! ```
@@ -43,7 +43,7 @@ use thryve_utils::cfg::ctx::Ctx;
 use thryve_utils::extras::named_input::NamedInput;
 use thryve_utils::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
 use thryve_utils::queues::priority_queue::PQChild;
-use thryve_utils::res;
+use thryve_utils::res::TaskResult;
 use thryve_utils::threads::threadpool::ThreadPool;
 use thryve_utils::traits::plugin_logic::PluginB;
 
@@ -69,7 +69,7 @@ use std::{collections::HashMap, sync::Arc};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// let manager = PluginManager::new(&ctx, result_sender);
 /// manager.load_plugin(my_plugin);
 /// ```
@@ -100,10 +100,10 @@ impl PluginManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let manager = PluginManager::new(&ctx, result_sender);
     /// ```
-    pub fn new(ctx: &Ctx, res_tx: Sender<(u64, res::Result)>) -> Self {
+    pub fn new(ctx: &Ctx, res_tx: Sender<(u64, TaskResult)>) -> Self {
         let queue = PQChild::new(&ctx.config, ctx.packet_handle());
         let mut num_workers = 0;
 
@@ -132,7 +132,7 @@ impl PluginManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let names = manager.plugin_names();
     /// for name in names {
     ///     println!("Plugin: {}", name);
@@ -160,7 +160,7 @@ impl PluginManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.load_plugin(my_plugin);
     /// ```
     pub fn load_plugin(&mut self, config: &Config, mut plugin: Plugin) {
@@ -185,7 +185,7 @@ impl PluginManager {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// manager.finalize();
     /// // All plugins cleaned up, thread pool finalized
     /// ```

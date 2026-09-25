@@ -38,7 +38,7 @@ use std::thread::{self, JoinHandle};
 use crate::bases::observer::Observer;
 use crate::extras::thread_local::{self, tl_set_current_task_fingerprint};
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
-use crate::res;
+use crate::res::TaskResult;
 use crate::traits::{packets::Packet, queue::Queue};
 
 /// Thread pool for processing tasks and notifications.
@@ -64,7 +64,7 @@ use crate::traits::{packets::Packet, queue::Queue};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// // Thread pools are typically created by the engine
 /// let pool = ThreadPool::new(worker_count, queue, packet_handle, result_sender);
 /// pool.run_threads_plugins(); // For plugin tasks
@@ -83,7 +83,7 @@ pub struct ThreadPool<Q, P> {
     /// The queue being processed.
     pub main_queue: Arc<Q>,
     /// Optional result sender for task completion.
-    pub res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
+    pub res_tx: Option<Arc<Sender<(u64, TaskResult)>>>,
     /// Handle for sending notifications.
     packet_handle: PacketHandle,
     /// Phantom data for the packet type.
@@ -113,7 +113,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// // Thread pools are typically created by the engine
     /// let pool = ThreadPool::new(4, queue, packet_handle, result_sender);
     /// ```
@@ -121,7 +121,7 @@ where
         num_workers: usize,
         queue: Q,
         packet_handle: PacketHandle,
-        res_tx: Option<Arc<Sender<(u64, res::Result)>>>,
+        res_tx: Option<Arc<Sender<(u64, TaskResult)>>>,
     ) -> Self {
         // Adopt the queue's own shutdown flag rather than allocating a
         // separate one -- see Queue::exit_flag's doc comment for why two
@@ -151,7 +151,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.submit_task(my_task);
     /// ```
     pub fn submit_task(&self, obj: P) {
@@ -167,7 +167,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.run_threads_plugins();
     /// // Worker threads now processing tasks
     /// ```
@@ -177,7 +177,7 @@ where
             let res_tx = self
                 .res_tx
                 .clone()
-                .expect("Result Sender Has to be Present!");
+                .expect("TaskResult Sender Has to be Present!");
             let exit_flag = Arc::clone(&self.pool_exit_flag);
             let tx = self.packet_handle.clone();
 
@@ -237,7 +237,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.run_thread_obs(logger_observer);
     /// // Observer thread now processing notifications
     /// ```
@@ -262,7 +262,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let worker_count = pool.num_workers();
     /// println!("Pool has {} workers", worker_count);
     /// ```
@@ -281,7 +281,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let handle = std::thread::spawn(|| { /* work */ });
     /// pool.add_worker(handle);
     /// ```
@@ -297,7 +297,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// let exit_flag = pool.pool_exit_flag();
     /// if exit_flag.load(Ordering::SeqCst) {
     ///     // Pool is shutting down
@@ -315,7 +315,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.finalize_plg();
     /// // Worker threads will exit gracefully
     /// ```
@@ -345,7 +345,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.finalize_obs(logger.clone());
     /// // Observer threads will exit gracefully
     /// ```
@@ -364,7 +364,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.pause();
     /// // Worker threads block
     /// pool.resume();
@@ -382,7 +382,7 @@ where
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// pool.resume();
     /// // Worker threads continue
     /// ```

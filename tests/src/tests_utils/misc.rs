@@ -202,7 +202,7 @@ mod tests_extras {
             fn test_task_job_type_alias_compiles() {
                 // Arrange & Act - just verify the type alias works
                 let _job = TaskJob::new(|| {
-                    thryve_utils::res::Result::new("Test", "Test message".to_string(), "Main")
+                    thryve_utils::res::TaskResult::new("Test", "Test message".to_string(), "Main")
                 });
 
                 // Assert - if we got here, the type alias is valid
@@ -212,7 +212,7 @@ mod tests_extras {
             fn test_task_job_execution() {
                 // Arrange
                 let job = TaskJob::new(|| {
-                    thryve_utils::res::Result::new("Success", "Completed".to_string(), "Main")
+                    thryve_utils::res::TaskResult::new("Success", "Completed".to_string(), "Main")
                 });
 
                 // Act
@@ -238,9 +238,9 @@ mod tests_extras {
             #[test]
             fn test_task_job_from_boxed_fnonce() {
                 // Arrange
-                let boxed: Box<dyn FnOnce() -> thryve_utils::res::Result + Send + Sync> =
+                let boxed: Box<dyn FnOnce() -> thryve_utils::res::TaskResult + Send + Sync> =
                     Box::new(|| {
-                        thryve_utils::res::Result::new("FromBoxed", "Done".to_string(), "Main")
+                        thryve_utils::res::TaskResult::new("FromBoxed", "Done".to_string(), "Main")
                     });
 
                 // Act
@@ -313,7 +313,7 @@ mod tests_extras {
                     packet_handle,
                 ));
 
-                // Act - execute the fn_to_run
+                // Act - execute the obs_job
                 observer.run_loop(observer.clone());
 
                 // Assert
@@ -615,7 +615,7 @@ mod tests_extras {
 mod tests_res {
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::task::*;
-    use thryve_utils::res::*;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::packets::Packet;
 
     #[test]
@@ -626,7 +626,7 @@ mod tests_res {
         let log_file = "Main";
 
         // Act
-        let result = Result::new(result_type, message, log_file);
+        let result = TaskResult::new(result_type, message, log_file);
 
         // Assert
         assert_eq!(result.result_type.inner(), "Success");
@@ -643,7 +643,7 @@ mod tests_res {
         let message = "".to_string();
 
         // Act
-        let result = Result::new("Ok", message, "Main");
+        let result = TaskResult::new("Ok", message, "Main");
 
         // Assert
         assert_eq!(result.message, "");
@@ -655,7 +655,7 @@ mod tests_res {
         let message = "Error: Connection failed! @#$%".to_string();
 
         // Act
-        let result = Result::new("Error", message, "Error");
+        let result = TaskResult::new("Error", message, "Error");
 
         // Assert
         assert_eq!(result.message, "Error: Connection failed! @#$%");
@@ -667,12 +667,12 @@ mod tests_res {
         let next_task = Task::new(
             "FollowUpTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
-        let result =
-            Result::new("Chained", "Continuing to next task".to_string(), "Main").chain(next_task);
+        let result = TaskResult::new("Chained", "Continuing to next task".to_string(), "Main")
+            .chain(next_task);
 
         // Assert
         assert_eq!(result.result_type.inner(), "Chained");
@@ -691,7 +691,7 @@ mod tests_res {
     #[test]
     fn test_result_display_impl() {
         // Arrange
-        let result = Result::new("Test", "Display message".to_string(), "Main");
+        let result = TaskResult::new("Test", "Display message".to_string(), "Main");
 
         // Act
         let display_str = format!("{}", result);
@@ -703,7 +703,7 @@ mod tests_res {
     #[test]
     fn test_result_display_with_empty_message() {
         // Arrange
-        let result = Result::new("Test", "".to_string(), "Main");
+        let result = TaskResult::new("Test", "".to_string(), "Main");
 
         // Act
         let display_str = format!("{}", result);
@@ -716,15 +716,19 @@ mod tests_res {
     fn test_result_chaining_pattern() {
         // Arrange & Act - Simulate a task chain
         let task1_result =
-            Result::new("Step1", "First step done".to_string(), "Main").chain(Task::new(
+            TaskResult::new("Step1", "First step done".to_string(), "Main").chain(Task::new(
                 "Step2",
                 2,
                 TaskJob::new(|| {
-                    Result::new("Step2", "Second step done".to_string(), "Main").chain(Task::new(
-                        "Step3",
-                        3,
-                        TaskJob::new(|| Result::new("Final", "All done".to_string(), "Main")),
-                    ))
+                    TaskResult::new("Step2", "Second step done".to_string(), "Main").chain(
+                        Task::new(
+                            "Step3",
+                            3,
+                            TaskJob::new(|| {
+                                TaskResult::new("Final", "All done".to_string(), "Main")
+                            }),
+                        ),
+                    )
                 }),
             ));
 
@@ -751,7 +755,7 @@ mod tests_res {
         let message = "成功！Успех! Éxito!".to_string();
 
         // Act
-        let result = Result::new("Success", message, "Main");
+        let result = TaskResult::new("Success", message, "Main");
 
         // Assert
         assert_eq!(result.message, "成功！Успех! Éxito!");
@@ -760,9 +764,9 @@ mod tests_res {
     #[test]
     fn test_result_result_type_validation() {
         // Arrange & Act - These should all work (alphanumeric)
-        let _r1 = Result::new("A", "msg".to_string(), "Main");
-        let _r2 = Result::new("Z123", "msg".to_string(), "Main");
-        let _r3 = Result::new("Type123", "msg".to_string(), "Main");
+        let _r1 = TaskResult::new("A", "msg".to_string(), "Main");
+        let _r2 = TaskResult::new("Z123", "msg".to_string(), "Main");
+        let _r3 = TaskResult::new("Type123", "msg".to_string(), "Main");
 
         // Assert - if we got here, all validations passed
     }
@@ -771,20 +775,20 @@ mod tests_res {
     #[should_panic(expected = "NamedInput must be alphanumeric")]
     fn test_result_invalid_result_type_panics() {
         // Arrange & Act - This should panic due to invalid result type
-        let _ = Result::new("Invalid-Type", "msg".to_string(), "Main");
+        let _ = TaskResult::new("Invalid-Type", "msg".to_string(), "Main");
     }
 
     #[test]
     #[should_panic(expected = "NamedInput must be alphanumeric")]
     fn test_result_invalid_log_file_panics() {
         // Arrange & Act - This should panic due to invalid log file name
-        let _ = Result::new("Valid", "msg".to_string(), "Invalid/File");
+        let _ = TaskResult::new("Valid", "msg".to_string(), "Invalid/File");
     }
 
     #[test]
     fn test_size_in_bytes_returns_struct_size() {
         // Arrange
-        let result = Result::new("Success", "Done".to_string(), "Main");
+        let result = TaskResult::new("Success", "Done".to_string(), "Main");
 
         // Act
         let size = result.size_in_bytes();
@@ -797,8 +801,8 @@ mod tests_res {
     #[test]
     fn test_size_in_bytes_consistent_across_instances() {
         // Arrange
-        let result1 = Result::new("Type1", "Message1".to_string(), "Main");
-        let result2 = Result::new("Type2", "Message2".to_string(), "Error");
+        let result1 = TaskResult::new("Type1", "Message1".to_string(), "Main");
+        let result2 = TaskResult::new("Type2", "Message2".to_string(), "Error");
 
         // Act
         let size1 = result1.size_in_bytes();
@@ -811,13 +815,13 @@ mod tests_res {
     #[test]
     fn test_size_in_bytes_matches_mem_size_of() {
         // Arrange
-        let result = Result::new("MemSizeTest", "test message".to_string(), "Main");
+        let result = TaskResult::new("MemSizeTest", "test message".to_string(), "Main");
 
         // Act
         let size = result.size_in_bytes();
 
-        // Assert - should equal std::mem::size_of::<Result>()
-        assert_eq!(size, std::mem::size_of::<Result>());
+        // Assert - should equal std::mem::size_of::<TaskResult>()
+        assert_eq!(size, std::mem::size_of::<TaskResult>());
     }
 
     #[test]
@@ -826,9 +830,10 @@ mod tests_res {
         let next_task = Task::new(
             "NextTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
-        let result = Result::new("Chained", "Chained message".to_string(), "Main").chain(next_task);
+        let result =
+            TaskResult::new("Chained", "Chained message".to_string(), "Main").chain(next_task);
 
         // Act
         let size = result.size_in_bytes();
@@ -838,11 +843,11 @@ mod tests_res {
         assert!(size > 0);
     }
 
-    // Tests for Result::fin()
+    // Tests for TaskResult::fin()
     #[test]
     fn test_result_fin_returns_finishing_result() {
         // Arrange & Act
-        let result = Result::fin();
+        let result = TaskResult::fin();
 
         // Assert
         assert_eq!(result.result_type.inner(), "Fin");
@@ -856,7 +861,7 @@ mod tests_res {
     #[test]
     fn test_result_fin_default_fields() {
         // Arrange & Act
-        let result = Result::fin();
+        let result = TaskResult::fin();
 
         // Assert - all optional fields should be None
         assert!(result.next_task.is_none());
@@ -867,7 +872,7 @@ mod tests_res {
     #[test]
     fn test_result_fin_message_content() {
         // Arrange & Act
-        let result = Result::fin();
+        let result = TaskResult::fin();
 
         // Assert - message should contain specific content
         assert!(result.message.contains("finishing"));
@@ -877,13 +882,13 @@ mod tests_res {
     #[test]
     fn test_result_fin_is_terminal() {
         // Arrange & Act - fin result should not chain to any task
-        let result = Result::fin();
+        let result = TaskResult::fin();
 
         // Assert - it's a terminal result
         assert!(result.next_task.is_none());
     }
 
-    // Tests for Result::chain with thread-local fingerprint set (lines 188-197)
+    // Tests for TaskResult::chain with thread-local fingerprint set (lines 188-197)
     #[test]
     fn test_result_chain_with_thread_local_fingerprint() {
         // Arrange - set thread-local fingerprint
@@ -894,11 +899,12 @@ mod tests_res {
         let next_task = Task::new(
             "ChainedTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act - chain should set up callsite when thread-local fingerprint is set
-        let result = Result::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
+        let result =
+            TaskResult::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
 
         // Assert - the next task should have a callsite set
         assert!(result.next_task.is_some());
@@ -928,12 +934,12 @@ mod tests_res {
             let next_task = Task::new(
                 "ChainedTask",
                 1,
-                TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
             );
 
             // Act
             let result =
-                Result::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
+                TaskResult::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
 
             // Assert - the next task should have a callsite set with the fingerprint
             assert!(result.next_task.is_some());
@@ -955,11 +961,12 @@ mod tests_res {
         let next_task = Task::new(
             "ChainedTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act - chain should not set up callsite when thread-local fingerprint is empty
-        let result = Result::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
+        let result =
+            TaskResult::new("Chained", "Chaining task".to_string(), "Main").chain(next_task);
 
         // Assert - the next task should exist but callsite should be None
         assert!(result.next_task.is_some());
@@ -973,12 +980,12 @@ mod tests_res {
         let next_task = Task::new(
             "UnicodeTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act - chain with unicode message
         let result =
-            Result::new("Unicode", "成功！Успех! Éxito!".to_string(), "Main").chain(next_task);
+            TaskResult::new("Unicode", "成功！Успех! Éxito!".to_string(), "Main").chain(next_task);
 
         // Assert
         assert_eq!(result.message, "成功！Успех! Éxito!");
@@ -992,11 +999,11 @@ mod tests_res {
         let next_task = Task::new(
             "LongTask",
             1,
-            TaskJob::new(|| Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act - chain with long message
-        let result = Result::new("Long", long_message.clone(), "Main").chain(next_task);
+        let result = TaskResult::new("Long", long_message.clone(), "Main").chain(next_task);
 
         // Assert
         assert_eq!(result.message, long_message);
@@ -1191,12 +1198,12 @@ mod tests_threadpool {
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
             "logger",
             "loggerType",
             obs_core,
-            fn_to_run,
+            obs_job,
             logger_packet_handle,
         ));
 

@@ -20,7 +20,7 @@
 //! 2. The task is sent to the engine via [`PacketHandle`](crate::packets::packet_handle::PacketHandle)
 //! 3. The engine queues the task in a priority queue
 //! 4. A worker thread pops and executes the task
-//! 5. The task returns a [`Result`](crate::res::Result) indicating completion
+//! 5. The task returns a [`TaskResult`](crate::res::TaskResult) indicating completion
 //!
 //! # Unique Identification
 //!
@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
 use crate::graphs::callsite::TaskCallSite;
-use crate::res;
+use crate::res::TaskResult;
 use crate::traits::packets::Packet;
 
 /// Atomic counter for generating unique task IDs.
@@ -72,11 +72,12 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 ///
 /// ```no_run
 /// use thryve_utils::packets::task::Task;
-/// use thryve_utils::res::Result;
+/// use thryve_utils::res::TaskResult;
+/// use thryve_utils::extras::jobs::TaskJob;
 ///
-/// let task = Task::new("MyTask", 2, Box::new(|| {
+/// let task = Task::new("MyTask", 2, TaskJob::new(|| {
 ///     // Task execution logic
-///     Result::new("Success", "Done".to_string(), "Main")
+///     TaskResult::new("Success", "Done".to_string(), "Main")
 /// }));
 ///
 /// println!("Task ID: {}", task.id);
@@ -110,7 +111,7 @@ impl Packet for Task {
     ///
     /// A tuple of `(task_id, result)` on success, or `None` if execution
     /// fails (which should not happen under normal circumstances).
-    fn process(self) -> Option<(u64, res::Result)> {
+    fn process(self) -> Option<(u64, TaskResult)> {
         let id = self.id;
         Some((id, self.job.call_once()))
     }
@@ -165,11 +166,12 @@ impl Task {
     ///
     /// ```no_run
     /// use thryve_utils::packets::task::Task;
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
+    /// use thryve_utils::extras::jobs::TaskJob;
     ///
-    /// let task = Task::new("CalculateSum", 1, Box::new(|| {
+    /// let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
     ///     let result = 2 + 2;
-    ///     Result::new("Success", format!("Result: {}", result), "Main")
+    ///     TaskResult::new("Success", format!("Result: {}", result), "Main")
     /// }));
     /// ```
     pub fn new(task_name: &str, task_priority: u8, function_to_exec: TaskJob) -> Self {
@@ -183,6 +185,16 @@ impl Task {
             task_name: NamedInput::new(task_name),
             base_priority: task_priority,
             job: function_to_exec,
+        }
+    }
+
+    pub fn new_empty() -> Self {
+        Task {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new("Empty"),
+            base_priority: 0,
+            job: TaskJob::new_empty()
         }
     }
 
@@ -220,10 +232,12 @@ impl Task {
     /// # Example
     ///
     /// ```no_run
+    /// use thryve_utils::extras::jobs::TaskJob;
     /// use thryve_utils::packets::task::Task;
+    /// use thryve_utils::res::TaskResult;
     ///
-    /// let mut task = Task::new("HighPriority", 10, Box::new(|| {
-    ///     // ...
+    /// let mut task = Task::new("HighPriority", 10, TaskJob::new(|| {
+    ///     TaskResult::new("", "".to_string(), "")
     /// }));
     ///
     /// task.clamp_task_priority(4); // Priority clamped to 4

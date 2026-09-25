@@ -789,12 +789,12 @@ mod tests_ffi_observer_clean_up_success {
 
         // Create a mock observer to test clean_up
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Arc::new(Observer::new(
             "test",
             "testType",
             obs_core,
-            fn_to_run,
+            obs_job,
             PacketHandle::new(bounded(10).0, bounded(10).0, false),
         ));
 

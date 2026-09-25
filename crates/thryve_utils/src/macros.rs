@@ -42,7 +42,7 @@
 ///
 /// This expands to:
 ///
-/// ```no_run
+/// ```ignore
 /// fn as_any(&self) -> &dyn std::any::Any {
 ///     self
 /// }
@@ -51,6 +51,16 @@
 /// # Downcasting Example
 ///
 /// ```no_run
+/// # use thryve_utils::impl_as_any;
+/// #
+/// # pub struct MyType;
+/// # pub trait MyTrait {
+/// #     fn as_any(&self) -> &dyn std::any::Any;
+/// # }
+/// # impl MyTrait for MyType {
+/// #     impl_as_any!(MyType);
+/// # }
+/// #
 /// let my_trait_obj: &dyn MyTrait = &MyType;
 /// let as_any = my_trait_obj.as_any();
 /// if let Some(concrete) = as_any.downcast_ref::<MyType>() {

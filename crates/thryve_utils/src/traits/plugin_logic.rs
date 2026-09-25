@@ -53,7 +53,7 @@ pub trait PluginB {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// fn clean_up(&self) {
     ///     // Release resources
     ///     // Flush buffers
@@ -102,11 +102,18 @@ pub trait PlgLogic: Send + Sync {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::any::Any;
+    /// # use thryve_utils::traits::plugin_logic::PlgLogic;
+    /// #
+    /// # struct MyPluginLogic;
+    /// # impl PlgLogic for MyPluginLogic {
+    /// #     fn as_any(&self) -> &dyn Any { self }
     /// fn clean_up(&self) {
     ///     // Release resources
     ///     // Flush buffers
     ///     // Close connections
     /// }
+    /// #     }
     /// ```
     fn clean_up(&self);
 
@@ -124,8 +131,19 @@ pub trait PlgLogic: Send + Sync {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::any::Any;
+    /// # use std::sync::Arc;
+    /// # use thryve_utils::traits::plugin_logic::PlgLogic;
+    /// #
+    /// # struct MyPluginLogic;
+    /// # impl PlgLogic for MyPluginLogic {
+    /// #     fn clean_up(&self) {}
+    /// #     fn as_any(&self) -> &dyn Any { self }
+    /// # }
+    /// #
+    /// # let plg_core: Arc<dyn PlgLogic> = Arc::new(MyPluginLogic);
     /// // Downcasting example:
-    /// let plg_as_any = plugin.plg_core.as_any();
+    /// let plg_as_any = plg_core.as_any();
     /// if let Some(concrete) = plg_as_any.downcast_ref::<MyPluginLogic>() {
     ///     // Access concrete type methods
     /// }

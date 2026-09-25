@@ -635,7 +635,7 @@ mod tests_ctx {
             "TestType",
             Arc::new(TestPlgLogic),
             ctx.packet_handle(),
-            TaskJob::new(|| thryve_utils::res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| thryve_utils::res::TaskResult::new("Ok", "Done".to_string(), "Main")),
         ));
 
         // Act

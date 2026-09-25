@@ -97,15 +97,21 @@ pub trait ObsLogic: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
-    /// use thryve_utils::bases::observer::Observer;
-    /// use std::sync::Arc;
-    ///
+    /// # use std::any::Any;
+    /// # use std::sync::Arc;
+    /// # use thryve_utils::bases::observer::Observer;
+    /// # use thryve_utils::traits::observer_logic::ObsLogic;
+    /// #
+    /// # struct MyObserverLogic;
+    /// # impl ObsLogic for MyObserverLogic {
     /// fn clean_up(&self, observer: Arc<Observer>) {
     ///     // Flush any pending notifications
     ///     while let Some(notif) = observer.obs_queue.main_queue.pop() {
     ///         // Process final notifications
     ///     }
     /// }
+    /// #     fn as_any(&self) -> &dyn Any { self }
+    /// # }
     /// ```
     fn clean_up(&self, observer: Arc<Observer>);
 
@@ -123,8 +129,20 @@ pub trait ObsLogic: Send + Sync + 'static {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::any::Any;
+    /// # use std::sync::Arc;
+    /// # use thryve_utils::bases::observer::Observer;
+    /// # use thryve_utils::traits::observer_logic::ObsLogic;
+    /// #
+    /// # struct MyObserverLogic;
+    /// # impl ObsLogic for MyObserverLogic {
+    /// #     fn clean_up(&self, _observer: Arc<Observer>) {}
+    /// #     fn as_any(&self) -> &dyn Any { self }
+    /// # }
+    /// #
+    /// # let obs_core: Arc<dyn ObsLogic> = Arc::new(MyObserverLogic);
     /// // Downcasting example:
-    /// let obs_as_any = observer.obs_core.as_any();
+    /// let obs_as_any = obs_core.as_any();
     /// if let Some(concrete) = obs_as_any.downcast_ref::<MyObserverLogic>() {
     ///     // Access concrete type methods
     /// }

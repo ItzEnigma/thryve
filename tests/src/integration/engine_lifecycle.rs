@@ -24,7 +24,7 @@ mod tests_run_interactive {
     use thryve_utils::cfg::config::Config;
     use thryve_utils::extras::jobs::{ObsJob, TaskJob};
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::observer_logic::ObsLogic;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
@@ -166,7 +166,7 @@ mod tests_run_interactive {
         // The engine's run loop only ever exits once it processes a task
         // result with result_type == "Fin" (engine.rs handle_result) -- this
         // is the only way to make the spawned thread actually terminate.
-        let shutdown_task = Task::new("Shutdown", 0, TaskJob::new(res::Result::fin));
+        let shutdown_task = Task::new("Shutdown", 0, TaskJob::new(TaskResult::fin));
         pkt.send_task(shutdown_task);
 
         // Assert - if the loop never exits, this blocks forever instead of
@@ -198,7 +198,7 @@ mod tests_run_interactive {
         ));
 
         let plg_core = Arc::new(TestPlgLogic);
-        let plg_job = TaskJob::new(|| res::Result::new("Ok", "plugin ran".to_string(), "Main"));
+        let plg_job = TaskJob::new(|| TaskResult::new("Ok", "plugin ran".to_string(), "Main"));
         ctx.plugins.push(Plugin::new(
             "extra_plugin",
             "ExtraPlugin",
@@ -216,7 +216,7 @@ mod tests_run_interactive {
         // debug-mode wait-before-execution branch (set to 0 to stay fast).
         let handle = run_interactive(ctx).expect("run_interactive should always return a handle");
 
-        let shutdown_task = Task::new("Shutdown", 0, TaskJob::new(res::Result::fin));
+        let shutdown_task = Task::new("Shutdown", 0, TaskJob::new(TaskResult::fin));
         pkt.send_task(shutdown_task);
 
         // Assert

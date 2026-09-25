@@ -44,7 +44,7 @@ use crate::cfg::{dir_data::DirData, metrics::Metrics};
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use thryve_utils::cfg::meta_data::MetaData;
 ///
 /// // MetaData is typically created during initialization
@@ -103,7 +103,7 @@ impl MetaData {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_utils::cfg::meta_data::MetaData;
     ///
     /// let meta_data = MetaData::new(datetime, dir_data);

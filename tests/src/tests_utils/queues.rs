@@ -158,12 +158,12 @@ mod tests_seg_queue {
         let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Arc::new(Observer::new(
             "logger",
             "loggertype",
             obs_core,
-            fn_to_run,
+            obs_job,
             logger_packet_handle,
         ));
 
@@ -237,7 +237,7 @@ mod tests_priority_queue {
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::queues::priority_queue::*;
-    use thryve_utils::res::Result;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::queue::Queue;
 
     #[test]
@@ -268,7 +268,7 @@ mod tests_priority_queue {
         let task = Task::new(
             "testTask",
             5,
-            TaskJob::new(|| Result::new("OK", "success".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main")),
         );
 
         // Act - push task
@@ -371,12 +371,12 @@ mod tests_priority_queue {
         let task_low = Task::new(
             "lowPriority",
             1,
-            TaskJob::new(|| Result::new("OK", "low".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("OK", "low".to_string(), "Main")),
         );
         let task_high = Task::new(
             "highPriority",
             10,
-            TaskJob::new(|| Result::new("OK", "high".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("OK", "high".to_string(), "Main")),
         );
 
         // Act - push in reverse order

@@ -56,13 +56,23 @@ use crossbeam::channel::Sender;
 /// # Example
 ///
 /// ```no_run
+/// # use crossbeam::channel::bounded;
+/// # use thryve_utils::extras::jobs::TaskJob;
+/// # use thryve_utils::packets::notif_log::Log;
+/// # use thryve_utils::res::TaskResult;
 /// use thryve_utils::packets::packet_handle::PacketHandle;
 /// use thryve_utils::packets::task::Task;
 ///
+/// # let (task_tx, _task_rx) = bounded(1);
+/// # let (notif_tx, _notif_rx) = bounded(1);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, false);
 /// // Send a task to the engine
-/// handle.send_task(Task::new("MyTask", 0, Box::new(|| /* ... */)));
+/// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
+///     TaskResult::new("", "".to_string(), "")
+/// })));
 ///
 /// // Send a notification to the engine
+/// # let my_notification = Log::log("hello".to_string(), "Main");
 /// handle.send_notification(my_notification);
 /// ```
 #[derive(Clone)]
@@ -102,6 +112,11 @@ impl PacketHandle {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// use thryve_utils::packets::packet_handle::PacketHandle;
+    ///
+    /// # let (task_sender, _task_rx) = bounded(1);
+    /// # let (notif_sender, _notif_rx) = bounded(1);
     /// // Typically created by the engine during initialization
     /// let handle = PacketHandle::new(task_sender, notif_sender, false);
     /// ```
@@ -144,11 +159,18 @@ impl PacketHandle {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::extras::jobs::TaskJob;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
     ///
-    /// handle.send_task(Task::new("MyTask", 0, Box::new(|| {
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
     ///     // Task logic here
-    ///     Ok(())
+    ///     TaskResult::new("", "".to_string(), "")
     /// })));
     /// ```
     pub fn send_task(&self, mut task: Task) {
@@ -194,8 +216,13 @@ impl PacketHandle {
     /// # Example
     ///
     /// ```no_run
+    /// # use crossbeam::channel::bounded;
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
     /// use thryve_utils::packets::notif_log::Log;
     ///
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, false);
     /// handle.send_notification(Log::log("Hello".to_string(), "Main"));
     /// ```
     pub fn send_notification(&self, notif: Notif) {

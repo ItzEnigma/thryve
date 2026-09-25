@@ -20,7 +20,7 @@ mod tests_engine {
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::observer_logic::ObsLogic;
 
     // Test implementation of ObsLogic
@@ -92,12 +92,12 @@ mod tests_engine {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -120,12 +120,12 @@ mod tests_engine {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -189,12 +189,12 @@ mod tests_engine {
 
         // Load a logging observer (required for finalize)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -217,18 +217,18 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a "Fin" result
-        let fin_result = res::Result::fin();
+        let fin_result = TaskResult::fin();
 
         // Assert initially not exiting
         assert!(!engine.exit_flag);
@@ -248,18 +248,18 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a "FinErr" result
-        let finerr_result = res::Result::new("FinErr", "Error finished".to_string(), "Error");
+        let finerr_result = TaskResult::new("FinErr", "Error finished".to_string(), "Error");
 
         // Assert initially not exiting
         assert!(!engine.exit_flag);
@@ -279,18 +279,18 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a normal result
-        let normal_result = res::Result::new("normal", "Done".to_string(), "Main");
+        let normal_result = TaskResult::new("normal", "Done".to_string(), "Main");
 
         // Act - handle the normal result
         engine.handle_result((1, normal_result));
@@ -307,12 +307,12 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -321,10 +321,10 @@ mod tests_engine {
         let next_task = Task::new(
             "nextTask",
             5,
-            TaskJob::new(|| res::Result::new("Test", "testinggg".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
         );
         let result_with_next =
-            res::Result::new("normal", "Done".to_string(), "Main").chain(next_task);
+            TaskResult::new("normal", "Done".to_string(), "Main").chain(next_task);
 
         // Act - handle the result with next task
         engine.handle_result((1, result_with_next));
@@ -348,7 +348,7 @@ mod tests_engine {
         let task = Task::new(
             "testTask",
             5,
-            TaskJob::new(|| res::Result::new("Test", "testinggg".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
         );
         task_tx.send(task).unwrap();
 
@@ -367,12 +367,12 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -400,12 +400,12 @@ mod tests_engine {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -414,7 +414,7 @@ mod tests_engine {
         let task = Task::new(
             "testTask",
             5,
-            TaskJob::new(|| res::Result::new("Test", "testinggg".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
         );
         task_tx.send(task).unwrap();
         let notif = Log::log("test".to_string(), "Main");
@@ -438,7 +438,7 @@ mod tests_engine {
         let task = Task::new(
             "TestTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let expected_size = task.size_in_bytes();
 
@@ -458,12 +458,12 @@ mod tests_engine {
         let task1 = Task::new(
             "Task1",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let task2 = Task::new(
             "Task2",
             2,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -484,7 +484,7 @@ mod tests_engine {
         let task = Task::new(
             "TestTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -501,7 +501,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
+        let result = TaskResult::new("Success", "Done".to_string(), "Main");
         let expected_size = result.size_in_bytes();
 
         // Act
@@ -517,8 +517,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let result1 = res::Result::new("Type1", "Message1".to_string(), "Main");
-        let result2 = res::Result::new("Type2", "Message2".to_string(), "Error");
+        let result1 = TaskResult::new("Type1", "Message1".to_string(), "Main");
+        let result2 = TaskResult::new("Type2", "Message2".to_string(), "Error");
 
         // Act
         engine.manage_metrics_results(&result1);
@@ -535,7 +535,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
+        let result = TaskResult::new("Success", "Done".to_string(), "Main");
 
         // Act
         engine.manage_metrics_results(&result);
@@ -604,9 +604,9 @@ mod tests_engine {
         let task = Task::new(
             "TestTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
-        let result = res::Result::new("Success", "Done".to_string(), "Main");
+        let result = TaskResult::new("Success", "Done".to_string(), "Main");
         let notif = Log::log("Test notification".to_string(), "Main");
 
         // Act
@@ -634,12 +634,12 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -648,7 +648,7 @@ mod tests_engine {
         let task = Task::new(
             "TestTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act - should not panic, should do nothing
@@ -666,23 +666,23 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "Topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -697,7 +697,7 @@ mod tests_engine {
         let mut task = Task::new(
             "TestTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         task.callsite = Some(callsite);
 
@@ -717,23 +717,23 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "Topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -750,7 +750,7 @@ mod tests_engine {
         let mut task = Task::new(
             "ChildTask",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         task.callsite = Some(callsite);
 
@@ -770,23 +770,23 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "Topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -801,7 +801,7 @@ mod tests_engine {
         let mut task = Task::new(
             "我的任务",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         task.callsite = Some(callsite);
 
@@ -820,23 +820,23 @@ mod tests_engine {
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "Topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -854,7 +854,7 @@ mod tests_engine {
         let mut task = Task::new(
             "Test",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         task.callsite = Some(callsite);
 
@@ -873,12 +873,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -903,12 +903,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -917,7 +917,7 @@ mod tests_engine {
         let task = Task::new(
             "testTask",
             5,
-            TaskJob::new(|| res::Result::new("Test", "testinggg".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
         );
         ctx.packet_handle().send_task(task);
         ctx.task_rx.try_recv().ok(); // ensure channel exists
@@ -939,12 +939,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -954,7 +954,7 @@ mod tests_engine {
             let task = Task::new(
                 &format!("Task{}", i),
                 1,
-                TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
             );
             engine.manage_metrics_tasks(&task);
         }
@@ -975,19 +975,19 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Fill the batch (batch size is 1024 for results)
         for i in 0..1024 {
-            let result = res::Result::new(&format!("Type{}", i), "Done".to_string(), "Main");
+            let result = TaskResult::new(&format!("Type{}", i), "Done".to_string(), "Main");
             engine.manage_metrics_results(&result);
         }
 
@@ -1007,12 +1007,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -1040,19 +1040,19 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a result with empty result type but non-empty message
         // This should panic
-        let bad_result = res::Result::new("", "Message without type".to_string(), "Main");
+        let bad_result = TaskResult::new("", "Message without type".to_string(), "Main");
 
         // Act - should panic because result_type is not alphanumeric
         engine.handle_result((1, bad_result));
@@ -1069,19 +1069,19 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a result with empty result type but non-empty log file
         // This should panic
-        let bad_result = res::Result::new("", "Message".to_string(), "Error");
+        let bad_result = TaskResult::new("", "Message".to_string(), "Error");
 
         // Act - should panic because result_type is not alphanumeric
         engine.handle_result((1, bad_result));
@@ -1096,18 +1096,18 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a result with a message
-        let result = res::Result::new("Success", "Operation completed".to_string(), "Main");
+        let result = TaskResult::new("Success", "Operation completed".to_string(), "Main");
 
         // Act - should not panic
         engine.handle_result((1, result));
@@ -1124,18 +1124,18 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a result
-        let result = res::Result::new("Success", "Test".to_string(), "Main");
+        let result = TaskResult::new("Success", "Test".to_string(), "Main");
 
         // Act - handle result without metrics calculation
         engine.handle_result((1, result));
@@ -1151,18 +1151,18 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
 
         // Create a result
-        let result = res::Result::new("Success", "Test".to_string(), "Main");
+        let result = TaskResult::new("Success", "Test".to_string(), "Main");
 
         // Act - handle result with task logging enabled
         engine.handle_result((1, result));
@@ -1180,12 +1180,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -1194,9 +1194,9 @@ mod tests_engine {
         let next_task = Task::new(
             "FollowUp",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
-        let result = res::Result::new("Success", "Test".to_string(), "Main").chain(next_task);
+        let result = TaskResult::new("Success", "Test".to_string(), "Main").chain(next_task);
 
         // Act - handle result with all debug flags
         engine.handle_result((1, result));
@@ -1272,12 +1272,12 @@ mod tests_engine {
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let observer = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         engine.obs_manager.load_observer(observer);
@@ -1356,12 +1356,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1378,12 +1378,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1403,24 +1403,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1442,8 +1442,8 @@ mod tests_observer_manager_init {
 
         // Load an observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let observer = Observer::new("test", "TestType", obs_core, fn_to_run, ctx.packet_handle());
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let observer = Observer::new("test", "TestType", obs_core, obs_job, ctx.packet_handle());
 
         // Act
         manager.load_observer(observer);
@@ -1460,24 +1460,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1494,23 +1494,23 @@ mod tests_observer_manager_init {
 
         // Load multiple observers
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1530,12 +1530,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1555,23 +1555,23 @@ mod tests_observer_manager_init {
 
         // Load multiple observers
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1594,24 +1594,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1628,12 +1628,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1651,24 +1651,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1685,12 +1685,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1707,12 +1707,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1731,12 +1731,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1753,12 +1753,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1775,12 +1775,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1797,12 +1797,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1822,24 +1822,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer first (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1861,12 +1861,12 @@ mod tests_observer_manager_init {
 
         // Act - load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1883,12 +1883,12 @@ mod tests_observer_manager_init {
 
         // Act - load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1905,12 +1905,12 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -1931,12 +1931,12 @@ mod tests_observer_manager_init {
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1957,24 +1957,24 @@ mod tests_observer_manager_init {
 
         // Load a logging observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core.clone(),
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
 
         // Load a topology observer
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let topo = Observer::new(
             "topology",
             "TopologyHandler",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(topo);
@@ -1998,12 +1998,12 @@ mod tests_observer_manager_init {
         let mut manager = ObserverManager::new(&ctx);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -2027,12 +2027,12 @@ mod tests_observer_manager_init {
         let mut manager = ObserverManager::new(&ctx);
 
         let obs_core = Arc::new(TestObsLogic);
-        let fn_to_run = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
         let logger = Observer::new(
             "logger",
             "Logging",
             obs_core,
-            fn_to_run,
+            obs_job,
             ctx.packet_handle(),
         );
         manager.load_observer(logger);
@@ -2072,7 +2072,7 @@ mod tests_plugin_manager {
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
     // Test implementation of PlgLogic
@@ -2094,7 +2094,7 @@ mod tests_plugin_manager {
     fn test_plugin_manager_new_creates_manager() {
         // Arrange
         let ctx = create_test_ctx();
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
 
         // Act
         let manager = PluginManager::new(&ctx, res_tx);
@@ -2108,7 +2108,7 @@ mod tests_plugin_manager {
         // Arrange
         let mut ctx = create_test_ctx();
         ctx.config.threads.worker_count = 0;
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
 
         // Act
         let manager = PluginManager::new(&ctx, res_tx);
@@ -2121,7 +2121,7 @@ mod tests_plugin_manager {
     fn test_plugin_manager_plugin_names_returns_empty_when_no_plugins() {
         // Arrange
         let ctx = create_test_ctx();
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
         let manager = PluginManager::new(&ctx, res_tx);
 
         // Act
@@ -2135,12 +2135,12 @@ mod tests_plugin_manager {
     fn test_plugin_manager_load_plugin() {
         // Arrange
         let ctx = create_test_ctx();
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
         let mut manager = PluginManager::new(&ctx, res_tx);
 
         let plg_core = Arc::new(TestPlgLogic);
         let job: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
         let plugin = Plugin::new(
             "test_plugin",
             "testType",
@@ -2162,13 +2162,13 @@ mod tests_plugin_manager {
     fn test_plugin_manager_load_multiple_plugins() {
         // Arrange
         let ctx = create_test_ctx();
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
         let mut manager = PluginManager::new(&ctx, res_tx);
 
         // Load first plugin
         let plg_core1 = Arc::new(TestPlgLogic);
         let job1: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
         let plugin1 = Plugin::new(
             "plugin1",
             "type1",
@@ -2180,7 +2180,7 @@ mod tests_plugin_manager {
         // Load second plugin
         let plg_core2 = Arc::new(TestPlgLogic);
         let job2: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
         let plugin2 = Plugin::new(
             "plugin2",
             "type2",
@@ -2202,13 +2202,13 @@ mod tests_plugin_manager {
     fn test_plugin_manager_finalize() {
         // Arrange
         let ctx = create_test_ctx();
-        let (res_tx, _res_rx) = bounded::<(u64, res::Result)>(10);
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
         let mut manager = PluginManager::new(&ctx, res_tx);
 
         // Add a plugin
         let plg_core = Arc::new(TestPlgLogic);
         let job: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| res::Result::new("OK", "success".to_string(), "Main"));
+            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
         let plugin = Plugin::new(
             "test_plugin",
             "testType",

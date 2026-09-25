@@ -11,7 +11,7 @@ mod tests_task {
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::graphs::callsite::TaskCallSite;
     use thryve_utils::packets::task::*;
-    use thryve_utils::res;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::packets::Packet;
 
     #[test]
@@ -24,13 +24,13 @@ mod tests_task {
         let task1 = Task::new(
             task_name,
             priority,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         let task2 = Task::new(
             task_name,
             priority,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Assert
@@ -45,7 +45,7 @@ mod tests_task {
         let task = Task::new(
             "LowPriority",
             0,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Assert
@@ -58,7 +58,7 @@ mod tests_task {
         let task = Task::new(
             "MaxPriority",
             u8::MAX,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Assert
@@ -71,7 +71,7 @@ mod tests_task {
         let task = Task::new(
             "ProcessTest",
             1,
-            TaskJob::new(|| res::Result::new("Success", "Processed".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Processed".to_string(), "Main")),
         );
         let task_id = task.id;
 
@@ -92,7 +92,7 @@ mod tests_task {
         let mut task = Task::new(
             "HighPriority",
             10,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let max_priority = 4u8;
 
@@ -109,7 +109,7 @@ mod tests_task {
         let mut task = Task::new(
             "ValidPriority",
             3,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let max_priority = 4u8;
 
@@ -126,7 +126,7 @@ mod tests_task {
         let mut task = Task::new(
             "BoundaryPriority",
             4,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let max_priority = 4u8;
 
@@ -143,7 +143,7 @@ mod tests_task {
         let mut task = Task::new(
             "AnyPriority",
             100,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let max_priority = 0u8;
 
@@ -160,17 +160,17 @@ mod tests_task {
         let task1 = Task::new(
             "T1",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
         );
         let task2 = Task::new(
             "T2",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
         );
         let task3 = Task::new(
             "T3",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
         );
 
         // Assert
@@ -185,7 +185,7 @@ mod tests_task {
         let _task = Task::new(
             "",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
     }
 
@@ -195,7 +195,7 @@ mod tests_task {
         let task = Task::new(
             "Task123",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Assert
@@ -209,7 +209,7 @@ mod tests_task {
         let _ = Task::new(
             "Invalid-Name",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
     }
 
@@ -219,7 +219,7 @@ mod tests_task {
         let task = Task::new(
             "IdTest",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let expected_id = task.id;
 
@@ -237,7 +237,7 @@ mod tests_task {
         let task = Task::new(
             "SizeTest",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -254,12 +254,12 @@ mod tests_task {
         let task1 = Task::new(
             "Task1",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
         let task2 = Task::new(
             "Task2",
             2,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -276,7 +276,7 @@ mod tests_task {
         let task = Task::new(
             "MemSizeTest",
             5,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -292,7 +292,7 @@ mod tests_task {
         let mut task = Task::new(
             "CallsiteTest",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         let callsite = TaskCallSite::new(
@@ -319,7 +319,7 @@ mod tests_task {
         let task = Task::new(
             "NoCallsite",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -337,7 +337,9 @@ mod tests_task {
         let task = Task::new(
             "ErrorTest",
             1,
-            TaskJob::new(|| res::Result::new("Error", "Something went wrong".to_string(), "Error")),
+            TaskJob::new(|| {
+                TaskResult::new("Error", "Something went wrong".to_string(), "Error")
+            }),
         );
 
         // Act
@@ -357,7 +359,7 @@ mod tests_task {
         let _task = Task::new(
             "Task-With_Dots.And123",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
     }
 
@@ -367,7 +369,7 @@ mod tests_task {
         let mut task = Task::new(
             "CallsitePreserve",
             1,
-            TaskJob::new(|| res::Result::new("Ok", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
         );
 
         let callsite = TaskCallSite::new(
@@ -392,7 +394,7 @@ mod tests_packet_handle {
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::*;
     use thryve_utils::packets::task::Task;
-    use thryve_utils::res::Result;
+    use thryve_utils::res::TaskResult;
     use thryve_utils::traits::packets::Packet;
 
     #[test]
@@ -420,7 +422,7 @@ mod tests_packet_handle {
         let task = Task::new(
             "TestTask",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
 
         // Act
@@ -465,12 +467,12 @@ mod tests_packet_handle {
         let task1 = Task::new(
             "Task1",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
         let task2 = Task::new(
             "Task2",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
 
         handle1.send_task(task1);
@@ -495,7 +497,7 @@ mod tests_packet_handle {
             let task = Task::new(
                 &format!("Task{}", i),
                 0,
-                TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+                TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
             );
             handle.send_task(task);
         }
@@ -542,13 +544,13 @@ mod tests_packet_handle {
         handle.send_task(Task::new(
             "T1",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         ));
         handle.send_notification(Log::log("N1".to_string(), "Main"));
         handle.send_task(Task::new(
             "T2",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         ));
         handle.send_notification(Log::log("N2".to_string(), "Main"));
 
@@ -574,17 +576,17 @@ mod tests_packet_handle {
         handle.send_task(Task::new(
             "Low",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         ));
         handle.send_task(Task::new(
             "Medium",
             50,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         ));
         handle.send_task(Task::new(
             "High",
             100,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         ));
 
         // Assert
@@ -626,7 +628,7 @@ mod tests_packet_handle {
         let task = Task::new(
             "",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
         handle.send_task(task);
     }
@@ -672,7 +674,7 @@ mod tests_packet_handle {
         let task = Task::new(
             "TestTaskWithGraph",
             0,
-            TaskJob::new(|| Result::new("Success", "Done".to_string(), "Main")),
+            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
 
         // Act - send task with graph visualization enabled

@@ -131,16 +131,16 @@ pub mod jobs {
     use std::sync::Arc;
 
     use crate::bases::observer::Observer;
-    use crate::res;
+    use crate::res::TaskResult;
 
     /// A task execution closure wrapper.
     ///
     /// A `TaskJob` is a wrapper around a closure that takes no arguments and returns
-    /// a [`Result`](crate::res::Result). Tasks are executed by worker
+    /// a [`TaskResult`](crate::res::TaskResult). Tasks are executed by worker
     /// threads, and the result indicates success or failure along with
     /// optional follow-up actions.
     ///
-    /// This type is a newtype wrapper around `Box<dyn FnOnce() -> Result + Send + Sync>`
+    /// This type is a newtype wrapper around `Box<dyn FnOnce() -> TaskResult + Send + Sync>`
     /// to allow implementing `Default` (since the orphan rules prevent
     /// implementing traits for type aliases).
     ///
@@ -155,18 +155,18 @@ pub mod jobs {
     ///
     /// ```no_run
     /// use thryve_utils::extras::jobs::TaskJob;
-    /// use thryve_utils::res::Result;
+    /// use thryve_utils::res::TaskResult;
     ///
     /// let job: TaskJob = TaskJob::new(|| {
     ///     // Task execution logic
-    ///     Result::new("Success", "Done".to_string(), "Main")
+    ///     TaskResult::new("Success", "Done".to_string(), "Main")
     /// });
     ///
-    /// let result = job.call_once(());
+    /// let result = job.call_once();
     /// ```
     pub struct TaskJob {
         /// The inner closure that executes the task.
-        inner: Box<dyn FnOnce() -> res::Result + Send + Sync>,
+        inner: Box<dyn FnOnce() -> TaskResult + Send + Sync>,
     }
 
     impl TaskJob {
@@ -174,15 +174,19 @@ pub mod jobs {
         ///
         /// # Arguments
         ///
-        /// * `closure` - A closure that takes no arguments and returns a `Result`
+        /// * `closure` - A closure that takes no arguments and returns a `TaskResult`
         ///
         /// # Returns
         ///
         /// A new `TaskJob` wrapping the closure.
-        pub fn new(closure: impl FnOnce() -> res::Result + Send + Sync + 'static) -> Self {
+        pub fn new(closure: impl FnOnce() -> TaskResult + Send + Sync + 'static) -> Self {
             TaskJob {
                 inner: Box::new(closure),
             }
+        }
+
+        pub fn new_empty() -> Self {
+            TaskJob { inner: Box::new(|| TaskResult::new("", "".to_string(), "")) }
         }
 
         /// Calls the task job and returns the result.
@@ -192,21 +196,21 @@ pub mod jobs {
         ///
         /// # Returns
         ///
-        /// The [`Result`](crate::res::Result) returned by the closure.
+        /// The [`TaskResult`](crate::res::TaskResult) returned by the closure.
         ///
         /// # Example
         ///
         /// ```no_run
         /// use thryve_utils::extras::jobs::TaskJob;
-        /// use thryve_utils::res::Result;
+        /// use thryve_utils::res::TaskResult;
         ///
         /// let job: TaskJob = TaskJob::new(|| {
-        ///     Result::new("Success", "Done".to_string(), "Main")
+        ///     TaskResult::new("Success", "Done".to_string(), "Main")
         /// });
         ///
-        /// let result = job.call_once(());
+        /// let result = job.call_once();
         /// ```
-        pub fn call_once(self) -> res::Result {
+        pub fn call_once(self) -> TaskResult {
             (self.inner)()
         }
     }
@@ -224,7 +228,7 @@ pub mod jobs {
         fn default() -> Self {
             TaskJob {
                 inner: Box::new(|| {
-                    res::Result::new(
+                    TaskResult::new(
                         "BIGERR",
                         "If This Is Ever Called, Something is Wrong".to_string(),
                         "Main",
@@ -234,13 +238,13 @@ pub mod jobs {
         }
     }
 
-    impl From<Box<dyn FnOnce() -> res::Result + Send + Sync>> for TaskJob {
-        /// Converts a `Box<dyn FnOnce() -> Result + Send + Sync>` into a `TaskJob`.
+    impl From<Box<dyn FnOnce() -> TaskResult + Send + Sync>> for TaskJob {
+        /// Converts a `Box<dyn FnOnce() -> TaskResult + Send + Sync>` into a `TaskJob`.
         ///
         /// Lets callers construct a `TaskJob` directly from a boxed closure via
         /// `TaskJob::from(boxed_closure)` or the `Into` trait, without going
         /// through [`TaskJob::new`].
-        fn from(boxed: Box<dyn FnOnce() -> res::Result + Send + Sync>) -> Self {
+        fn from(boxed: Box<dyn FnOnce() -> TaskResult + Send + Sync>) -> Self {
             TaskJob { inner: boxed }
         }
     }

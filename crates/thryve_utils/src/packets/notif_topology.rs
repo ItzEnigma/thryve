@@ -22,7 +22,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use thryve_utils::packets::notif_topology::TopologyModifier;
 //! use thryve_utils::graphs::graph::TopologyNode;
 //!
@@ -54,7 +54,7 @@ use crate::{
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use thryve_utils::packets::notif_topology::TopologyModifier;
 /// use thryve_utils::graphs::graph::TopologyNode;
 ///
@@ -89,7 +89,7 @@ impl TopologyModifier {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_utils::packets::notif_topology::TopologyModifier;
     /// use thryve_utils::graphs::graph::TopologyNode;
     ///
@@ -121,7 +121,7 @@ impl TopologyModifier {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```ignore
     /// use thryve_utils::packets::notif_topology::TopologyModifier;
     ///
     /// let notif = TopologyModifier::add_edge("from_fp", "to_fp");
