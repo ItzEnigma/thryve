@@ -118,7 +118,6 @@ int main() {
 
     // 4. Create a plugin
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin",           // name
         "MyType",             // type
         nullptr,              // plg_core_ptr (opaque pointer)
         packet_handle,        // tx (packet handle - REQUIRED)
@@ -149,7 +148,6 @@ int main() {
 
     // 6. Create an observer
     ThryveObserver observer = thryve_observer_create(
-        "MyObserver",         // name
         "MyType",             // type
         nullptr,              // obs_core_ptr (opaque pointer)
         packet_handle,        // tx (packet handle - REQUIRED)

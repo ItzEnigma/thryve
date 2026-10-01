@@ -63,7 +63,7 @@ mod tests_plugin_pipeline {
             let tx_clone = tx.clone();
             let entry = TaskJob::new(move || core_clone.load_images(tx_clone));
 
-            Plugin::new("ImgPipeline", "Test", core, tx, entry)
+            Plugin::new("Test", core, tx, entry).unwrap()
         }
 
         fn load_images(&self, tx: PacketHandle) -> TaskResult {
@@ -85,7 +85,8 @@ mod tests_plugin_pipeline {
                 let output_dir = output_dir.clone();
                 let remaining = Arc::clone(&remaining);
                 let job = TaskJob::new(move || compress_one(&path, &output_dir, &remaining));
-                tx.send_task(Task::new("CompressImage", 1, job));
+                tx.send_task(Task::new("CompressImage", 1, job).unwrap())
+                    .unwrap();
             }
 
             TaskResult::new("Ok", format!("queued {} images", total), "Main")
@@ -96,11 +97,7 @@ mod tests_plugin_pipeline {
     /// as `ImgCompression::process_img`), write it to `output_dir`, and once
     /// every image has been processed, return a `Fin` result so the engine
     /// shuts down - exactly how a real plugin signals it's done.
-    fn compress_one(
-        path: &Path,
-        output_dir: &Path,
-        remaining: &Arc<AtomicUsize>,
-    ) -> TaskResult {
+    fn compress_one(path: &Path, output_dir: &Path, remaining: &Arc<AtomicUsize>) -> TaskResult {
         let img = image::open(path)
             .unwrap_or_else(|e| {
                 panic!(

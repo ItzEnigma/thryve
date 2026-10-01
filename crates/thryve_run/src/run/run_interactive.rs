@@ -18,8 +18,9 @@
 //! The interactive mode handles the complete lifecycle of the engine:
 //!
 //! - **Initialization**: Sets up communication channels and creates the execution context
-//! - **Engine startup**: Initializes the engine with observers and plugins
-//! - **Main loop**: Processes notifications and tasks until shutdown
+//! - **Engine startup**: Sets up the engine with observers and plugins, through the shared
+//!   startup sequence ([`EngineInitialization`])
+//! - **Main loop**: Processes notifications and tasks until a `Fin` task ends it
 //! - **Cleanup**: Performs finalization before exit
 //!
 //! # Key Functions
@@ -35,15 +36,17 @@
 //!
 //! let config = Config::default();
 //! let ctx = summon_requirements(config);
-//! run_interactive(ctx);
+//! let handle = run_interactive(ctx)?;
+//! let _ = handle.join();
+//! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
 use crossbeam::channel::bounded;
-use thryve_utils::extras;
+use thryve_core::runtime::engine::Engine;
+use thryve_utils::errors::ThryveError;
 
-use crate::init::init::{self, init_engine};
+use crate::init::init::EngineInitialization;
 use std::thread::JoinHandle;
-use std::{thread, time::Duration};
 use thryve_utils::cfg::{config::Config, ctx::Ctx};
 use thryve_utils::packets::packet_handle::PacketHandle;
 
@@ -52,30 +55,34 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 /// This is the primary entry point for running the engine when launched manually
 /// (e.g., double-clicking an executable or running from a command prompt).
 ///
-/// The function performs the following operations:
+/// All the setup happens on the caller's thread, before this function returns, through the
+/// shared startup sequence ([`EngineInitialization`]):
 ///
-/// 1. Initializes the logging directories and panic hook with the provided context
-/// 2. Initializes the engine with the provided context
-/// 3. Loads all configured observers and plugins
-/// 4. Starts the observer sorter thread for notification routing
-/// 5. Enters the main processing loop until shutdown is signaled
-/// 6. Performs cleanup operations before exiting
+/// 1. Spawns the engine thread, which waits for its engine
+/// 2. Creates the log folders and files, and installs the panic hook
+/// 3. Starts the worker threads, the logger and, in graph mode, the topology handler
+/// 4. Loads all configured observers and plugins
+/// 5. Starts the observer sorter thread for notification routing
+/// 6. Hands the engine to its thread, which applies any debugging wait time and then runs the
+///    main loop
+///
+/// The main loop processes notifications and tasks until a task result of type `Fin` (or
+/// `FinErr`) finalizes the engine. The engine thread then ends, so joining the returned handle
+/// waits for the engine to stop.
 ///
 /// # Arguments
 ///
 /// * `ctx` - The context containing configuration, observers, and plugins to load
 ///
-/// # Behavior
+/// # Returns
 ///
-/// On the first iteration of the main loop, the function:
-/// - Loads all observers specified in the context
-/// - Loads all plugins specified in the context
-/// - Initializes the observer sorter thread
-/// - Applies any debugging wait time if enabled in configuration
+/// The engine thread's handle.
 ///
-/// The main loop continues processing notifications and tasks until the engine
-/// sets its exit flag to `true`, at which point the engine is finalized and
-/// the function returns.
+/// # Errors
+///
+/// Returns the error of the first startup step that fails. See
+/// [`EngineInitialization::prepare`] for the list. A failed start stops every thread it started,
+/// and writes its error to `Error.log` once the log folder exists.
 ///
 /// # Examples
 ///
@@ -84,61 +91,23 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 /// use thryve_run::run::run_interactive::{run_interactive, summon_requirements};
 ///
 /// let ctx = summon_requirements(Config::load_def_config());
-/// run_interactive(ctx);
+/// let handle = run_interactive(ctx)?;
+/// let _ = handle.join();
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
-pub fn run_interactive(mut ctx: Ctx) -> Option<JoinHandle<()>> {
-    println!("Running interactively from binary.");
+pub fn run_interactive(ctx: Ctx) -> Result<JoinHandle<()>, ThryveError> {
+    EngineInitialization::prepare(ctx, engine_loop)?.complete_and_run()
+}
 
-    let handle = std::thread::spawn(move || {
-        // Initialize the logging directories and panic hook.
-        init::init_directories(&mut ctx);
-        extras::panic_hook::init_panic_hook();
-
-        // Initialize the engine by creating a new instance of the engine struct and setting up the logger observer.
-        let mut eng = init_engine(&ctx);
-
-        let mut state: u8 = 0;
-        let len_obs_tasks = ctx.observers.len();
-        let len_plugin_tasks = ctx.plugins.len();
-
-        // Main loop for processing notifications and tasks until the engine signals for shutdown by setting the exit flag to true.
-        // The loop also handles the initial setup of the logger observer and the observer sorter thread during the first iteration.
-        // During the first iteration, it loads the observers and plugins into the engine, initializes the observer sorter thread, and handles any debugging wait time if specified in the configuration.
-        while !eng.exit_flag {
-            // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
-            if state == 0 {
-                state += 1;
-
-                // Load the observers and plugins into the engine if there are any specified in the context.
-                if len_obs_tasks > 0 {
-                    for obs in ctx.observers() {
-                        eng.obs_manager.load_observer(obs);
-                    }
-                }
-
-                // Load the plugins into the engine if there are any specified in the context.
-                if len_plugin_tasks > 0 {
-                    for plugin in ctx.plugins() {
-                        println!("loaded plugin: {}", plugin.plg_type.inner());
-                        eng.plugin_manager.load_plugin(&ctx.config, plugin);
-                    }
-                }
-
-                // Initialize the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
-                eng.obs_manager.init_obs_sorter_thread();
-
-                // Handle any debugging wait time if specified in the configuration.
-                if ctx.config.debugging.is_debugging {
-                    thread::sleep(Duration::from_secs(
-                        ctx.config.debugging.wait_before_execution,
-                    ));
-                }
-            }
-
-            eng.run_once();
-        }
-    });
-    Some(handle)
+/// Interactive mode's loop, run on the engine thread.
+///
+/// Processes tasks and notifications until the engine's exit flag is set. Only
+/// [`Engine::finalize`] sets it, and a `Fin` task result calls that, so the loop needs no
+/// finalize of its own.
+fn engine_loop(mut eng: Engine) {
+    while !eng.exit_flag {
+        eng.run_once();
+    }
 }
 
 /// Creates the communication channels and context required for engine execution.

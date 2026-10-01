@@ -166,7 +166,6 @@ mod tests_ffi_plugin_create_success {
         // Act
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -197,7 +196,6 @@ mod tests_ffi_plugin_create_success {
         // Act
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 core_ptr,
                 pkt,
@@ -226,7 +224,6 @@ mod tests_ffi_plugin_create_success {
 
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -332,7 +329,6 @@ mod tests_ffi_observer_create_success {
         // Act
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -363,7 +359,6 @@ mod tests_ffi_observer_create_success {
         // Act
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 core_ptr,
                 pkt,
@@ -392,7 +387,6 @@ mod tests_ffi_observer_create_success {
 
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -498,7 +492,6 @@ mod tests_ffi_service_create_ctx_wiring {
 
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -532,21 +525,23 @@ mod tests_ffi_service_run_success {
     };
 
     #[test]
-    fn test_service_run_returns_ok() {
+    fn test_service_run_outside_service_manager_returns_invalid_state() {
         // Arrange
         let config = thryve_config_default();
         let created = thryve_service_create(config);
 
-        // thryve_service_run internally calls init_panic_hook(), which installs a
-        // process-wide panic hook that calls std::process::exit(1) on ANY
-        // panic. That hook has no test-scoping — left in place, it silently
-        // breaks every #[should_panic] test that runs afterward in this same
-        // process (the whole binary aborts instead of the panic being
-        // caught). Save and restore the hook around this call to keep that
-        // side effect contained to this test.
+        // thryve_service_run starts the engine before it connects to the service
+        // manager, and that startup installs a process-wide panic hook that calls
+        // std::process::exit(1) on ANY panic. That hook has no test-scoping — left
+        // in place, it silently breaks every #[should_panic] test that runs
+        // afterward in this same process (the whole binary aborts instead of the
+        // panic being caught). Save and restore the hook around this call to keep
+        // that side effect contained to this test.
         let prev_hook = std::panic::take_hook();
 
-        // Act — service_run takes ownership of both service and ctx
+        // Act — service_run takes ownership of both service and ctx. A test
+        // process isn't started by the Windows service manager, so connecting to
+        // it fails, and the engine that was already started is stopped again.
         let status = thryve_service_run(created.service, created.ctx);
 
         std::panic::set_hook(prev_hook);
@@ -555,7 +550,7 @@ mod tests_ffi_service_run_success {
         thryve_config_free(config);
 
         // Assert
-        assert_eq!(status, ThryveStatus::Ok);
+        assert_eq!(status, ThryveStatus::InvalidState);
     }
 }
 
@@ -790,13 +785,15 @@ mod tests_ffi_observer_clean_up_success {
         // Create a mock observer to test clean_up
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let observer = Arc::new(Observer::new(
-            "test",
-            "testType",
-            obs_core,
-            obs_job,
-            PacketHandle::new(bounded(10).0, bounded(10).0, false),
-        ));
+        let observer = Arc::new(
+            Observer::new(
+                "testType",
+                obs_core,
+                obs_job,
+                PacketHandle::new(bounded(10).0, bounded(10).0, false),
+            )
+            .unwrap(),
+        );
 
         // Act
         adapter.clean_up(observer);

@@ -7,6 +7,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Shared building blocks for the Thryve framework.
+//!
+//! Every other Thryve crate builds on this one: the plugin, observer and notification types, tasks
+//! and their results, the queues and the thread pool, configuration, checked names and the error
+//! types. Applications normally use it through the `thryve` crate, which re-exports the public parts.
+
 pub mod bases;
 pub mod cfg;
 pub mod errors;

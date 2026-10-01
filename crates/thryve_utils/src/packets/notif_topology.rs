@@ -11,14 +11,14 @@
 //!
 //! This module provides the [`TopologyModifier`] struct, which is used to
 //! send notifications about changes to the task topology graph. These
-//! notifications are sent to the [`TopologyHandlerObserver`](crate::topology_handler::TopologyHandlerObserver)
+//! notifications are sent to the topology handler (`TopologyHandlerObserver`, in `thryve_observers`)
 //! to update the graph visualization.
 //!
 //! # Usage
 //!
 //! Topology modifiers are created using the `add_node` and `add_edge`
-//! factory methods, which return fully constructed notifications ready
-//! to be sent to the engine.
+//! factory methods, which return fully constructed notifications
+//! ready to be sent to the engine.
 //!
 //! # Example
 //!
@@ -34,7 +34,8 @@
 //! ```
 
 use crate::{
-    bases::notif::Notif, graphs::graph::TopologyNode, impl_as_any, traits::notif_logic::NotifLogic,
+    bases::notif::Notif, extras::named_input::NamedInput, graphs::graph::TopologyNode, impl_as_any,
+    traits::notif_logic::NotifLogic,
 };
 
 /// A notification that modifies the task topology graph.
@@ -44,6 +45,9 @@ use crate::{
 ///
 /// - **AddNode**: Adds a new node to the graph representing a call site
 /// - **AddEdge**: Adds an edge between two nodes representing a task creation relationship
+///
+/// The failure node isn't sent: the topology handler adds it itself when it finds the graph is
+/// wrong.
 ///
 /// # Fields
 ///
@@ -105,7 +109,11 @@ impl TopologyModifier {
             action: action.to_string(),
         });
 
-        Notif::new(action, "TopologyHandler", temp)
+        Notif::new_internal(
+            NamedInput::new_topo_add_node(),
+            NamedInput::new_topo_handler(),
+            temp,
+        )
     }
 
     /// Creates a notification to add an edge to the topology graph.
@@ -136,6 +144,10 @@ impl TopologyModifier {
             action: action.to_string(),
         });
 
-        Notif::new(action, "TopologyHandler", temp)
+        Notif::new_internal(
+            NamedInput::new_topo_add_edge(),
+            NamedInput::new_topo_handler(),
+            temp,
+        )
     }
 }

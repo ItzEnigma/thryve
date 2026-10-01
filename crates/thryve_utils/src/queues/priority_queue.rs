@@ -49,10 +49,8 @@ use std::time::{Duration, Instant};
 use crate::bases::observer::Observer;
 use crate::bases::queue::QueueBase;
 use crate::cfg::config::{Config, TaskConfig};
-use crate::extras::jobs::TaskJob;
 use crate::extras::thread_local;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
-use crate::res::TaskResult;
 use crate::threads::thread_registry::WorkerRegistry;
 use crate::traits::queue::Queue;
 
@@ -60,7 +58,8 @@ use crate::traits::queue::Queue;
 ///
 /// Uses a `SkipMap` to maintain task ordering by priority, with
 /// `AtomicCell` wrappers enabling lock-free concurrent access.
-pub type PQChild<T> = QueueBase<SkipMap<Priority, AtomicCell<Option<Box<EnqueuedTask>>>>, T>;
+pub type PQChild<T> =
+    QueueBase<SkipMap<Priority, AtomicCell<Option<Box<EnqueuedTask>>>>, T, TaskConfig>;
 
 /// Wrapper for a task that tracks enqueue time for aging.
 ///
@@ -103,19 +102,11 @@ impl Queue<Task> for PQChild<Task> {
     /// calculates its priority, and inserts it into the `SkipMap`.
     /// Notifies waiting threads if the queue is not paused.
     ///
-    /// # Panics
-    ///
-    /// Panics if `task_config` is `None`, which should never happen if
-    /// the queue was properly initialized with [`PQChild::new`](Self::new).
-    ///
     /// # Arguments
     ///
     /// * `task` - The task to insert
     fn push(&self, task: Task) {
-        let task_config = self
-            .task_config
-            .as_ref()
-            .expect("PQChild task_config must be Some - queue was not properly initialized");
+        let task_config = self.task_config.clone();
 
         // Wrap the task to track enqueue time for aging.
         let mut enq_task = EnqueuedTask {
@@ -126,7 +117,7 @@ impl Queue<Task> for PQChild<Task> {
 
         // Create priority struct for ordering.
         let priority = Priority {
-            task_config: self.task_config.clone().unwrap(),
+            task_config,
             base_priority: enq_task.task.base_priority,
             enq_at: enq_task.enq_at,
             task_id: enq_task.task.id,
@@ -209,7 +200,7 @@ impl Queue<Task> for PQChild<Task> {
         }
 
         // Return special "Fin" task on shutdown.
-        Task::new("Fin", 0, TaskJob::new(TaskResult::fin))
+        Task::new_fin()
     }
 
     /// Finalizes the queue for shutdown.
@@ -226,7 +217,7 @@ impl Queue<Task> for PQChild<Task> {
         self.worker_registry.notify_all();
 
         let notif = Log::log("Task Queue Finalized".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     /// Pauses the queue.
@@ -236,7 +227,7 @@ impl Queue<Task> for PQChild<Task> {
         self.pause_flag.store(true, Ordering::SeqCst);
 
         let notif = Log::log("Task Queue Paused".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     /// Resumes the queue.
@@ -246,7 +237,7 @@ impl Queue<Task> for PQChild<Task> {
         self.pause_flag.store(false, Ordering::SeqCst);
 
         let notif = Log::log("Task Queue continuing".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     fn exit_flag(&self) -> Arc<AtomicBool> {
@@ -270,7 +261,7 @@ impl PQChild<Task> {
     /// A new `PQChild` instance.
     pub fn new(config: &Config, packet_handle: PacketHandle) -> Self {
         Self {
-            task_config: Some(Arc::new(config.tasks)),
+            task_config: Arc::new(config.tasks),
             main_queue: SkipMap::new(),
             worker_registry: Arc::new(WorkerRegistry::new(config.threads.worker_count)),
             exit_flag: Arc::new(AtomicBool::new(false)),
@@ -290,14 +281,17 @@ impl Priority {
     ///
     /// # Returns
     ///
-    /// The effective priority, clamped to `max_priority`.
+    /// The effective priority, clamped to `max_priority`. However long a task waits, the sum
+    /// can't overflow: it stops at the top instead of wrapping around to a low priority.
     pub fn effective_priority(&self) -> u8 {
         let waited = self.enq_at.elapsed();
         let aging_boost = (waited.as_secs_f64()
             / Duration::from_secs(self.task_config.aging_interval).as_secs_f64())
             as u8;
 
-        (self.base_priority + aging_boost).min(self.task_config.max_priority)
+        self.base_priority
+            .saturating_add(aging_boost)
+            .min(self.task_config.max_priority)
     }
 }
 

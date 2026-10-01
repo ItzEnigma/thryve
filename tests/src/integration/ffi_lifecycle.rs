@@ -62,7 +62,7 @@ mod tests_ffi_full_lifecycle {
         // it must NOT be freed separately afterward (see the doc comment on
         // thryve_run_interactive_start).
         //
-        // thryve_run_interactive_start spawns run_interactive's thread under the
+        // thryve_run_interactive_start runs run_interactive's startup under the
         // hood, which calls init_panic_hook() - a process-wide hook with no
         // test-scoping that calls std::process::exit(1) on ANY panic anywhere
         // in this process (see engine_lifecycle.rs for the same note). Left

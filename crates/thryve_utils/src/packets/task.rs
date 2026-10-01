@@ -30,6 +30,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::errors::{NameInputType, NamingError};
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
 use crate::graphs::callsite::TaskCallSite;
 use crate::res::TaskResult;
@@ -55,9 +56,8 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 /// is automatically captured by [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task)
 /// and includes:
 ///
-/// - The file path where the task was created
-/// - The module path in the Rust source
-/// - The line number of creation
+/// - The file path where the task was sent
+/// - The line number where it was sent
 /// - Fingerprints for graph node identification
 ///
 /// # Fields
@@ -78,7 +78,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(1);
 /// let task = Task::new("MyTask", 2, TaskJob::new(|| {
 ///     // Task execution logic
 ///     TaskResult::new("Success", "Done".to_string(), "Main")
-/// }));
+/// })).expect("valid task name");
 ///
 /// println!("Task ID: {}", task.id);
 /// ```
@@ -92,7 +92,7 @@ pub struct Task {
     /// in the source code.
     pub callsite: Option<TaskCallSite>,
     /// Human-readable name for debugging and logging.
-    pub task_name: NamedInput,
+    task_name: NamedInput,
     /// Priority level (higher = more urgent).
     pub base_priority: u8,
     /// The execution function (private).
@@ -120,7 +120,7 @@ impl Packet for Task {
     ///
     /// This method is called by [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task)
     /// when graph visualization is enabled. It attaches call site
-    /// information (file path, module path, line number, fingerprints)
+    /// information (file path, line number, fingerprints)
     /// to the task for topology graph construction.
     ///
     /// # Arguments
@@ -162,6 +162,12 @@ impl Task {
     ///
     /// A new `Task` instance with a unique ID.
     ///
+    /// # Errors
+    ///
+    /// Returns [`NamingError::NameEmpty`] if `task_name` is empty, or
+    /// [`NamingError::NameContainsControlChar`] if it contains a control character. The
+    /// error's kind is `NameInputType::TaskName`.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -172,29 +178,70 @@ impl Task {
     /// let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
     ///     let result = 2 + 2;
     ///     TaskResult::new("Success", format!("Result: {}", result), "Main")
-    /// }));
+    /// })).expect("valid task name");
     /// ```
-    pub fn new(task_name: &str, task_priority: u8, function_to_exec: TaskJob) -> Self {
-        if task_name.is_empty() {
-            panic!("The field `task_name` in a Task cannot be empty");
-        }
+    pub fn new(
+        task_name: &str,
+        task_priority: u8,
+        function_to_exec: TaskJob,
+    ) -> Result<Self, NamingError> {
+        Ok(Task {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new(task_name, NameInputType::TaskName)?,
+            base_priority: task_priority,
+            job: function_to_exec,
+        })
+    }
 
+    /// Creates a plugin's init task, named after the plugin's type.
+    ///
+    /// The plugin manager sends it when it loads the plugin. The type was checked when the plugin
+    /// was created, so this can't fail.
+    pub fn new_init(plg_type: NamedInput, task_priority: u8, function_to_exec: TaskJob) -> Self {
         Task {
             id: next_id(),
             callsite: None,
-            task_name: NamedInput::new(task_name),
+            task_name: plg_type,
             base_priority: task_priority,
             job: function_to_exec,
         }
     }
 
+    /// Creates a placeholder task, named `Empty`, whose job does nothing and reports nothing.
     pub fn new_empty() -> Self {
         Task {
             id: next_id(),
             callsite: None,
-            task_name: NamedInput::new("Empty"),
+            task_name: NamedInput::new_empty(),
             base_priority: 0,
-            job: TaskJob::new_empty()
+            job: TaskJob::new_empty(),
+        }
+    }
+
+    /// Creates the default task, named `DefTask`.
+    ///
+    /// Its job is the placeholder that reports an error if it ever runs.
+    pub fn new_default() -> Self {
+        Task {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new_def_task(),
+            base_priority: 0,
+            job: TaskJob::default(),
+        }
+    }
+
+    /// Creates the `Fin` sentinel that the task queue returns once it's been finalized.
+    ///
+    /// Workers check the exit flag after taking a task and stop, so the sentinel isn't meant to run.
+    pub fn new_fin() -> Self {
+        Task {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new_fin(),
+            base_priority: 0,
+            job: TaskJob::new_fin(),
         }
     }
 
@@ -215,6 +262,11 @@ impl Task {
     /// the closure in `TaskJob`).
     pub fn size_in_bytes(&self) -> usize {
         std::mem::size_of_val(self)
+    }
+
+    /// Returns the task's name.
+    pub fn task_name(&self) -> &str {
+        self.task_name.inner()
     }
 }
 
@@ -238,7 +290,7 @@ impl Task {
     ///
     /// let mut task = Task::new("HighPriority", 10, TaskJob::new(|| {
     ///     TaskResult::new("", "".to_string(), "")
-    /// }));
+    /// })).expect("valid task name");
     ///
     /// task.clamp_task_priority(4); // Priority clamped to 4
     /// assert_eq!(task.base_priority, 4);
@@ -252,7 +304,7 @@ impl Task {
 
 impl Default for Task {
     fn default() -> Self {
-        Task::new("DefTask", 0, TaskJob::default())
+        Self::new_default()
     }
 }
 

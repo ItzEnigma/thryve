@@ -22,13 +22,17 @@
 //! # Service Lifecycle
 //!
 //! 1. **Creation**: A new [`Thryve`] instance is created with a [`Config`]
-//! 2. **Registration**: The service registers with the Windows Service Control Manager
-//! 3. **Execution**: The service listens for commands and manages the engine lifecycle
-//! 4. **Termination**: The service gracefully shuts down the engine on stop commands
+//! 2. **Setup**: The engine is set up through the shared startup sequence
+//!    ([`EngineInitialization`]) before the service connects to anything, so a failed setup is
+//!    returned as an error
+//! 3. **Registration**: The service registers with the Windows Service Control Manager
+//! 4. **Execution**: The service listens for commands and manages the engine lifecycle
+//! 5. **Termination**: The service gracefully shuts down the engine on stop commands
 //!
 //! # Supported Commands
 //!
-//! - **Start**: Initializes and runs the engine in a dedicated thread
+//! - **Start**: Hands the prepared engine to its thread, which starts processing. A second
+//!   `Start` is logged and ignored
 //! - **Stop**: Gracefully shuts down the engine and terminates the service
 //! - **Pause**: Suspends engine processing while maintaining state
 //! - **Resume**: Resumes engine processing after a pause
@@ -41,25 +45,30 @@
 //!
 //! let config = Config::default();
 //! let (mut service, ctx) = Thryve::new(config);
-//! service.run_service(ctx);
+//! service.run_service(ctx)?;
+//! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
 use crossbeam::channel::bounded;
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
+use thryve_core::runtime::engine::Engine;
 use windows_services::{Command, Service};
 
-use thryve_utils::cfg::{config::Config, ctx::Ctx};
 use thryve_utils::packets::notif_log::Log;
 use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::{
+    cfg::{config::Config, ctx::Ctx},
+    errors::{StartupError, ThryveError},
+};
 
-use crate::init::init::init_engine;
+use crate::init::init::EngineInitialization;
 
 /// A Windows service wrapper for the Thryve engine.
 ///
@@ -85,11 +94,15 @@ use crate::init::init::init_engine;
 ///
 /// let config = Config::default();
 /// let (mut service, ctx) = Thryve::new(config);
-/// service.run_service(ctx);
+/// service.run_service(ctx)?;
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
 pub struct Thryve<'a> {
+    /// Whether the engine should keep running. Clearing it stops the engine loop.
     pub is_running: Arc<AtomicBool>,
+    /// Whether the engine should be paused. The engine loop pauses or resumes to match it.
     pub is_paused: Arc<AtomicBool>,
+    /// The Windows service this wraps.
     pub service_instance: Service<'a>,
 }
 
@@ -173,42 +186,52 @@ impl<'a> Thryve<'a> {
 
     /// Runs the Thryve service and manages its execution lifecycle.
     ///
-    /// This is the primary entry point for service execution. It registers the service
-    /// with the Windows Service Control Manager and begins listening for control commands.
-    /// The engine runs in a dedicated thread to ensure the service remains responsive
-    /// to control commands at all times.
+    /// This is the primary entry point for service execution. It sets the engine up first,
+    /// then registers the service with the Windows Service Control Manager and blocks, listening
+    /// for control commands, until the service stops. The engine runs in a dedicated thread to
+    /// ensure the service remains responsive to control commands at all times.
     ///
     /// # Arguments
     ///
     /// * `ctx` - The context containing configuration, observers, plugins, and communication channels
     ///
-    /// # Behavior
-    ///
-    /// The service responds to the following commands:
-    ///
-    /// - **Start**: Spawns the engine in a dedicated thread, loads observers and plugins,
-    ///   and begins processing tasks and notifications
-    /// - **Stop**: Signals the engine to shut down, waits for the engine thread to complete,
-    ///   and performs cleanup
-    /// - **Pause**: Sets the pause flag, causing the engine to suspend processing
-    /// - **Resume**: Clears the pause flag, allowing the engine to resume processing
-    ///
     /// # Engine Lifecycle
     ///
-    /// On start, the engine:
-    /// 1. Initializes with the provided context
-    /// 2. Loads all configured observers
-    /// 3. Loads all configured plugins
-    /// 4. Starts the observer sorter thread
-    /// 5. Enters the main processing loop
+    /// Before the service connects to the service manager, the shared startup sequence
+    /// ([`EngineInitialization::prepare`]) sets the engine up on this thread:
+    /// 1. Spawns the engine thread, which waits for its engine
+    /// 2. Creates the log folders and files, and installs the panic hook
+    /// 3. Starts the worker threads, the logger and, in graph mode, the topology handler
+    /// 4. Loads all configured observers and plugins
+    /// 5. Starts the observer sorter thread
     ///
     /// On stop, the engine:
     /// 1. Exits the main processing loop
     /// 2. Performs finalization and cleanup
     ///
-    /// # Panics
+    /// # Behavior
     ///
-    /// Panics if the Start command is received more than once without a corresponding Stop.
+    /// The service responds to the following commands:
+    ///
+    /// - **Start**: Sets the running flag, then hands the prepared engine to its thread, which
+    ///   begins processing tasks and notifications. A second `Start` finds no engine left to hand
+    ///   over; it's logged and ignored
+    /// - **Stop**: Clears the running flag, then waits for the engine thread, which finalizes the
+    ///   engine before it ends. Windows sees the service as stopped only after that
+    /// - **Pause**: Sets the pause flag, causing the engine to suspend processing
+    /// - **Resume**: Clears the pause flag, allowing the engine to resume processing
+    ///
+    /// A `Fin` task result also ends the engine loop; the engine is then already finalized.
+    ///
+    /// # Errors
+    ///
+    /// - Returns the error of the first setup step that fails, before connecting to the service
+    ///   manager. See [`EngineInitialization::prepare`] for the list.
+    /// - Returns [`StartupError::Service`] if the process wasn't started by the service manager.
+    ///   The prepared engine is then stopped again.
+    ///
+    /// Either way, no Thryve thread is left running, and the error is written to `Error.log` once
+    /// the log folder exists.
     ///
     /// # Example
     ///
@@ -218,133 +241,157 @@ impl<'a> Thryve<'a> {
     ///
     /// let config = Config::default();
     /// let (mut service, ctx) = Thryve::new(config);
-    /// service.run_service(ctx);
+    /// service.run_service(ctx)?;
+    /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
-    pub fn run_service(&mut self, ctx: Ctx) {
-        // Cloneing the atomic flags for running and paused states to be used in the service command handling.
+    pub fn run_service(&mut self, ctx: Ctx) -> Result<(), ThryveError> {
+        let packet_handle = ctx.packet_handle();
+
+        // Cloning the atomic flags for running and paused states to be used in the service command handling.
         let is_running: Arc<AtomicBool> = self.is_running.clone();
         let pause_flag: Arc<AtomicBool> = self.is_paused.clone();
 
-        // Create a thread handle that will be used to run the engine in a separate thread.
+        // A second pair of clones for the engine loop. All of them point at the same two flags,
+        // so the loop sees every change the commands make.
+        let is_running_clone = is_running.clone();
+        let pause_flag_clone = pause_flag.clone();
+
+        // The engine thread's handle, stored by Start so that Stop can join it.
         let engine_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>> =
             Arc::new(Mutex::new(None));
         let engine_thread_clone = engine_thread.clone();
 
-        let len_obs_tasks = ctx.observers.len();
-        let len_plugin_tasks = ctx.plugins.len();
-        let packet_handle = ctx.packet_handle();
-        let mut ctx = Some(ctx);
+        // The prepared engine. Start takes it out of the slot; if the service manager can't be
+        // reached, run_service takes it back out to abort it.
+        let eng_init_slot: Arc<Mutex<Option<EngineInitialization>>> = Arc::new(Mutex::new(Some(
+            EngineInitialization::prepare(ctx, move |eng| {
+                engine_loop(eng, is_running_clone, pause_flag_clone)
+            })?,
+        )));
+        let eng_init_slot_clone = eng_init_slot.clone();
 
         // The service instance will call the closure whenever a command is received.
-        // The closure will check for the command and run or stop the engine accordingly.
-        // The engine will run in a separate thread.
+        // Start hands the prepared engine to its thread, Stop clears the running flag and waits
+        // for the thread, and Pause and Resume flip the pause flag.
         // The engine will run until the is_running flag is set to false.
         // The engine will finalize itself when the is_running flag is set to false.
-        let _ = self.service_instance.run(move |_service, command| match command {
-            Command::Start => {
+        let service_run = self
+            .service_instance
+            .run(move |_service, command| match command {
+                Command::Start => {
+                    is_running.store(true, Ordering::SeqCst);
 
-                is_running.store(true, Ordering::SeqCst);
-                let is_running_clone = is_running.clone();
-                let pause_flag_clone = pause_flag.clone();
-
-                let mut ctx = Some(ctx.take().expect("Start() called more than once - this is a fatal application logic error. The service can only be started once."));
-
-                // Spawn a new thread to run the engine so that the service can continue to listen for commands.
-                let handle = thread::spawn(move || {
-                    let mut ctx = ctx.take().expect("Start() called more than once - this is a fatal application logic error. The service can only be started once.");
-                    let mut eng = init_engine(&ctx);
-
-                    let mut state: u8 = 0;
-
-                    // The engine will run in a loop until the is_running flag is set to false.
-                    while is_running_clone.load(Ordering::SeqCst) {
-                        // Check the pause flag and pause or resume the engine accordingly.
-                        let engine_is_paused = eng.pause_flag;
-                        let is_pause_flag_loaded = pause_flag_clone.load(Ordering::SeqCst);
-
-                        // If the engine is already paused and the pause flag is still loaded, we just wait and continue the loop without calling run_once.
-                        if engine_is_paused && is_pause_flag_loaded{
-                            thread::sleep(Duration::from_millis(500));
-                            continue;
+                    if let Some(eng_init) = eng_init_slot_clone
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take()
+                    {
+                        if let Ok(handle) = eng_init.complete_and_run() {
+                            // Store the thread handle in the engine_thread variable so that we can join it later when stopping the service.
+                            *engine_thread_clone
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner) = Some(handle);
                         }
-
-                        // If the pause flag is loaded and the engine is not paused, the engine gets paused.
-                        if is_pause_flag_loaded && !engine_is_paused{
-                            eng.pause();
-                        }
-
-                        // If the pause flag is not loaded and the engine is paused, the engine gets resumed.
-                        else if !is_pause_flag_loaded && engine_is_paused {
-                            eng.resume();
-                        }
-
-                        // During the first iteration of the loop, perform the initial setup of the logger observer and the observer sorter thread.
-                        if state == 0 {
-                            state += 1;
-
-                            // Load the observers and plugins into the engine if there are any specified in the context.
-                            if len_obs_tasks > 0{
-                                for obs in ctx.observers(){
-                                    eng.obs_manager.load_observer(obs);
-                                }
-                            }
-
-                            // Load the plugins into the engine if there are any specified in the context.
-                            if len_plugin_tasks > 0 {
-                                for plugin in ctx.plugins(){
-                                    eng.plugin_manager.load_plugin(&ctx.config , plugin);
-                                }
-                            }
-
-                            // Initialize the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
-                            eng.obs_manager.init_obs_sorter_thread();
-
-                            // Handle any debugging wait time if specified in the configuration.
-                            if ctx.config.debugging.is_debugging{
-                                thread::sleep(Duration::from_secs(ctx.config.debugging.wait_before_execution));
-                            }
-                        }
-
-                        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
-                        eng.run_once();
-                    }
-
-                    // Finalize the engine by performing any necessary cleanup operations before shutting down.
-                    eng.finalize();
-                });
-
-                // Store the thread handle in the engine_thread variable so that we can join it later when stopping the service.
-                *engine_thread_clone.lock().unwrap() = Some(handle);
-            }
-
-            // When the stop command is received, the is_running flag is set to false to signal the engine to stop running and finalize itself.
-            Command::Stop => {
-                // Set the is_running flag to false to signal the engine to stop running and finalize itself.
-                is_running.store(false, Ordering::SeqCst);
-
-                if let Some(handle) = engine_thread.lock().unwrap().take() {
-                    // Thread join failure is a fatal error - the engine thread panicked
-                    if let Err(e) = handle.join() {
-                        // Thread join error indicates the engine thread panicked
-                        // This is a critical failure that requires immediate attention
-                        packet_handle.send_notification(Log::err(format!(
-                            "Engine thread join error (thread panicked): {:?}",
-                            e
-                        )));
+                    } else {
+                        packet_handle.send_status(Log::err(
+                            "service 'start' called multiple times".to_string(),
+                        ));
                     }
                 }
+
+                // When the stop command is received, the is_running flag is set to false to signal the engine to stop running and finalize itself.
+                Command::Stop => {
+                    // Set the is_running flag to false to signal the engine to stop running and finalize itself.
+                    is_running.store(false, Ordering::SeqCst);
+                    if let Some(handle) = engine_thread
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take()
+                    {
+                        // Thread join failure is a fatal error - the engine thread panicked
+                        if let Err(e) = handle.join() {
+                            // Thread join error indicates the engine thread panicked
+                            // This is a critical failure that requires immediate attention
+                            packet_handle.send_status(Log::err(format!(
+                                "Engine thread join error (thread panicked): {:?}",
+                                e
+                            )));
+                        }
+                    }
+                }
+
+                // When the pause command is received, the pause flag is set to true to signal the engine to pause its execution.
+                Command::Pause => {
+                    pause_flag.store(true, Ordering::SeqCst);
+                }
+
+                // When the resume command is received, the pause flag is set to false to signal the engine to resume its execution.
+                Command::Resume => {
+                    pause_flag.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            });
+
+        if let Err(error) = service_run {
+            let error = StartupError::Service {
+                error: error.to_string(),
+            }
+            .into();
+            if let Some(eng_init) = eng_init_slot
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                eng_init.abort(&error);
             }
 
-            // When the pause command is received, the pause flag is set to true to signal the engine to pause its execution.
-            Command::Pause => {
-                pause_flag.store(true, Ordering::SeqCst);
-            }
+            return Err(error);
+        }
 
-            // When the resume command is received, the pause flag is set to false to signal the engine to resume its execution.
-            Command::Resume => {
-                pause_flag.store(false, Ordering::SeqCst);
-            }
-            _ => {}
-        });
+        Ok(())
+    }
+}
+
+/// The service's loop, run on the engine thread.
+///
+/// Runs until `Stop` clears `is_running`, or a `Fin` task result finalizes the engine (which sets
+/// its exit flag). On every turn it matches the engine to `pause_flag`: it pauses or resumes the
+/// engine when the flag changes, and sleeps while paused. At the end it finalizes the engine,
+/// unless a `Fin` task already did.
+///
+/// # Arguments
+///
+/// * `eng` - The engine, handed over by `Start`
+/// * `is_running` - Cleared by `Stop`
+/// * `pause_flag` - Set by `Pause`, cleared by `Resume`
+fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc<AtomicBool>) {
+    // The engine will run in a loop until the is_running flag is set to false.
+    while !eng.exit_flag && is_running.load(Ordering::SeqCst) {
+        // Check the pause flag and pause or resume the engine accordingly.
+        let engine_is_paused = eng.pause_flag;
+        let is_pause_flag_loaded = pause_flag.load(Ordering::SeqCst);
+
+        // If the engine is already paused and the pause flag is still loaded, we just wait and continue the loop without calling run_once.
+        if engine_is_paused && is_pause_flag_loaded {
+            thread::sleep(Duration::from_millis(500));
+            continue;
+        }
+
+        // If the pause flag is loaded and the engine is not paused, the engine gets paused.
+        if is_pause_flag_loaded && !engine_is_paused {
+            eng.pause();
+        }
+        // If the pause flag is not loaded and the engine is paused, the engine gets resumed.
+        else if !is_pause_flag_loaded && engine_is_paused {
+            eng.resume();
+        }
+
+        // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
+        eng.run_once();
+    }
+
+    // Finalize the engine by performing any necessary cleanup operations before shutting down.
+    if !eng.exit_flag {
+        eng.finalize();
     }
 }

@@ -8,8 +8,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #![doc = include_str!("../../../README.md")]
-
-pub mod errors;
 pub mod init;
 pub mod run;
 pub mod service;

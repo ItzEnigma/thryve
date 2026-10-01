@@ -64,7 +64,7 @@ use thryve::utils::res::TaskResult;
 let task = Task::new("MyTask", 2, TaskJob::new(|| {
     // Task execution logic
     TaskResult::new("Success", "Done".to_string(), "Main")
-}));
+})).expect("valid task name");
 ```
 
 **Task Properties:**
@@ -88,7 +88,7 @@ let result = TaskResult::new("Success", "Done".to_string(), "Main");
 // Chained result — executes the next task once this one completes
 let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
     TaskResult::new("Ok", "".to_string(), "Main")
-}));
+})).expect("valid task name");
 let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
 ```
 
@@ -107,7 +107,7 @@ use thryve::utils::impl_as_any;
 struct MyObserver;
 
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
 
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
@@ -128,7 +128,7 @@ impl MyObserver {
             }
         });
 
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 
@@ -157,7 +157,7 @@ use thryve::utils::impl_as_any;
 struct MyPlugin;
 
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
@@ -166,7 +166,7 @@ impl MyPlugin {
         // access to whatever state the plugin needs.
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
 
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
 
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
@@ -199,15 +199,23 @@ Everything usable from Rust is re-exported under `thryve::`:
 | `thryve::utils::bases::observer::Observer` / `thryve::utils::traits::ObsLogic` | Observer structure and the trait your observer logic implements |
 | `thryve::utils::bases::notif::Notif` / `thryve::utils::traits::NotifLogic` | Notification structure and its logic trait |
 | `thryve::utils::jobs::{TaskJob, ObsJob}` | Closure wrappers expected by `Task::new`, `Plugin::new`, `Observer::new` |
-| `thryve::utils::NamedInput` | Alphanumeric-validated string wrapper used for names |
+| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
 | `thryve::utils::impl_as_any!` | Macro that implements the `as_any` downcasting method required by `NotifLogic`/`ObsLogic` |
+Names are checked when a task, plugin, observer or notification is created: they must not be empty or contain control characters, and each constructor returns a `NamingError` otherwise. Log-file names (in the config) may contain only ASCII letters and digits, are compared ignoring case, and can't be `Main`, `Error`, `Debug` or a Windows device name such as `CON`.
+
+`Config::load_config_from_file` never falls back to the defaults. A config file must set every key of every section, and unknown keys are rejected; an invalid file returns a `ConfigError` that lists every invalid value at once. Use `Config::load_def_config()` if the defaults are acceptable after an error.
+
 The engine loop itself and the built-in logger/topology observers are implementation details of internal crates (`thryve_core`, `thryve_observers`) and aren't part of this public surface.
 
 ## Configuration
 
-Configuration is loaded from a TOML file or uses defaults.
+Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
+
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
+
+This complete file holds the defaults:
 
 ```toml
 [service]
@@ -265,14 +273,16 @@ use thryve::utils::packets::task::Task;
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::jobs::TaskJob;
 use thryve::utils::res::TaskResult;
+use thryve::utils::error::ThryveError;
 
-fn send_calculation(handle: &PacketHandle) {
+fn send_calculation(handle: &PacketHandle) -> Result<(), ThryveError> {
     let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
         let result = 2 + 2;
         TaskResult::new("Success", format!("Result: {}", result), "Main")
-    }));
+    }))?;
 
-    handle.send_task(task);
+    // Fails only once the engine is gone; the task is then dropped.
+    handle.send_task(task)
 }
 ```
 
@@ -288,18 +298,19 @@ use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
 use thryve::utils::jobs::{TaskJob, ObsJob};
+use thryve::utils::error::get_err;
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
 use thryve::utils::impl_as_any;
 
 struct MyPlugin;
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
         TaskResult::new("Success", "Task A completed".to_string(), "Main")
@@ -312,14 +323,14 @@ impl PlgLogic for MyPlugin {
 
 struct MyObserver;
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
             while !observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::yield_now();
             }
         });
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 impl ObsLogic for MyObserver {
@@ -331,15 +342,20 @@ fn main() {
     let config = Config::load_def_config();
     let mut ctx = run_interactive::summon_requirements(config);
 
-    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
-    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
+    let plugin = MyPlugin::new(ctx.packet_handle());
+    let observer = MyObserver::new(ctx.packet_handle());
 
     ctx.plugins.push(plugin);
     ctx.observers.push(observer);
     ctx.logging_file_names.push("TestFile".to_string());
 
-    if let Some(handle) = run_interactive::run_interactive(ctx) {
-        let _ = handle.join();
+    match run_interactive::run_interactive(ctx) {
+        Ok(handle) => {
+            let _ = handle.join();
+        }
+        // A failed start has already stopped every thread it started. Its error is also
+        // written to Error.log once the log folder exists.
+        Err(e) => eprintln!("{}", get_err(&e)),
     }
 }
 ```
@@ -354,18 +370,19 @@ use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
 use thryve::utils::jobs::{TaskJob, ObsJob};
+use thryve::utils::error::get_err;
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
 use thryve::utils::impl_as_any;
 
 struct MyPlugin;
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
         TaskResult::new("Success", "Task A completed".to_string(), "Main")
@@ -378,14 +395,14 @@ impl PlgLogic for MyPlugin {
 
 struct MyObserver;
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
             while !observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::yield_now();
             }
         });
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 impl ObsLogic for MyObserver {
@@ -397,14 +414,20 @@ fn main() {
     let config = Config::load_def_config();
     let (svc, mut ctx) = run_service::create_service(config);
 
-    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
-    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
+    let plugin = MyPlugin::new(ctx.packet_handle());
+    let observer = MyObserver::new(ctx.packet_handle());
 
     ctx.plugins.push(plugin);
     ctx.observers.push(observer);
     ctx.logging_file_names.push("TestFile".to_string());
 
-    run_service::try_run_as_service(svc, ctx);
+    // A failed start has already stopped every thread it started, and its error is in
+    // Error.log once the log folder exists. Under the service manager stderr goes nowhere,
+    // but the exit code is recorded.
+    if let Err(e) = run_service::try_run_as_service(svc, ctx) {
+        eprintln!("{}", get_err(&e));
+        std::process::exit(1);
+    }
 }
 ```
 

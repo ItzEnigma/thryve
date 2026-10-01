@@ -33,20 +33,22 @@
 //!
 //! let config = Config::default();
 //! let (service, ctx) = create_service(config);
-//! try_run_as_service(service, ctx);
+//! try_run_as_service(service, ctx)?;
+//! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
-use crate::{init::init, service::service::Thryve};
+use crate::service::service::Thryve;
 use thryve_utils::{
     cfg::{config::Config, ctx::Ctx},
-    extras,
+    errors::ThryveError,
 };
 
 /// Creates a new Thryve service instance with the provided configuration.
 ///
 /// This function constructs and initializes a [`Thryve`] service ready for execution
 /// as a Windows service. It packages the service instance together with the context
-/// required for its operation. Required directories are created.
+/// required for its operation. Nothing is created on disk yet: the folders and log files are
+/// created when the service runs.
 ///
 /// # Arguments
 ///
@@ -73,14 +75,22 @@ pub fn create_service<'a>(config: Config) -> (Thryve<'a>, Ctx) {
 
 /// Runs the Thryve service with the provided context.
 ///
-/// This is the primary entry point for executing the application as a Windows service.
-/// The function Initializes the logging directories and panic hook with the provided `ctx`.
-/// It also delegates the actual service execution to the provided [`Thryve`] instance.
+/// This is the primary entry point for executing the application as a Windows service. It
+/// hands the service and the context to [`Thryve::run_service`], which sets the engine up,
+/// connects to the service manager and blocks until the service stops.
 ///
 /// # Arguments
 ///
 /// * `svc` - The initialized Thryve service instance
 /// * `ctx` - The context containing configuration and communication channels
+///
+/// # Errors
+///
+/// Returns the error of a failed setup (see
+/// [`EngineInitialization::prepare`](crate::init::init::EngineInitialization::prepare)), or
+/// [`StartupError::Service`](thryve_utils::errors::StartupError::Service) if the process wasn't
+/// started by the service manager. Either way, every thread the setup started is stopped, and
+/// the error is written to `Error.log` once the log folder exists.
 ///
 /// # Examples
 ///
@@ -90,11 +100,9 @@ pub fn create_service<'a>(config: Config) -> (Thryve<'a>, Ctx) {
 ///
 /// let config = Config::default();
 /// let (service, ctx) = create_service(config);
-/// try_run_as_service(service, ctx);
+/// try_run_as_service(service, ctx)?;
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
-pub fn try_run_as_service(mut svc: Thryve, mut ctx: Ctx) {
-    init::init_directories(&mut ctx);
-    extras::panic_hook::init_panic_hook();
-
-    svc.run_service(ctx);
+pub fn try_run_as_service(mut svc: Thryve, ctx: Ctx) -> Result<(), ThryveError> {
+    svc.run_service(ctx)
 }

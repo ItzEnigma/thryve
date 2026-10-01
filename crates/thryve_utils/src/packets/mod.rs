@@ -7,6 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! What travels to the engine: tasks ([`task`]), log and topology notifications ([`notif_log`],
+//! [`notif_topology`]), and the [`packet_handle`] that sends them.
+
 pub mod notif_log;
 pub mod notif_topology;
 pub mod packet_handle;

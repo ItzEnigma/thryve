@@ -32,6 +32,7 @@
 
 use std::sync::Arc;
 
+use crate::errors::{NameInputType, NamingError};
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
 use crate::packets::packet_handle::PacketHandle;
 use crate::traits::plugin_logic::{PlgLogic, PluginB};
@@ -45,8 +46,7 @@ use crate::traits::plugin_logic::{PlgLogic, PluginB};
 ///
 /// # Fields
 ///
-/// - `plg_name`: Unique identifier for the plugin
-/// - `plg_type`: Type classifier for the plugin
+/// - `plg_type`: Type classifier for the plugin; it identifies the plugin and must be unique
 /// - `plg_core`: Core logic implementing custom plugin behavior
 /// - `tx`: Packet handle for communicating with the engine
 /// - `plg_entry_point`: Initialization function executed when the plugin loads
@@ -58,10 +58,8 @@ use crate::traits::plugin_logic::{PlgLogic, PluginB};
 /// // passing the core logic to Plugin::new along with an initialization function
 /// ```
 pub struct Plugin {
-    /// Unique identifier for the plugin.
-    pub plg_name: String,
     /// Type classifier for the plugin.
-    pub plg_type: NamedInput,
+    plg_type: NamedInput,
     /// Core logic implementing custom plugin behavior.
     pub plg_core: Arc<dyn PlgLogic>,
     /// Packet handle for communicating with the engine.
@@ -84,14 +82,13 @@ impl PluginB for Plugin {
 impl Plugin {
     /// Creates a new plugin with the specified configuration.
     ///
-    /// Initializes a new plugin instance with the given name, type, core logic,
+    /// Initializes a new plugin instance with the given type, core logic,
     /// packet handle, and initialization function. The initialization function
     /// will be executed when the plugin is first loaded by the engine.
     ///
     /// # Arguments
     ///
-    /// * `plg_name` - Unique identifier for the plugin
-    /// * `plg_type` - Type classifier for the plugin
+    /// * `plg_type` - Type classifier for the plugin; it identifies the plugin and must be unique
     /// * `plg_core` - Core logic implementing custom plugin behavior
     /// * `tx` - Packet handle for communicating with the engine
     /// * `job` - Initialization function executed when the plugin loads
@@ -99,24 +96,24 @@ impl Plugin {
     /// # Returns
     ///
     /// A new `Plugin` instance configured with the provided parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NamingError::NameEmpty`] if `plg_type` is empty, or
+    /// [`NamingError::NameContainsControlChar`] if it contains a control character. The
+    /// error's kind is `NameInputType::PlgType`.
     pub fn new(
-        plg_name: &str,
         plg_type: &str,
         plg_core: Arc<dyn PlgLogic>,
         tx: PacketHandle,
         job: TaskJob,
-    ) -> Self {
-        if plg_type.is_empty() {
-            panic!("The field `plg_type` in the Plugin cannot be empty");
-        }
-
-        Self {
-            plg_name: plg_name.to_string(),
-            plg_type: NamedInput::new(plg_type),
+    ) -> Result<Self, NamingError> {
+        Ok(Self {
+            plg_type: NamedInput::new(plg_type, NameInputType::PlgType)?,
             plg_core,
             tx,
             plg_entry_point: job,
-        }
+        })
     }
 
     /// Extracts and returns the initialization function.
@@ -131,5 +128,18 @@ impl Plugin {
     /// called multiple times.
     pub fn plg_entry_point(&mut self) -> TaskJob {
         std::mem::take(&mut self.plg_entry_point)
+    }
+
+    /// Returns the plugin's type, which identifies it.
+    pub fn plg_type(&self) -> &str {
+        self.plg_type.inner()
+    }
+
+    /// Returns the plugin's type as a checked name.
+    ///
+    /// For Thryve's own crates, which key their maps by checked names. Not part of the public API.
+    #[doc(hidden)]
+    pub fn plg_type_input(&self) -> &NamedInput {
+        &self.plg_type
     }
 }

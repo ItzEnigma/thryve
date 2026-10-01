@@ -7,5 +7,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Thryve's built-in observers.
+//!
+//! - [`logger`] writes log notifications to the log files opened at startup.
+//! - [`topology_handler`] records the task graph in graph mode.
+
 pub mod logger;
 pub mod topology_handler;

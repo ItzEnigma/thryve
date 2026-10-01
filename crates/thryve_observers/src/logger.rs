@@ -42,10 +42,9 @@
 //!
 //! ```ignore
 //! use thryve_observers::logger::LoggerObserver;
-//! use thryve_utils::extras::named_input::NamedInput;
 //!
-//! let file_names = vec![NamedInput::new("Main"), NamedInput::new("Error")];
-//! let logger = LoggerObserver::new(file_names, packet_handle);
+//! // `ctx` has been through `init_directories`, which opened the log files.
+//! let logger = LoggerObserver::new(&ctx)?;
 //! ```
 
 use std::{
@@ -55,11 +54,12 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
-use thryve_utils::bases::observer::Observer;
-use thryve_utils::extras::{jobs::ObsJob, named_input::NamedInput};
+use thryve_utils::extras::log_format::{log_line, write_line};
 use thryve_utils::packets::notif_log::Log;
 use thryve_utils::traits::{observer_logic::ObsLogic, queue::Queue};
 use thryve_utils::{bases::notif::Notif, cfg::ctx::Ctx, impl_as_any};
+use thryve_utils::{bases::observer::Observer, extras::named_input::LogFileNamedInput};
+use thryve_utils::{errors::StartupError, extras::jobs::ObsJob};
 
 /// Core logic for the logger observer.
 ///
@@ -71,22 +71,26 @@ use thryve_utils::{bases::notif::Notif, cfg::ctx::Ctx, impl_as_any};
 /// # Fields
 ///
 /// - `_currentdir`: The current executable directory (unused, kept for potential future use)
+/// - `error_log_file`: `Error.log`, where redirected lines and notes go
 /// - `files`: HashMap mapping module types to their log file handles
 ///
 /// # Example
 ///
 /// ```ignore
 /// use thryve_observers::logger::LoggerObserver;
-/// use thryve_utils::extras::named_input::NamedInput;
 ///
-/// let file_names = vec![NamedInput::new("Main"), NamedInput::new("Error")];
-/// let logger = LoggerObserver::new(file_names, packet_handle);
+/// let logger = LoggerObserver::new(&ctx)?;
 /// ```
 pub struct LoggerObserver {
     /// The current executable directory (unused, kept for potential future use).
     _currentdir: String,
+    /// `Error.log`, where redirected lines and notes go. It's looked up once, in
+    /// [`new`](Self::new), so writing to it has nothing to unwrap. The file map keeps it too, so
+    /// that lines sent to the log file `Error` find it there.
+    error_log_file: Arc<File>,
+
     /// HashMap mapping module types to their log file handles.
-    files: HashMap<NamedInput, Arc<File>>,
+    files: HashMap<LogFileNamedInput, Arc<File>>,
 }
 
 impl ObsLogic for LoggerObserver {
@@ -126,16 +130,14 @@ impl ObsLogic for LoggerObserver {
 }
 
 impl LoggerObserver {
-    /// Creates a new logger observer with the specified log files.
+    /// Creates the logger observer from the log files opened at startup.
     ///
-    /// Initializes a new logger observer by creating a timestamped log directory
-    /// and opening log files for each specified module type. Always creates
-    /// "Main.log" and "Error.log" files in addition to any custom log files.
+    /// Takes the log files that `init_directories` opened from the context and wraps
+    /// the logger in an [`Observer`] of type `Logging`.
     ///
     /// # Arguments
     ///
-    /// * `file_names` - Vector of module types for which to create log files
-    /// * `tx` - Packet handle for communication with the engine
+    /// * `ctx` - The application context, after `init_directories` has run
     ///
     /// # Returns
     ///
@@ -145,25 +147,36 @@ impl LoggerObserver {
     ///
     /// - `Main.log` - General log messages
     /// - `Error.log` - Error messages
-    /// - `<Module>.log` - Module-specific logs for each name in `file_names`
+    /// - `Debug.log` - Debug messages (debug mode only)
+    /// - `<Module>.log` - One per log-file name registered in the config
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::LogFileFetch`] if the context has no `Error.log`, that is, if
+    /// `init_directories` hasn't run.
     ///
     /// # Example
     ///
     /// ```ignore
     /// use thryve_observers::logger::LoggerObserver;
-    /// use thryve_utils::extras::named_input::NamedInput;
     ///
-    /// let file_names = vec![NamedInput::new("Main"), NamedInput::new("Error")];
-    /// let logger = LoggerObserver::new(file_names, packet_handle);
+    /// let logger = LoggerObserver::new(&ctx)?;
     /// ```
     #[allow(clippy::new_ret_no_self)] // factory returns the Observer wrapper by design
-    pub fn new(ctx: &Ctx) -> Observer {
+    pub fn new(ctx: &Ctx) -> Result<Observer, StartupError> {
         let dir_data = ctx.meta_data.dir_data.clone();
+        let err_file_key = &LogFileNamedInput::new_err();
+
+        let err_file = dir_data
+            .log_hash_map
+            .get(err_file_key)
+            .ok_or(StartupError::LogFileFetch)?;
 
         // Create an instance of the `LoggerObserver` struct with the initialized
         // log files and return an `Observer` instance that encapsulates its logic.
         let logger = Arc::new(LoggerObserver {
             _currentdir: dir_data.exe_dir.to_string_lossy().to_string(),
+            error_log_file: err_file.clone(),
             files: dir_data.log_hash_map,
         });
 
@@ -175,13 +188,11 @@ impl LoggerObserver {
         });
 
         // Return a new observer instance with the specified type and name.
-        Observer::new(
-            "Logger",
-            "Logging",
+        Ok(Observer::new_logging(
             logger,
             logger_job,
             ctx.packet_handle(),
-        )
+        ))
     }
 
     /// Main processing loop for the logger observer.
@@ -231,20 +242,18 @@ impl LoggerObserver {
 
     /// Processes a notification and writes it to the appropriate log file.
     ///
-    /// Downcasts the notification to a [`Log`] type, extracts the target
-    /// log file name, and writes the formatted message to the corresponding
-    /// file. Panics if the log file is not found or if the notification
-    /// type is unsupported.
+    /// Downcasts the notification to a [`Log`] type and writes the message to the
+    /// log file it asks for, looked up ignoring letter case. If no file with that
+    /// name was registered at startup, the message goes to `Error.log` instead,
+    /// behind a note naming the requested file. Empty messages are skipped.
+    ///
+    /// A notification that isn't a [`Log`] can't be displayed. It's dropped, with a note in
+    /// `Error.log` naming its type, and the logger keeps going. A line whose file can't be
+    /// written goes to stderr instead.
     ///
     /// # Arguments
     ///
     /// * `notif` - The notification to process
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    /// - The specified log file does not exist in the internal hashmap
-    /// - The notification cannot be downcast to a `Log` type
     pub fn handle_log(&self, notif: Notif) {
         // Attempt to downcast the notification's core logic to a `Log` type
         // to access its specific fields and functionality.
@@ -252,41 +261,46 @@ impl LoggerObserver {
         let notif_casted = notif_as_any.downcast_ref::<Log>();
 
         // Extract the notification type and timestamp for logging purposes.
-        let notif_type = notif.notif_type.inner();
+        let notif_type = notif.notif_type();
         let timestamp = notif.timestamp;
 
         // If the notification is successfully downcasted to a `Log` type,
         // extract the log file name from the notification and log the message
         // to the appropriate file.
         if let Some(notif) = notif_casted {
-            let logfile = &notif.logfile;
-
-            let file = self.files.get(logfile);
-
-            // If the specified log file does not exist in the hashmap, panic
-            // with an error message.
-            if file.is_none() {
-                panic!(
-                    "Logger Observer Cannot Find Requested Log File. Got {}",
-                    logfile
-                );
-            }
-
             if notif.message.is_empty() {
                 return;
             }
 
-            // Log the message to the appropriate file by calling the `display`
-            // method of the `Log` notification.
-            notif.display(timestamp, notif_type, file.unwrap().clone());
+            // Write the message to its log file. An unregistered log file isn't
+            // fatal: the message goes to Error.log instead, behind a note naming
+            // the file that was asked for (escaped, since it's unchecked text).
+            match self
+                .files
+                .get(notif.logfile().to_ascii_uppercase().as_str())
+            {
+                Some(file) => notif.display(timestamp, notif_type, None, file.clone()),
+                None => {
+                    let note = format!("[log file {:?} is not registered]", notif.logfile());
+                    let error_file = self.error_log_file.clone();
+                    notif.display(timestamp, notif_type, Some(&note), error_file.clone());
+                }
+            }
         }
-        // If the notification cannot be downcasted to a `Log` type, it means
-        // that the logger observer received an unsupported notification type.
+        // If the notification cannot be downcasted to a `Log` type, the logger
+        // can't display it. That isn't fatal: it's dropped, with a note in
+        // Error.log naming its type (escaped, like the log-file note above).
         else {
-            panic!(
-                "Logger Observer Received Unsupported Notification Type. Logger Received Notification Of Type: {}",
-                notif_type
+            let line = log_line(
+                timestamp,
+                "LOGGING",
+                "Error",
+                &format!(
+                    "[dropped a notification of type {notif_type:?}: the logger only takes log notifications]"
+                ),
             );
+            let error_file = self.error_log_file.clone();
+            write_line(&error_file, &line);
         }
     }
 }

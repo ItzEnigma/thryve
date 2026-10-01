@@ -7,5 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-pub mod errors;
+//! The Thryve engine.
+//!
+//! [`runtime::engine::Engine`] runs the main loop. It takes tasks, results and notifications from its
+//! channels, hands tasks to the plugin manager's worker pool and notifications to the observer
+//! manager. Applications don't use this crate directly: `thryve_run` builds and starts the engine.
 pub mod runtime;

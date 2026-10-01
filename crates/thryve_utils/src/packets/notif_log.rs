@@ -22,13 +22,12 @@
 //! The logger observer processes these notifications and writes them to
 //! the appropriate files with timestamps.
 
-use chrono::{DateTime, Local};
 use std::fs::File;
-use std::io::Write;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::bases::notif::Notif;
+use crate::extras::log_format::{log_line, write_line};
 use crate::extras::named_input::NamedInput;
 use crate::impl_as_any;
 use crate::traits::notif_logic::NotifLogic;
@@ -58,8 +57,8 @@ use crate::traits::notif_logic::NotifLogic;
 pub struct Log {
     /// The log message content.
     pub message: String,
-    /// The name of the log file to write to.
-    pub logfile: NamedInput,
+    /// The name of the log file to write to, exactly as it was asked for.
+    logfile: String,
 }
 
 impl NotifLogic for Log {
@@ -92,10 +91,14 @@ impl Log {
     pub fn log(message: String, logfile: &str) -> Notif {
         let temp = Box::new(Log {
             message,
-            logfile: NamedInput::new(logfile),
+            logfile: logfile.to_string(),
         });
 
-        Notif::new("Log", "Logging", temp)
+        Notif::new_internal(
+            NamedInput::new_logging_log(),
+            NamedInput::new_logging(),
+            temp,
+        )
     }
 
     /// Creates a new error log notification.
@@ -123,38 +126,64 @@ impl Log {
     pub fn err(message: String) -> Notif {
         let temp = Box::new(Log {
             message,
-            logfile: NamedInput::new("Error"),
+            logfile: String::from("Error"),
         });
 
-        Notif::new("Error", "Logging", temp)
+        Notif::new_internal(
+            NamedInput::new_logging_err(),
+            NamedInput::new_logging(),
+            temp,
+        )
+    }
+
+    /// Returns the name of the log file to write to, exactly as it was asked for.
+    ///
+    /// It isn't checked: the logger writes to that file only if it was registered at startup,
+    /// and to `Error.log` with a note otherwise.
+    pub fn logfile(&self) -> &str {
+        &self.logfile
     }
 
     /// Writes the log message to the specified file.
     ///
     /// Formats and writes the log message with a timestamp, notification
-    /// type, and message content to the provided file handle.
+    /// type, and message content to the provided file handle. A `note`, if
+    /// given, is written in front of the message.
+    ///
+    /// If the file can't be written (for example, because the disk is full), the line goes to
+    /// stderr instead, with the reason, and the logger keeps going.
     ///
     /// # Arguments
     ///
     /// * `timestamp` - When the notification was created
     /// * `notif_type` - The type of notification (e.g., "Log", "Error")
+    /// * `note` - Text to write before the message, such as why the line was redirected
     /// * `file` - The file handle to write to
     ///
     /// # Example
     ///
-    /// Output format:
+    /// Output format, without and with a note:
     /// ```text
     /// Log_Creation: 2024-01-15 10:30:45, [ LOGGING ], Event_Type: Log, Message: Hello
+    /// Log_Creation: 2024-01-15 10:30:45, [ LOGGING ], Event_Type: Log, Message: [log file "Paymnets" is not registered] Hello
     /// ```
-    pub fn display(&self, timestamp: SystemTime, notif_type: &str, file: Arc<File>) {
-        let datetime: DateTime<Local> = timestamp.into();
-        writeln!(
-            &*file,
-            "Log_Creation: {}, [ LOGGING ], Event_Type: {}, Message: {}",
-            datetime.format("%Y-%m-%d %H:%M:%S"),
-            notif_type,
-            self.message
-        )
-        .unwrap();
+    pub fn display(
+        &self,
+        timestamp: SystemTime,
+        notif_type: &str,
+        note: Option<&str>,
+        file: Arc<File>,
+    ) {
+        let line = match note {
+            Some(note) => log_line(
+                timestamp,
+                "LOGGING",
+                notif_type,
+                &format!("{note} {}", self.message),
+            ),
+            None => log_line(timestamp, "LOGGING", notif_type, &self.message),
+        };
+
+        write_line(&file, &line);
     }
 }

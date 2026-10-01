@@ -482,7 +482,6 @@ mod tests_ffi_ctx_add_plugin_ownership {
         // Create plugin
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,

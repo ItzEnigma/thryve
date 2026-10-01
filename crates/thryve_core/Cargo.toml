@@ -15,4 +15,3 @@
 
     # External Dependencies.
     crossbeam.workspace = true
-    thiserror.workspace = true

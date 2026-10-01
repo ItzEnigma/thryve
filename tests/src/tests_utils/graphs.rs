@@ -16,21 +16,14 @@ mod tests_callsite {
     fn test_task_callsite_new_creates_callsite_with_correct_fields() {
         // Arrange
         let file_path = PathBuf::from("src/my_module.rs");
-        let module_path = "my_crate::my_module".to_string();
         let line_num = 42;
         let name = "MyTask".to_string();
 
         // Act
-        let callsite = TaskCallSite::new(
-            file_path.clone(),
-            module_path.clone(),
-            line_num,
-            name.clone(),
-        );
+        let callsite = TaskCallSite::new(file_path.clone(), line_num, name.clone());
 
         // Assert
         assert_eq!(callsite.file_path, file_path);
-        assert_eq!(callsite.module_path, module_path);
         assert_eq!(callsite.line_number, line_num);
         assert_eq!(callsite.callsite_name, name);
         assert_eq!(callsite.this_callsite_fingerprint, String::default());
@@ -44,16 +37,14 @@ mod tests_callsite {
     fn test_task_callsite_new_with_empty_strings() {
         // Arrange
         let file_path = PathBuf::from("");
-        let module_path = String::new();
         let line_num = 0;
         let name = String::new();
 
         // Act
-        let callsite = TaskCallSite::new(file_path, module_path, line_num, name);
+        let callsite = TaskCallSite::new(file_path, line_num, name);
 
         // Assert
         assert_eq!(callsite.file_path, PathBuf::from(""));
-        assert_eq!(callsite.module_path, String::new());
         assert_eq!(callsite.line_number, 0);
         assert_eq!(callsite.callsite_name, String::new());
     }
@@ -62,21 +53,14 @@ mod tests_callsite {
     fn test_task_callsite_new_with_unicode_characters() {
         // Arrange
         let file_path = PathBuf::from("src/模块.rs");
-        let module_path = "我的 crate::模块".to_string();
         let line_num = 100;
         let name = "我的任务".to_string();
 
         // Act
-        let callsite = TaskCallSite::new(
-            file_path.clone(),
-            module_path.clone(),
-            line_num,
-            name.clone(),
-        );
+        let callsite = TaskCallSite::new(file_path.clone(), line_num, name.clone());
 
         // Assert
         assert_eq!(callsite.file_path, file_path);
-        assert_eq!(callsite.module_path, module_path);
         assert_eq!(callsite.line_number, line_num);
         assert_eq!(callsite.callsite_name, name);
     }
@@ -85,12 +69,11 @@ mod tests_callsite {
     fn test_task_callsite_new_with_large_line_number() {
         // Arrange
         let file_path = PathBuf::from("src/large_file.rs");
-        let module_path = "my_crate::large_module".to_string();
         let line_num = u32::MAX;
         let name = "LargeFileTask".to_string();
 
         // Act
-        let callsite = TaskCallSite::new(file_path, module_path, line_num, name);
+        let callsite = TaskCallSite::new(file_path, line_num, name);
 
         // Assert
         assert_eq!(callsite.line_number, u32::MAX);
@@ -99,12 +82,8 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_fingerprint_returns_non_empty_string() {
         // Arrange
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
         // Act
         let fingerprint = callsite.fingerprint();
@@ -116,12 +95,8 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_fingerprint_is_deterministic() {
         // Arrange
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
         // Act
         let fingerprint1 = callsite.fingerprint();
@@ -134,16 +109,11 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_fingerprint_different_for_different_callsites() {
         // Arrange
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
         let callsite2 = TaskCallSite::new(
             PathBuf::from("src/other_module.rs"),
-            "my_crate::other_module".to_string(),
             100,
             "OtherTask".to_string(),
         );
@@ -159,19 +129,11 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_fingerprint_different_for_different_line_numbers() {
         // Arrange
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
-        let callsite2 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            100,
-            "MyTask".to_string(),
-        );
+        let callsite2 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 100, "MyTask".to_string());
 
         // Act
         let fingerprint1 = callsite1.fingerprint();
@@ -184,19 +146,11 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_fingerprint_different_for_different_task_names() {
         // Arrange
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "TaskA".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "TaskA".to_string());
 
-        let callsite2 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "TaskB".to_string(),
-        );
+        let callsite2 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "TaskB".to_string());
 
         // Act
         let fingerprint1 = callsite1.fingerprint();
@@ -213,7 +167,6 @@ mod tests_callsite {
 
         // Assert
         assert_eq!(callsite.file_path, PathBuf::default());
-        assert_eq!(callsite.module_path, String::default());
         assert_eq!(callsite.line_number, 0);
         assert_eq!(callsite.callsite_name, String::default());
         assert_eq!(callsite.this_callsite_fingerprint, String::default());
@@ -226,12 +179,8 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_clone_impl() {
         // Arrange
-        let mut original = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let mut original =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
         original.this_callsite_fingerprint = "fp123".to_string();
         original.current_executing_task_fingerprint = "parent_fp".to_string();
 
@@ -240,7 +189,6 @@ mod tests_callsite {
 
         // Assert
         assert_eq!(cloned.file_path, original.file_path);
-        assert_eq!(cloned.module_path, original.module_path);
         assert_eq!(cloned.line_number, original.line_number);
         assert_eq!(cloned.callsite_name, original.callsite_name);
         assert_eq!(
@@ -256,19 +204,11 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_partial_eq_same() {
         // Arrange
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
-        let callsite2 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite2 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
         // Assert
         assert_eq!(callsite1, callsite2);
@@ -277,16 +217,11 @@ mod tests_callsite {
     #[test]
     fn test_task_callsite_partial_eq_different() {
         // Arrange
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
 
         let callsite2 = TaskCallSite::new(
             PathBuf::from("src/other_module.rs"),
-            "my_crate::other_module".to_string(),
             100,
             "OtherTask".to_string(),
         );
@@ -306,12 +241,7 @@ mod tests_graph {
     // Helper function to create a TopologyNode for tests
     fn create_test_node(fingerprint: &str) -> TopologyNode {
         TopologyNode::new(
-            TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "test_crate::test_module".to_string(),
-                42,
-                "TestTask".to_string(),
-            ),
+            TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "TestTask".to_string()),
             fingerprint.to_string(),
         )
     }
@@ -321,12 +251,8 @@ mod tests_graph {
     #[test]
     fn test_topology_node_new_creates_node_with_correct_fields() {
         // Arrange
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
         let fingerprint = "fingerprint_123".to_string();
 
         // Act
@@ -340,12 +266,8 @@ mod tests_graph {
     #[test]
     fn test_topology_node_new_with_empty_fingerprint() {
         // Arrange
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/my_module.rs"),
-            "my_crate::my_module".to_string(),
-            42,
-            "MyTask".to_string(),
-        );
+        let callsite =
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string());
         let fingerprint = String::new();
 
         // Act
@@ -369,12 +291,7 @@ mod tests_graph {
     fn test_topology_node_clone_impl() {
         // Arrange
         let original = TopologyNode::new(
-            TaskCallSite::new(
-                PathBuf::from("src/my_module.rs"),
-                "my_crate::my_module".to_string(),
-                42,
-                "MyTask".to_string(),
-            ),
+            TaskCallSite::new(PathBuf::from("src/my_module.rs"), 42, "MyTask".to_string()),
             "fingerprint_123".to_string(),
         );
 

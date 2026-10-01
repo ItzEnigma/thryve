@@ -9,6 +9,7 @@
 
 mod tests_plugin {
     use std::sync::Arc;
+    use thryve_utils::errors::{NameInputType, NamingError};
 
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
@@ -38,11 +39,10 @@ mod tests_plugin {
         let job = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
-        let plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
+        let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
         // Assert
-        assert_eq!(plugin.plg_name, "test_plugin");
-        assert_eq!(plugin.plg_type.inner(), "TestType");
+        assert_eq!(plugin.plg_type(), "TestType");
     }
 
     #[test]
@@ -52,15 +52,13 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
-        let plugin = Plugin::new("plugin123", "type456", plg_core, packet_handle, job);
+        let plugin = Plugin::new("type456", plg_core, packet_handle, job).unwrap();
 
         // Assert
-        assert_eq!(plugin.plg_name, "plugin123");
-        assert_eq!(plugin.plg_type.inner(), "type456");
+        assert_eq!(plugin.plg_type(), "type456");
     }
 
     #[test]
@@ -70,15 +68,13 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
-        let plugin = Plugin::new("TestPlugin", "TestType", plg_core, packet_handle, job);
+        let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
         // Assert
-        assert_eq!(plugin.plg_name, "TestPlugin");
-        assert_eq!(plugin.plg_type.inner(), "TestType");
+        assert_eq!(plugin.plg_type(), "TestType");
     }
 
     #[test]
@@ -88,17 +84,16 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
-        let mut plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
+        let mut plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
         // Act - first call should return the original job
         let first_fn = plugin.plg_entry_point();
         let first_result = first_fn.call_once();
 
         // Assert - first call returns original job
-        assert_eq!(first_result.result_type.inner(), "OK");
+        assert_eq!(first_result.result_type(), "OK");
         assert_eq!(first_result.message, "success");
 
         // Act - second call should return default error function
@@ -106,7 +101,7 @@ mod tests_plugin {
         let second_result = second_fn.call_once();
 
         // Assert - second call returns error function
-        assert_eq!(second_result.result_type.inner(), "BIGERR");
+        assert_eq!(second_result.result_type(), "BIGERR");
         assert_eq!(
             second_result.message,
             "If This Is Ever Called, Something is Wrong"
@@ -120,10 +115,9 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
-        let plugin = Plugin::new("test_plugin", "TestType", plg_core, packet_handle, job);
+        let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
         // Act & Assert - clean_up should not panic
         plugin.clean_up();
@@ -136,86 +130,81 @@ mod tests_plugin {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
-        let plugin = Plugin::new("a", "b", plg_core, packet_handle, job);
+        let plugin = Plugin::new("b", plg_core, packet_handle, job).unwrap();
 
         // Assert
-        assert_eq!(plugin.plg_name, "a");
-        assert_eq!(plugin.plg_type.inner(), "b");
+        assert_eq!(plugin.plg_type(), "b");
     }
 
     #[test]
-    fn test_plugin_with_long_names() {
+    fn test_plugin_with_long_type() {
         // Arrange
-        let long_name = "a".repeat(100);
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         // Act
-        let plugin = Plugin::new(&long_name, &long_type, plg_core, packet_handle, job);
+        let plugin = Plugin::new(&long_type, plg_core, packet_handle, job).unwrap();
 
         // Assert
-        assert_eq!(plugin.plg_name, long_name);
-        assert_eq!(plugin.plg_type.inner(), long_type);
+        assert_eq!(plugin.plg_type(), long_type);
     }
 
     #[test]
-    #[should_panic(expected = "The field `plg_type` in the Plugin cannot be empty")]
-    fn test_plugin_with_empty_type_panics() {
+    fn test_plugin_with_empty_type_is_rejected() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
-        // Act & Assert - should panic because plg_type cannot be empty
-        let _plugin = Plugin::new("test_plugin", "", plg_core, packet_handle, job);
+        // Act & Assert - rejected: plg_type cannot be empty
+        assert!(matches!(
+            Plugin::new("", plg_core, packet_handle, job),
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::PlgType
+            })
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_plugin_with_hyphen_in_type_panics() {
+    fn test_plugin_with_hyphen_in_type_is_accepted() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
-        // Act & Assert - should panic because plg_type must be alphanumeric
-        let _plugin = Plugin::new("test_plugin", "test-type", plg_core, packet_handle, job);
+        // Act & Assert - accepted: names only reject empty text and control characters
+        assert!(Plugin::new("test-type", plg_core, packet_handle, job).is_ok());
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_plugin_with_underscore_in_type_panics() {
+    fn test_plugin_with_underscore_in_type_is_accepted() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
-        // Act & Assert - should panic because plg_type must be alphanumeric
-        let _plugin = Plugin::new("test_plugin", "Test_Type", plg_core, packet_handle, job);
+        // Act & Assert - accepted: names only reject empty text and control characters
+        assert!(Plugin::new("Test_Type", plg_core, packet_handle, job).is_ok());
     }
 }
 
 mod tests_observer {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
+    use thryve_utils::errors::{NameInputType, NamingError};
 
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
@@ -246,17 +235,10 @@ mod tests_observer {
         });
 
         // Act
-        let observer = Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        let observer = Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "test_observer");
-        assert_eq!(observer.obs_type.inner(), "TestType");
+        assert_eq!(observer.obs_type(), "TestType");
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
     }
 
@@ -270,11 +252,10 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("observer123", "type456", obs_core, obs_job, packet_handle);
+        let observer = Observer::new("type456", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "observer123");
-        assert_eq!(observer.obs_type.inner(), "type456");
+        assert_eq!(observer.obs_type(), "type456");
     }
 
     #[test]
@@ -287,17 +268,10 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new(
-            "TestObserver",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        let observer = Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "TestObserver");
-        assert_eq!(observer.obs_type.inner(), "TestType");
+        assert_eq!(observer.obs_type(), "TestType");
     }
 
     #[test]
@@ -310,13 +284,7 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        let observer = Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
@@ -331,19 +299,14 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        let observer = Arc::new(Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        ));
+        let observer =
+            Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Assert initially false
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
 
         // Act
-        observer.clean_up();
+        observer.clean_up(None);
 
         // Assert
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -359,17 +322,15 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("a", "b", obs_core, obs_job, packet_handle);
+        let observer = Observer::new("b", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "a");
-        assert_eq!(observer.obs_type.inner(), "b");
+        assert_eq!(observer.obs_type(), "b");
     }
 
     #[test]
-    fn test_observer_with_long_names() {
+    fn test_observer_with_long_type() {
         // Arrange
-        let long_name = "a".repeat(100);
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
@@ -378,16 +339,14 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new(&long_name, &long_type, obs_core, obs_job, packet_handle);
+        let observer = Observer::new(&long_type, obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, long_name);
-        assert_eq!(observer.obs_type.inner(), long_type);
+        assert_eq!(observer.obs_type(), long_type);
     }
 
     #[test]
-    #[should_panic(expected = "The field `obs_type` in the Observer cannot be empty")]
-    fn test_observer_with_empty_type_panics() {
+    fn test_observer_with_empty_type_is_rejected() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
@@ -395,13 +354,17 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        // Act & Assert - should panic because obs_type cannot be empty
-        let _observer = Observer::new("test_observer", "", obs_core, obs_job, packet_handle);
+        // Act & Assert - rejected: obs_type cannot be empty
+        assert!(matches!(
+            Observer::new("", obs_core, obs_job, packet_handle),
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::ObsType
+            })
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_observer_with_hyphen_in_type_panics() {
+    fn test_observer_with_hyphen_in_type_is_accepted() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
@@ -409,19 +372,12 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        // Act & Assert - should panic because obs_type must be alphanumeric
-        let _observer = Observer::new(
-            "test_observer",
-            "test-type",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        // Act & Assert - accepted: names only reject empty text and control characters
+        assert!(Observer::new("test-type", obs_core, obs_job, packet_handle).is_ok());
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_observer_with_underscore_in_type_panics() {
+    fn test_observer_with_underscore_in_type_is_accepted() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
@@ -429,14 +385,8 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        // Act & Assert - should panic because obs_type must be alphanumeric
-        let _observer = Observer::new(
-            "test_observer",
-            "Test_Type",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        // Act & Assert - accepted: names only reject empty text and control characters
+        assert!(Observer::new("Test_Type", obs_core, obs_job, packet_handle).is_ok());
     }
 
     #[test]
@@ -448,16 +398,11 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        let observer = Arc::new(Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        ));
+        let observer =
+            Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Act
-        observer.clean_up();
+        observer.clean_up(None);
 
         // Assert - exit flag should be set
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -473,17 +418,11 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        let observer = Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert - obs_queue should be initialized (QChild is created in new())
         // We can verify this by checking that the observer was created without panic
-        assert_eq!(observer.obs_name, "test_observer");
+        assert_eq!(observer.obs_type(), "TestType");
     }
 
     #[test]
@@ -501,13 +440,7 @@ mod tests_observer {
         });
 
         // Act
-        let observer = Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        );
+        let observer = Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap();
 
         let obs_arc = Arc::new(observer);
         // Execute the obs_job
@@ -527,11 +460,10 @@ mod tests_observer {
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
         // Act
-        let observer = Observer::new("Observer123", "Type456", obs_core, obs_job, packet_handle);
+        let observer = Observer::new("Type456", obs_core, obs_job, packet_handle).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "Observer123");
-        assert_eq!(observer.obs_type.inner(), "Type456");
+        assert_eq!(observer.obs_type(), "Type456");
     }
 
     #[test]
@@ -543,19 +475,14 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        let observer = Arc::new(Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        ));
+        let observer =
+            Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Assert initially false
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
 
         // Act
-        observer.clean_up();
+        observer.clean_up(None);
 
         // Assert now true
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -570,18 +497,13 @@ mod tests_observer {
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
-        let observer = Arc::new(Observer::new(
-            "test_observer",
-            "TestType",
-            obs_core,
-            obs_job,
-            packet_handle,
-        ));
+        let observer =
+            Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Act - call clean_up multiple times
-        observer.clean_up();
-        observer.clean_up();
-        observer.clean_up();
+        observer.clean_up(None);
+        observer.clean_up(None);
+        observer.clean_up(None);
 
         // Assert - should not panic, exit flag should be true
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -591,6 +513,7 @@ mod tests_observer {
 mod tests_notif {
     use std::path::PathBuf;
     use std::time::SystemTime;
+    use thryve_utils::errors::{NameInputType, NamingError};
 
     use thryve_utils::bases::notif::*;
     use thryve_utils::graphs::callsite::TaskCallSite;
@@ -615,11 +538,11 @@ mod tests_notif {
         });
 
         // Act
-        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+        let notif = Notif::new("TestType", "TestReceiver", notif_core).unwrap();
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "TestType");
-        assert_eq!(notif.notif_receiver.inner(), "TestReceiver");
+        assert_eq!(notif.notif_type(), "TestType");
+        assert_eq!(notif.notif_receiver(), "TestReceiver");
     }
 
     #[test]
@@ -630,11 +553,11 @@ mod tests_notif {
         });
 
         // Act
-        let notif = Notif::new("Type123", "Receiver456", notif_core);
+        let notif = Notif::new("Type123", "Receiver456", notif_core).unwrap();
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "Type123");
-        assert_eq!(notif.notif_receiver.inner(), "Receiver456");
+        assert_eq!(notif.notif_type(), "Type123");
+        assert_eq!(notif.notif_receiver(), "Receiver456");
     }
 
     #[test]
@@ -645,11 +568,11 @@ mod tests_notif {
         });
 
         // Act
-        let notif = Notif::new("MixedCase", "AnotherMixedCase", notif_core);
+        let notif = Notif::new("MixedCase", "AnotherMixedCase", notif_core).unwrap();
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "MixedCase");
-        assert_eq!(notif.notif_receiver.inner(), "AnotherMixedCase");
+        assert_eq!(notif.notif_type(), "MixedCase");
+        assert_eq!(notif.notif_receiver(), "AnotherMixedCase");
     }
 
     #[test]
@@ -661,58 +584,64 @@ mod tests_notif {
         let before = SystemTime::now();
 
         // Act
-        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+        let notif = Notif::new("TestType", "TestReceiver", notif_core).unwrap();
 
         // Assert - timestamp should be >= before (no time travel)
         assert!(notif.timestamp >= before || notif.timestamp.duration_since(before).is_err());
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_notif_new_with_hyphen_in_type_panics() {
+    fn test_notif_new_with_hyphen_in_type_is_accepted() {
         // Arrange
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
 
         // Act & Assert
-        let _notif = Notif::new("Test-Type", "TestReceiver", notif_core);
+        assert!(Notif::new("Test-Type", "TestReceiver", notif_core).is_ok());
     }
 
     #[test]
-    #[should_panic(expected = "must be alphanumeric")]
-    fn test_notif_new_with_underscore_in_receiver_panics() {
+    fn test_notif_new_with_underscore_in_receiver_is_accepted() {
         // Arrange
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
 
         // Act & Assert
-        let _notif = Notif::new("TestType", "Test_Receiver", notif_core);
+        assert!(Notif::new("TestType", "Test_Receiver", notif_core).is_ok());
     }
 
     #[test]
-    #[should_panic(expected = "Both fields, `notif_type` and `notif_receiver` cannot be empty")]
-    fn test_notif_new_with_empty_type_panics() {
+    fn test_notif_new_with_empty_type_is_rejected() {
         // Arrange
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
 
         // Act & Assert
-        let _notif = Notif::new("", "TestReceiver", notif_core);
+        assert!(matches!(
+            Notif::new("", "TestReceiver", notif_core),
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::NotifType
+            })
+        ));
     }
 
     #[test]
-    #[should_panic(expected = "Both fields, `notif_type` and `notif_receiver` cannot be empty")]
-    fn test_notif_new_with_empty_receiver_panics() {
+    fn test_notif_new_with_empty_receiver_is_rejected() {
         // Arrange
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
 
         // Act & Assert
-        let _notif = Notif::new("TestType", "", notif_core);
+        assert!(matches!(
+            Notif::new("TestType", "", notif_core),
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::NotifReceiver
+            })
+        ));
     }
 
     #[test]
@@ -723,11 +652,11 @@ mod tests_notif {
         });
 
         // Act
-        let notif = Notif::new("A", "B", notif_core);
+        let notif = Notif::new("A", "B", notif_core).unwrap();
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "A");
-        assert_eq!(notif.notif_receiver.inner(), "B");
+        assert_eq!(notif.notif_type(), "A");
+        assert_eq!(notif.notif_receiver(), "B");
     }
 
     #[test]
@@ -739,11 +668,11 @@ mod tests_notif {
         });
 
         // Act
-        let notif = Notif::new(&long_name, &long_name, notif_core);
+        let notif = Notif::new(&long_name, &long_name, notif_core).unwrap();
 
         // Assert
-        assert_eq!(notif.notif_type.inner().len(), 100);
-        assert_eq!(notif.notif_receiver.inner().len(), 100);
+        assert_eq!(notif.notif_type().len(), 100);
+        assert_eq!(notif.notif_receiver().len(), 100);
     }
 
     #[test]
@@ -752,7 +681,7 @@ mod tests_notif {
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
-        let notif = Notif::new("TestType", "TestReceiver", notif_core);
+        let notif = Notif::new("TestType", "TestReceiver", notif_core).unwrap();
 
         // Act
         let callsite = notif.get_callsite();
@@ -767,13 +696,8 @@ mod tests_notif {
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
-        let mut notif = Notif::new("TestType", "TestReceiver", notif_core);
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            42,
-            "TestTask".to_string(),
-        );
+        let mut notif = Notif::new("TestType", "TestReceiver", notif_core).unwrap();
+        let callsite = TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "TestTask".to_string());
 
         // Act
         notif.set_callsite(callsite.clone());
@@ -790,19 +714,9 @@ mod tests_notif {
         let notif_core = Box::new(TestNotifLogic {
             _data: "test".to_string(),
         });
-        let mut notif = Notif::new("TestType", "TestReceiver", notif_core);
-        let first = TaskCallSite::new(
-            PathBuf::from("src/a.rs"),
-            "a".to_string(),
-            1,
-            "A".to_string(),
-        );
-        let second = TaskCallSite::new(
-            PathBuf::from("src/b.rs"),
-            "b".to_string(),
-            2,
-            "B".to_string(),
-        );
+        let mut notif = Notif::new("TestType", "TestReceiver", notif_core).unwrap();
+        let first = TaskCallSite::new(PathBuf::from("src/a.rs"), 1, "A".to_string());
+        let second = TaskCallSite::new(PathBuf::from("src/b.rs"), 2, "B".to_string());
 
         // Act
         notif.set_callsite(first);

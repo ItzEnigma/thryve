@@ -276,7 +276,6 @@ if (!packet_handle) {
 
 // Create the plugin
 ThryvePlugin plugin = thryve_plugin_create(
-    "MyPlugin",           // name
     "MyType",             // type
     nullptr,              // plg_core_ptr (optional, can be NULL)
     packet_handle,        // tx (packet handle - REQUIRED)
@@ -336,7 +335,6 @@ extern "C" void my_observer_job(ThryveObserver observer) {
 
 ```cpp
 ThryveObserver observer = thryve_observer_create(
-    "MyObserver",         // name
     "MyType",             // type
     nullptr,              // obs_core_ptr (optional, can be NULL)
     packet_handle,        // tx (packet handle - REQUIRED)
@@ -502,14 +500,12 @@ int main() {
 
     // 4. Create and add plugin
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin", "MyType", nullptr, pkt,
         plugin_cleanup, plugin_entry
     );
     thryve_ctx_add_plugin(ctx, plugin);
 
     // 5. Create and add observer
     ThryveObserver obs = thryve_observer_create(
-        "MyObserver", "MyType", nullptr, pkt,
         observer_cleanup, observer_job
     );
     thryve_ctx_add_observer(ctx, obs);
@@ -578,9 +574,11 @@ if (!pkt) {
 // ... add plugin and observer as shown above ...
 
 // 5. Start the service (blocks until SCM sends Stop)
-// thryve_service_run is a BLOCKING call that registers with the Windows SCM.
-// The engine thread is spawned inside thryve_service_run when SCM sends Start.
-// thryve_service_run only returns when SCM sends Stop.
+// thryve_service_run is a BLOCKING call. It first sets the engine up (log folders,
+// threads, observers, plugins), then registers with the Windows SCM. The engine
+// starts processing when SCM sends Start, and thryve_service_run returns once SCM
+// sends Stop. If the setup fails, or the process wasn't started by the SCM, it
+// stops everything it started and returns an error status right away.
 ThryveStatus status = thryve_service_run(service, ctx);
 if (status != ThryveStatus_Ok) {
     std::cerr << "Service run failed: " << (int)status << std::endl;
@@ -602,15 +600,24 @@ thryve_config_free(config);
 
 The service lifecycle is managed by the Windows SCM:
 
-1. **Start**: When the SCM sends `Command::Start`, the service:
-   - Spawns the engine in a dedicated thread
+1. **Setup**: Before it connects to the SCM, `thryve_service_run` sets the engine up:
+   - Creates the log folders and files, and installs the panic hook
+   - Starts the engine thread, the workers, the logger and the notification sorter
    - Loads observers and plugins from the context
-   - Starts the main processing loop
-2. **Stop**: When the SCM sends `Command::Stop`, the service:
+
+   If a step fails, it stops what it already started, writes the error to `Error.log` (once the
+   log folder exists) and returns `ThryveStatus_OperationFail` without connecting to the SCM.
+2. **Start**: When the SCM sends `Command::Start`, the prepared engine starts its main processing
+   loop. A second `Start` is logged and ignored.
+3. **Stop**: When the SCM sends `Command::Stop`, the service:
    - Signals the engine to shut down
    - Joins the engine thread (ensures graceful cleanup)
    - Returns from `thryve_service_run`
-3. **Pause/Resume**: When the SCM sends `Command::Pause` or `Command::Resume`, the engine suspends/resumes processing
+4. **Pause/Resume**: When the SCM sends `Command::Pause` or `Command::Resume`, the engine suspends/resumes processing
+
+If the process wasn't started by the SCM (for example, it was run from a console), connecting to
+the SCM fails: `thryve_service_run` stops the prepared engine and returns
+`ThryveStatus_InvalidState`.
 
 ### Installing and Uninstalling the Service
 
@@ -636,7 +643,7 @@ This stops the service (if running) and removes it from the SCM.
 
 | Aspect | Interactive | Service |
 |--------|-------------|---------|
-| Engine start | Immediate via `thryve_run_interactive_start` | Deferred until SCM sends `Start` |
+| Engine start | Immediate via `thryve_run_interactive_start` | Set up before connecting to the SCM; processing starts when SCM sends `Start` |
 | Engine stop | You call `thryve_run_interactive_free` | SCM sends `Stop` command |
 | Pause/Resume | Not supported | Supported via SCM |
 | After run | **Don't** free `ctx` (consumed by start), free `config` | **Don't** free `ctx` (consumed by run), **don't** free `service` (consumed by run), free `config` |
@@ -684,7 +691,6 @@ int main() {
 
     // 4. Create and add plugin
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin", "MyType", nullptr, pkt,
         plugin_cleanup, plugin_entry
     );
     thryve_ctx_add_plugin(ctx, plugin);
@@ -720,7 +726,7 @@ int main() {
 
 4. **PacketHandle**: Get it from `thryve_ctx_get_packet_handle(ctx)` — this is the engine's real, connected handle. (There is no standalone `ffi_packet_handle_create` — it doesn't exist, and a disconnected packet handle wouldn't reach the engine anyway.) It is cloned inside the Rust side when passed to plugin/observer creation, so you can continue to use your copy afterward.
 
-5. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, and `thryve_packet_handle_send_notification` all **take ownership** of the task/notification you pass in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward — that's a double-free.
+5. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, and `thryve_packet_handle_send_notification` all **take ownership** of the task/notification you pass in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward — that's a double-free. This holds even when the send fails: once the engine is gone, they return `ThryveStatus_InvalidState` and drop what you passed in.
 
 6. **`thryve_ctx_create` vs `thryve_service_create`**: `thryve_ctx_create(config)` is for **interactive mode** — it's the only way to get a bare `ctx` to populate before starting the engine. **Service mode doesn't use it** — `thryve_service_create(config)` already returns its own matching `ctx` bundled together with the service.
 
@@ -753,10 +759,9 @@ Foreign Language                              Rust
 2. thryve_ctx_create(config)                     │ Creates and owns Ctx      │
    → ThryveCtx                                    └─────────────────────────┘
                                               ┌─────────────────────────┐
-3. thryve_plugin_create(name, type, core, tx,    │ Takes ownership of:       │
-    clean_up, entry_point)                      │ - name (CString)          │
-   → ThryvePlugin                                 │ - type (CString)          │
-                                              │ - entry_point (TaskJob)   │
+3. thryve_plugin_create(type, core, tx,          │ Takes ownership of:       │
+    clean_up, entry_point)                      │ - type (CString)          │
+   → ThryvePlugin                                 │ - entry_point (TaskJob)   │
                                               │ Does NOT take:            │
                                               │ - clean_up                │
                                               │ - plg_core_ptr (passed    │

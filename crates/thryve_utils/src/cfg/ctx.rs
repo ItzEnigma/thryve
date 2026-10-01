@@ -32,12 +32,18 @@
 
 use crossbeam::channel::Receiver;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::bases::notif::Notif;
 use crate::bases::observer::Observer;
 use crate::bases::plugin::Plugin;
 use crate::cfg::config::Config;
 use crate::cfg::meta_data::MetaData;
+use crate::errors::{ThryveError, get_err_oneline};
+use crate::extras::{
+    log_format::{log_line, write_line},
+    named_input::LogFileNamedInput,
+};
 use crate::packets::{packet_handle::PacketHandle, task::Task};
 
 /// Central context structure for the Thryve application.
@@ -210,11 +216,46 @@ impl Ctx {
     /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
     /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
     /// # let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
-    /// # let my_task = Task::new("Example", 0, TaskJob::new(|| TaskResult::new("", "".to_string(), "")));
+    /// # let my_task = Task::new("Example", 0, TaskJob::new(|| TaskResult::new("", "".to_string(), ""))).expect("valid task name");
     /// let handle = ctx.packet_handle();
-    /// handle.send_task(my_task);
+    /// handle.send_task(my_task)?;
+    /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     pub fn packet_handle(&self) -> PacketHandle {
         self.packet_handle.clone()
+    }
+
+    /// Writes an error straight to `Error.log`, without going through the logger.
+    ///
+    /// This is for reporting a failed startup. The context only lives during startup, and at
+    /// that point the logger either hasn't started yet or the cleanup has already stopped it.
+    /// While the logger runs, send it a log notification instead, so that each file has only one
+    /// writer.
+    ///
+    /// The line uses the logger's format with the source `STARTUP`. Its message is the error with
+    /// its whole chain of causes, as [`get_err_oneline`] renders it:
+    ///
+    /// ```text
+    /// Log_Creation: 2024-01-15 10:30:45, [ STARTUP ], Event_Type: Error, Message: failed to start up: failed to start thread: 'Logging': ...
+    /// ```
+    ///
+    /// Nothing is written until `init_directories` has stored the log files in the context. If
+    /// `Error.log` can't be written, the line goes to stderr instead; a failure there is ignored,
+    /// because reporting an error must never cause a new one.
+    ///
+    /// # Arguments
+    ///
+    /// * `err` - The error to write
+    pub fn e_log(&self, err: &ThryveError) {
+        let error_log = self
+            .meta_data
+            .dir_data
+            .log_hash_map
+            .get(&LogFileNamedInput::new_err());
+
+        if let Some(file) = error_log {
+            let line = log_line(SystemTime::now(), "STARTUP", "Error", &get_err_oneline(err));
+            write_line(file, &line);
+        }
     }
 }

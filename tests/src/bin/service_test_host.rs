@@ -20,6 +20,7 @@
 
 use thryve_run::run::run_service::{create_service, try_run_as_service};
 use thryve_utils::cfg::config::Config;
+use thryve_utils::errors::get_err;
 
 fn main() {
     let mut config = Config::default();
@@ -27,5 +28,11 @@ fn main() {
     config.service.can_pause = true;
 
     let (service, ctx) = create_service(config);
-    try_run_as_service(service, ctx);
+
+    // The error is also in Error.log once the log folder exists; under the service
+    // manager, stderr goes nowhere, but the exit code is recorded.
+    if let Err(e) = try_run_as_service(service, ctx) {
+        eprintln!("{}", get_err(&e));
+        std::process::exit(1);
+    }
 }

@@ -14,7 +14,7 @@
 //!
 //! # Macros
 //!
-//! - [`impl_as_any!`]: Implements the `as_any` method for downcasting
+//! - [`impl_as_any!`](crate::impl_as_any): Implements the `as_any` method for downcasting
 
 /// Implements the `as_any` method for a given type.
 ///

@@ -15,7 +15,6 @@ mod tests_init {
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::extras::dir_paths::DirName;
-    use thryve_utils::extras::named_input::NamedInput;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
 
@@ -33,22 +32,12 @@ mod tests_init {
         let mut ctx = create_test_ctx();
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert
         assert!(ctx.meta_data.dir_data.dir_paths[&DirName::Log].exists());
-        assert!(
-            ctx.meta_data
-                .dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Main"))
-        );
-        assert!(
-            ctx.meta_data
-                .dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Error"))
-        );
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key("MAIN"));
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key("ERROR"));
     }
 
     #[test]
@@ -58,15 +47,10 @@ mod tests_init {
         ctx.logging_file_names.push("Custom".to_string());
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert
-        assert!(
-            ctx.meta_data
-                .dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Custom"))
-        );
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key("CUSTOM"));
     }
 
     #[test]
@@ -75,7 +59,7 @@ mod tests_init {
         let mut ctx = create_test_ctx();
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert
         assert!(ctx.meta_data.dir_data.exe_dir.exists());
@@ -87,7 +71,7 @@ mod tests_init {
         let mut ctx = create_test_ctx();
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert
         assert!(!ctx.meta_data.datetime.to_string().is_empty());
@@ -97,24 +81,24 @@ mod tests_init {
     fn test_init_logger_creates_and_loads_observer() {
         // Arrange
         let mut ctx = create_test_ctx();
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
         let mut engine = Engine::new(&ctx);
 
         // Act
-        init_logger(&ctx, &mut engine);
+        init_logger(&ctx, &mut engine).expect("init_logger failed");
 
         // Assert - observer should be loaded (no panic means success)
         // The logger observer is loaded into the engine's observer manager
     }
 
     #[test]
-    fn test_init_engine_creates_engine_with_logger() {
+    fn test_engine_new_after_init_directories() {
         // Arrange
         let mut ctx = create_test_ctx();
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Act
-        let engine = init_engine(&ctx);
+        let engine = Engine::new(&ctx);
 
         // Assert
         assert!(!engine.exit_flag);
@@ -122,14 +106,14 @@ mod tests_init {
     }
 
     #[test]
-    fn test_init_engine_with_custom_config() {
+    fn test_engine_new_with_custom_config() {
         // Arrange
         let mut ctx = create_test_ctx();
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
         ctx.config.engine.sleep_tick_rate = 100;
 
         // Act
-        let engine = init_engine(&ctx);
+        let engine = Engine::new(&ctx);
 
         // Assert
         assert_eq!(engine.sleep_tick_rate, 100);
@@ -143,15 +127,10 @@ mod tests_init {
         ctx.config.debugging.is_debugging = true;
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert - debug log file should be created
-        assert!(
-            ctx.meta_data
-                .dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Debug"))
-        );
+        assert!(ctx.meta_data.dir_data.log_hash_map.contains_key("DEBUG"));
     }
 
     #[test]
@@ -162,7 +141,7 @@ mod tests_init {
         ctx.config.debugging.visual_graph = true;
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert - topology directory should be created
         assert!(
@@ -180,15 +159,10 @@ mod tests_init {
         ctx.config.debugging.is_debugging = false;
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert - debug log file should NOT be created
-        assert!(
-            !ctx.meta_data
-                .dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Debug"))
-        );
+        assert!(!ctx.meta_data.dir_data.log_hash_map.contains_key("DEBUG"));
     }
 
     #[test]
@@ -199,7 +173,7 @@ mod tests_init {
         ctx.config.debugging.visual_graph = false;
 
         // Act
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Assert - topology directory should NOT be created
         assert!(
@@ -216,11 +190,11 @@ mod tests_init {
         // Arrange
         let mut ctx = create_test_ctx();
         ctx.config.debugging.is_debugging = true;
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
         let mut engine = Engine::new(&ctx);
 
         // Act
-        init_logger(&ctx, &mut engine);
+        init_logger(&ctx, &mut engine).expect("init_logger failed");
 
         // Assert - the logger observer should be loaded with debug capabilities
         // The init_logger function should handle debug mode internally
@@ -235,44 +209,44 @@ mod tests_init {
         ctx.config.debugging.is_debugging = true;
         ctx.config.debugging.visual_graph = true;
 
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
         let mut engine = Engine::new(&ctx);
 
         // Act
-        init_topology_handler(&ctx, &mut engine);
+        init_topology_handler(&ctx, &mut engine).expect("init_topology_handler failed");
 
         // Assert - the topology handler observer should be loaded
         // The function creates and loads the observer without panicking
     }
 
-    // Tests for init_engine with debug mode enabled
+    // Tests for Engine::new with graph mode enabled
     #[test]
-    fn test_init_engine_with_debug_mode_includes_topology_handler() {
+    fn test_engine_new_with_graph_mode() {
         // Arrange
         let mut ctx = create_test_ctx();
         ctx.config.debugging.is_debugging = true;
         ctx.config.debugging.visual_graph = true;
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Act
-        let engine = init_engine(&ctx);
+        let engine = Engine::new(&ctx);
 
         // Assert
         assert!(!engine.exit_flag);
         assert!(!engine.pause_flag);
     }
 
-    // Tests for init_engine with multiple custom log files
+    // Tests for Engine::new with multiple custom log files
     #[test]
-    fn test_init_engine_with_multiple_custom_log_files() {
+    fn test_engine_new_with_multiple_custom_log_files() {
         // Arrange
         let mut ctx = create_test_ctx();
         ctx.logging_file_names.push("Custom1".to_string());
         ctx.logging_file_names.push("Custom2".to_string());
-        init_directories(&mut ctx);
+        init_directories(&mut ctx).expect("init_directories failed");
 
         // Act
-        let engine = init_engine(&ctx);
+        let engine = Engine::new(&ctx);
 
         // Assert - engine should be initialized successfully
         assert!(!engine.exit_flag);

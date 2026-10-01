@@ -93,7 +93,7 @@ pub trait Packet: Send + Sync + 'static {
     ///
     /// This method is used by the graph visualization system to attach
     /// call site information to packets. The call site includes the
-    /// file path, module path, line number, and fingerprints needed
+    /// file path, line number, and fingerprints needed
     /// to build the topology graph.
     ///
     /// # Arguments

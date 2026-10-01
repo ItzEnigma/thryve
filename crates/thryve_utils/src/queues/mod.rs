@@ -7,5 +7,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The queues behind the engine: the task priority queue ([`priority_queue`]) and the notification
+//! queue ([`seg_queue`]).
+
 pub mod priority_queue;
 pub mod seg_queue;

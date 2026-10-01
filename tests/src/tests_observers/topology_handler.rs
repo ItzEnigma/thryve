@@ -20,6 +20,7 @@ mod tests_topology {
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::{ctx::Ctx, meta_data::MetaData};
     use thryve_utils::extras::dir_paths::DirName;
+    use thryve_utils::extras::named_input::LogFileNamedInput;
     use thryve_utils::graphs::callsite::TaskCallSite;
     use thryve_utils::graphs::graph::TopologyNode;
     use thryve_utils::packets::notif_log::Log;
@@ -59,11 +60,10 @@ mod tests_topology {
         let ctx = create_test_ctx();
 
         // Act
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "Topology");
-        assert_eq!(observer.obs_type.inner(), "TopologyHandler");
+        assert_eq!(observer.obs_type(), "TopologyHandler");
     }
 
     #[test]
@@ -72,44 +72,28 @@ mod tests_topology {
         let ctx = create_test_ctx();
 
         // Act
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_type.inner(), "TopologyHandler");
-    }
-
-    #[test]
-    fn test_topology_handler_observer_obs_name_is_topology() {
-        // Arrange
-        let ctx = create_test_ctx();
-
-        // Act
-        let observer = TopologyHandlerObserver::new(&ctx);
-
-        // Assert
-        assert_eq!(observer.obs_name, "Topology");
+        assert_eq!(observer.obs_type(), "TopologyHandler");
     }
 
     #[test]
     fn test_handle_entry_add_node_successfully() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
 
         // Create a test node
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            42,
-            "TestTask".to_string(),
-        );
+        let callsite = TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "TestTask".to_string());
         let node = TopologyNode {
             callsite,
             fingerprint: "test_node_1".to_string(),
+            failure: None,
         };
 
         // Create an AddNode notification
@@ -128,33 +112,27 @@ mod tests_topology {
     fn test_handle_entry_add_edge_successfully() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
 
         // Create two nodes first
-        let callsite1 = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            42,
-            "ParentTask".to_string(),
-        );
+        let callsite1 =
+            TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "ParentTask".to_string());
         let node1 = TopologyNode {
             callsite: callsite1,
             fingerprint: "parent_node".to_string(),
+            failure: None,
         };
 
-        let callsite2 = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            43,
-            "ChildTask".to_string(),
-        );
+        let callsite2 =
+            TaskCallSite::new(PathBuf::from("src/test.rs"), 43, "ChildTask".to_string());
         let node2 = TopologyNode {
             callsite: callsite2,
             fingerprint: "child_node".to_string(),
+            failure: None,
         };
 
         // Add both nodes
@@ -175,55 +153,88 @@ mod tests_topology {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot add edge because a node is missing")]
-    fn test_handle_entry_add_edge_with_missing_node_panics() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+    fn test_handle_entry_add_edge_with_missing_node_turns_graph_mode_off() {
+        // Arrange: graph mode on, and an Error.log of this test's own for the warning
+        let (task_tx, task_rx) = bounded::<Task>(10);
+        let (notif_tx, notif_rx) = bounded::<Notif>(10);
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, true);
+        let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        ctx.meta_data = create_test_ctx().meta_data;
+
+        let error_dir = std::env::temp_dir().join("test_topology_missing_node");
+        std::fs::create_dir_all(&error_dir).unwrap();
+        let error_path = error_dir.join("Error.log");
+        let error_log = std::fs::File::create(&error_path).unwrap();
+        ctx.meta_data
+            .dir_data
+            .log_hash_map
+            .insert(LogFileNamedInput::new_err(), Arc::new(error_log));
+
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
 
         // Only add one node
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            42,
-            "Task".to_string(),
-        );
+        let callsite = TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "Task".to_string());
         let node = TopologyNode {
             callsite,
             fingerprint: "only_node".to_string(),
+            failure: None,
         };
         topo_handler.handle_entry(TopologyModifier::add_node(node));
 
-        // Act - try to add edge with non-existent node (should panic)
+        // Act - an edge to a node that isn't in the graph must not panic
         let edge_notif =
             TopologyModifier::add_edge("only_node".to_string(), "missing_node".to_string());
         topo_handler.handle_entry(edge_notif);
+
+        // A node sent after the failure isn't recorded
+        let late_node = TopologyNode::new(TaskCallSite::default(), "late_node".to_string());
+        topo_handler.handle_entry(TopologyModifier::add_node(late_node));
+
+        // Assert - the graph ends with the failure node, linked from the node that exists
+        let topology_ref = topo_handler.topology.read().unwrap();
+        let failure_node = topology_ref.get_node(TopologyNode::FAILURE_FINGERPRINT);
+        assert!(
+            failure_node
+                .failure
+                .as_deref()
+                .is_some_and(|reason| reason.contains("\"missing_node\""))
+        );
+        assert!(topology_ref.contains_edge("only_node", TopologyNode::FAILURE_FINGERPRINT));
+        assert!(!topology_ref.contains_node("late_node"));
+        assert!(!topology_ref.enabled);
+
+        // Only the failure node carries the field in the export
+        let exported = ron::ser::to_string(&topology_ref.graph).unwrap();
+        assert_eq!(exported.matches("failure:").count(), 1);
+
+        // Graph mode is off for every packet handle, and the warning is in Error.log
+        assert!(!ctx.packet_handle().graph_mode_on());
+        let written = std::fs::read_to_string(&error_path).unwrap();
+        assert!(
+            written.contains("[ TOPOLOGY ], Event_Type: Error, Message: graph mode turned off")
+        );
     }
 
     #[test]
     fn test_handle_entry_add_duplicate_node_does_not_add_again() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
 
         // Create a node
-        let callsite = TaskCallSite::new(
-            PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
-            42,
-            "TestTask".to_string(),
-        );
+        let callsite = TaskCallSite::new(PathBuf::from("src/test.rs"), 42, "TestTask".to_string());
         let node = TopologyNode {
             callsite,
             fingerprint: "duplicate_node".to_string(),
+            failure: None,
         };
 
         // Act - add the same node twice
@@ -239,7 +250,7 @@ mod tests_topology {
     fn test_handle_entry_add_duplicate_edge_increments_weight() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -247,22 +258,14 @@ mod tests_topology {
 
         // Create two nodes
         let node1 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod1".to_string(),
-                1,
-                "Task1".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 1, "Task1".to_string()),
             fingerprint: "node1".to_string(),
+            failure: None,
         };
         let node2 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod2".to_string(),
-                2,
-                "Task2".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 2, "Task2".to_string()),
             fingerprint: "node2".to_string(),
+            failure: None,
         };
 
         topo_handler.handle_entry(TopologyModifier::add_node(node1));
@@ -289,7 +292,7 @@ mod tests_topology {
     fn test_handle_entry_ignores_notification_for_different_receiver() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -310,7 +313,7 @@ mod tests_topology {
     fn test_handle_entry_with_complex_topology() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -319,31 +322,19 @@ mod tests_topology {
         // Create a more complex topology: A -> B -> C, A -> C
         let nodes = vec![
             TopologyNode {
-                callsite: TaskCallSite::new(
-                    PathBuf::from("src/a.rs"),
-                    "a".to_string(),
-                    1,
-                    "A".to_string(),
-                ),
+                callsite: TaskCallSite::new(PathBuf::from("src/a.rs"), 1, "A".to_string()),
                 fingerprint: "A".to_string(),
+                failure: None,
             },
             TopologyNode {
-                callsite: TaskCallSite::new(
-                    PathBuf::from("src/b.rs"),
-                    "b".to_string(),
-                    2,
-                    "B".to_string(),
-                ),
+                callsite: TaskCallSite::new(PathBuf::from("src/b.rs"), 2, "B".to_string()),
                 fingerprint: "B".to_string(),
+                failure: None,
             },
             TopologyNode {
-                callsite: TaskCallSite::new(
-                    PathBuf::from("src/c.rs"),
-                    "c".to_string(),
-                    3,
-                    "C".to_string(),
-                ),
+                callsite: TaskCallSite::new(PathBuf::from("src/c.rs"), 3, "C".to_string()),
                 fingerprint: "C".to_string(),
+                failure: None,
             },
         ];
 
@@ -370,7 +361,7 @@ mod tests_topology {
     fn test_topology_handler_cleanup_exports_file() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
         let observer = Arc::new(observer);
 
         // Downcast to get the TopologyHandlerObserver
@@ -379,13 +370,9 @@ mod tests_topology {
 
         // Add a node to have something to export
         let node = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "test".to_string(),
-                1,
-                "Test".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 1, "Test".to_string()),
             fingerprint: "test_node".to_string(),
+            failure: None,
         };
         topo_handler.handle_entry(TopologyModifier::add_node(node));
 
@@ -394,13 +381,9 @@ mod tests_topology {
         // before it writes the RON file (Topology.exe won't exist in
         // this environment, so visualize_gui just logs and returns).
         let queued_node = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/queued.rs"),
-                "queued".to_string(),
-                2,
-                "Queued".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/queued.rs"), 2, "Queued".to_string()),
             fingerprint: "queued_node".to_string(),
+            failure: None,
         };
         observer
             .obs_queue
@@ -427,7 +410,7 @@ mod tests_topology {
     fn test_topology_handler_with_unicode_in_callsite() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -435,13 +418,9 @@ mod tests_topology {
 
         // Create a node with unicode in the name
         let node = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/测试.rs"),
-                "模块::子模块".to_string(),
-                42,
-                "任务名".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/测试.rs"), 42, "任务名".to_string()),
             fingerprint: "unicode_node".to_string(),
+            failure: None,
         };
 
         // Act
@@ -457,7 +436,7 @@ mod tests_topology {
     fn test_visualize_gui_with_valid_parent_directory() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -472,7 +451,7 @@ mod tests_topology {
     fn test_visualize_gui_with_parent_directory_returning_none() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -487,7 +466,7 @@ mod tests_topology {
     fn test_handle_entry_add_edge_creates_edge() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -495,22 +474,14 @@ mod tests_topology {
 
         // Create two nodes first
         let node1 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod1".to_string(),
-                1,
-                "Task1".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 1, "Task1".to_string()),
             fingerprint: "node1".to_string(),
+            failure: None,
         };
         let node2 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod2".to_string(),
-                2,
-                "Task2".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 2, "Task2".to_string()),
             fingerprint: "node2".to_string(),
+            failure: None,
         };
 
         topo_handler.handle_entry(TopologyModifier::add_node(node1));
@@ -529,7 +500,7 @@ mod tests_topology {
     fn test_handle_entry_add_edge_increments_weight() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -537,22 +508,14 @@ mod tests_topology {
 
         // Create two nodes
         let node1 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod1".to_string(),
-                1,
-                "Task1".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 1, "Task1".to_string()),
             fingerprint: "node1".to_string(),
+            failure: None,
         };
         let node2 = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/test.rs"),
-                "mod2".to_string(),
-                2,
-                "Task2".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/test.rs"), 2, "Task2".to_string()),
             fingerprint: "node2".to_string(),
+            failure: None,
         };
 
         topo_handler.handle_entry(TopologyModifier::add_node(node1));
@@ -579,7 +542,7 @@ mod tests_topology {
     fn test_handle_entry_add_node_with_workspace_root() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -589,11 +552,11 @@ mod tests_topology {
         let node = TopologyNode {
             callsite: TaskCallSite::new(
                 PathBuf::from("E:\\Projects\\MTC\\Thryve\\src\\test.rs"),
-                "test_crate::test_module".to_string(),
                 42,
                 "TestTask".to_string(),
             ),
             fingerprint: "workspace_node".to_string(),
+            failure: None,
         };
 
         // Act
@@ -608,7 +571,7 @@ mod tests_topology {
     fn test_handle_entry_with_unrecognized_action_is_ignored() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx);
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
 
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
@@ -622,7 +585,7 @@ mod tests_topology {
             to_fingerprint: String::default(),
             action: "SomeUnknownAction".to_string(),
         };
-        let notif = Notif::new("SomeUnknownAction", "TopologyHandler", Box::new(modifier));
+        let notif = Notif::new("SomeUnknownAction", "TopologyHandler", Box::new(modifier)).unwrap();
 
         // Act - should not panic, should just fall through the catch-all arm
         topo_handler.handle_entry(notif);
@@ -636,7 +599,7 @@ mod tests_topology {
     fn test_topology_modification_loop_processes_notif_then_exits_on_flag() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = Arc::new(TopologyHandlerObserver::new(&ctx));
+        let observer = Arc::new(TopologyHandlerObserver::new(&ctx).unwrap());
 
         let observer_thread = observer.clone();
         let handle = std::thread::spawn(move || {
@@ -646,13 +609,9 @@ mod tests_topology {
         // Push a node-add notification for the loop to pop and handle on
         // its first iteration.
         let node = TopologyNode {
-            callsite: TaskCallSite::new(
-                PathBuf::from("src/loop.rs"),
-                "loop_mod".to_string(),
-                1,
-                "LoopTask".to_string(),
-            ),
+            callsite: TaskCallSite::new(PathBuf::from("src/loop.rs"), 1, "LoopTask".to_string()),
             fingerprint: "loop_node".to_string(),
+            failure: None,
         };
         observer.obs_queue.push(TopologyModifier::add_node(node));
 
@@ -686,10 +645,17 @@ mod tests_topology {
         // `topology_dir.parent()` == None branch, which the ctx-based
         // constructor can never produce on its own (its topology_dir is
         // always a subdirectory of a temp dir).
-        let topo_handler = TopologyHandlerObserver {
-            topology: std::sync::RwLock::new(thryve_utils::graphs::graph::TaskTopology::default()),
-            topology_dir: PathBuf::from("C:\\"),
-        };
+        let mut ctx = create_test_ctx();
+        ctx.meta_data
+            .dir_data
+            .dir_paths
+            .insert(DirName::Topology, PathBuf::from("C:\\"));
+        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
+        let topo_handler = observer
+            .obs_core
+            .as_any()
+            .downcast_ref::<TopologyHandlerObserver>()
+            .unwrap();
 
         // Act - should not panic despite there being no parent directory
         topo_handler.visualize_gui();

@@ -7,5 +7,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The thread pool that runs workers and observers ([`threadpool`]), and the registry that tracks
+//! which workers are parked ([`thread_registry`]).
+
 pub mod thread_registry;
 pub mod threadpool;

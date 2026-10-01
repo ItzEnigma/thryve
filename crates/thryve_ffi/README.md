@@ -98,7 +98,6 @@ int main(void) {
 
     // 4. Create a plugin (PacketHandle is required)
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin",           // name
         "MyType",             // type
         NULL,                 // plg_core_ptr (opaque pointer)
         packet_handle,        // tx (packet handle - REQUIRED)
@@ -309,7 +308,7 @@ When passing data to Rust functions, ownership may be transferred. Follow these 
 
 5. **PacketHandle**: Get it from `thryve_ctx_get_packet_handle(ctx)` — the engine's real, connected handle. It is **cloned** inside the Rust side, so the foreign language can continue to use its copy after passing to plugin/observer creation.
 
-6. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, and `thryve_packet_handle_send_notification` all **take ownership** of the task/notification passed in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward.
+6. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, and `thryve_packet_handle_send_notification` all **take ownership** of the task/notification passed in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward. This holds even when the send fails: once the engine is gone, they return `InvalidState` and drop what was passed in.
 
 7. **`thryve_ctx_create` vs `thryve_service_create`**: `thryve_ctx_create(config)` is for **interactive mode** only. Service mode doesn't use it — `thryve_service_create(config)` already returns its own matching `ctx` bundled together with the service (see [`ThryveServiceCreateResult`](#types)).
 
@@ -327,10 +326,9 @@ Foreign Language                              Rust
 2. thryve_ctx_create(config)                     │ Creates and owns Ctx      │
    → ThryveCtx                                    └─────────────────────────┘
                                               ┌─────────────────────────┐
-3. thryve_plugin_create(name, type, core, tx,    │ Takes ownership of:       │
-   clean_up, entry_point)                      │ - name (CString)          │
-   → ThryvePlugin                                 │ - type (CString)          │
-                                              │ - entry_point (TaskJob)   │
+3. thryve_plugin_create(type, core, tx,          │ Takes ownership of:       │
+   clean_up, entry_point)                      │ - type (CString)          │
+   → ThryvePlugin                                 │ - entry_point (TaskJob)   │
                                               │ Does NOT take:            │
                                               │ - clean_up                │
                                               │ - plg_core_ptr (passed    │
@@ -432,7 +430,7 @@ These files demonstrate how to include the generated headers and link against th
 | Function | Description |
 |----------|-------------|
 | `thryve_config_default()` | Creates a default configuration instance. Returns `ThryveConfig` or NULL. |
-| `thryve_config_from_file(path)` | Creates a configuration from a TOML file. `path` is a null-terminated C string. Returns `ThryveConfig` or NULL. |
+| `thryve_config_from_file(path)` | Creates a configuration from a TOML file. `path` is a null-terminated C string. Returns `ThryveConfig`, or NULL if the file can't be read, doesn't parse (every key is required, unknown keys are rejected) or has invalid values. There is no fallback to the defaults; call `thryve_config_default()` if you want them. |
 | `thryve_config_free(config)` | Frees a configuration instance. Safe to call with NULL. |
 
 ### PacketHandle Wrappers
@@ -441,8 +439,8 @@ These files demonstrate how to include the generated headers and link against th
 |----------|-------------|
 | `thryve_packet_handle_free(handle)` | Frees a PacketHandle instance. Safe to call with NULL. |
 | `thryve_packet_handle_clone(handle)` | Clones a PacketHandle. Returns a new `ThryvePacketHandle`. |
-| `thryve_packet_handle_send_task(handle, task)` | Sends a task through the handle. **Takes ownership of `task`.** Returns `ThryveStatus`. |
-| `thryve_packet_handle_send_notification(handle, notif)` | Sends a notification through the handle. **Takes ownership of `notif`.** Returns `ThryveStatus`. |
+| `thryve_packet_handle_send_task(handle, task)` | Sends a task through the handle. **Takes ownership of `task`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the task is dropped). |
+| `thryve_packet_handle_send_notification(handle, notif)` | Sends a notification through the handle. **Takes ownership of `notif`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the notification is dropped). |
 
 ### Ctx Wrappers
 
@@ -454,8 +452,8 @@ These files demonstrate how to include the generated headers and link against th
 | `thryve_ctx_add_plugin(ctx, plugin)` | Adds a plugin to the context. Returns `ThryveStatus`. |
 | `thryve_ctx_add_observer(ctx, observer)` | Adds an observer to the context. Returns `ThryveStatus`. |
 | `thryve_ctx_set_logging_file_names(ctx, file_names, count)` | Sets logging file names. `file_names` is an array of null-terminated C strings. |
-| `thryve_ctx_send_task(ctx, task)` | Sends a task to the engine. **Takes ownership of `task`.** Returns `ThryveStatus`. |
-| `thryve_ctx_send_notification(ctx, notif)` | Sends a notification to the engine. **Takes ownership of `notif`.** Returns `ThryveStatus`. |
+| `thryve_ctx_send_task(ctx, task)` | Sends a task to the engine. **Takes ownership of `task`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the task is dropped). |
+| `thryve_ctx_send_notification(ctx, notif)` | Sends a notification to the engine. **Takes ownership of `notif`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the notification is dropped). |
 
 ### Task Wrappers
 
@@ -470,7 +468,7 @@ These files demonstrate how to include the generated headers and link against th
 
 | Function | Description |
 |----------|-------------|
-| `thryve_run_interactive_start(ctx)` | Starts the Thryve engine in interactive mode. Returns `ThryveRunHandle` or NULL. |
+| `thryve_run_interactive_start(ctx)` | Starts the Thryve engine in interactive mode. Returns `ThryveRunHandle`, or NULL if the engine couldn't start (it stops every thread it started, and its error is in `Error.log` once the log folder exists). |
 | `thryve_run_interactive_free(handle)` | Waits for the engine to finish and frees the handle. Returns `ThryveStatus`. |
 
 ### Service Wrappers
@@ -478,21 +476,21 @@ These files demonstrate how to include the generated headers and link against th
 | Function | Description |
 |----------|-------------|
 | `thryve_service_create(config)` | Creates a service instance bundled with its matching ctx (for Windows service mode). Returns `ThryveServiceCreateResult { service, ctx }` — both NULL on failure. |
-| `thryve_service_run(service, ctx)` | Runs the service (blocking until SCM sends Stop). **Takes ownership of both `service` and `ctx`.** Returns `ThryveStatus`. |
+| `thryve_service_run(service, ctx)` | Runs the service (blocking until SCM sends Stop). **Takes ownership of both `service` and `ctx`.** Returns `ThryveStatus`: `Ok` once the service has stopped, `InvalidState` if the process wasn't started by the SCM, `OperationFail` if the engine couldn't start. |
 | `thryve_service_free(service)` | Frees a service instance. Safe to call with NULL. Do not call on a `service` already consumed by `thryve_service_run`. |
 
 ### Plugin Wrappers
 
 | Function | Description |
 |----------|-------------|
-| `thryve_plugin_create(name, type, core_ptr, tx, clean_up, entry_point)` | Creates a new plugin. Returns `ThryvePlugin` or NULL. |
+| `thryve_plugin_create(type, core_ptr, tx, clean_up, entry_point)` | Creates a new plugin. Returns `ThryvePlugin` or NULL. |
 | `thryve_plugin_free(plugin)` | Frees a plugin instance. Safe to call with NULL. |
 
 ### Observer Wrappers
 
 | Function | Description |
 |----------|-------------|
-| `thryve_observer_create(name, type, core_ptr, tx, clean_up, obs_job_fn)` | Creates a new observer. Returns `ThryveObserver` or NULL. |
+| `thryve_observer_create(type, core_ptr, tx, clean_up, obs_job_fn)` | Creates a new observer. Returns `ThryveObserver` or NULL. |
 | `thryve_observer_free(observer)` | Frees an observer instance. Safe to call with NULL. |
 
 ### Notification Wrappers
@@ -591,7 +589,6 @@ int main(void) {
 
     // 4. Create plugin (PacketHandle is required)
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin",
         "MyType",
         NULL,  // core_ptr
         packet_handle,  // tx (PacketHandle)
@@ -604,7 +601,6 @@ int main(void) {
 
     // 6. Create observer (PacketHandle is required)
     ThryveObserver observer = thryve_observer_create(
-        "MyObserver",
         "MyType",
         NULL,  // core_ptr
         packet_handle,  // tx (PacketHandle)
@@ -698,7 +694,6 @@ int main(void) {
 
     // 4. Create plugin (PacketHandle is required)
     ThryvePlugin plugin = thryve_plugin_create(
-        "MyPlugin",
         "MyType",
         nullptr,  // core_ptr
         packet_handle,  // tx (PacketHandle)
@@ -711,7 +706,6 @@ int main(void) {
 
     // 6. Create observer (PacketHandle is required)
     ThryveObserver observer = thryve_observer_create(
-        "MyObserver",
         "MyType",
         nullptr,  // core_ptr
         packet_handle,  // tx (PacketHandle)

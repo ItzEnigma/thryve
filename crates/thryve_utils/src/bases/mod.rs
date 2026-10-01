@@ -7,6 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! What an application registers with Thryve: [`plugin::Plugin`], [`observer::Observer`] and
+//! [`notif::Notif`], plus [`queue`], the queue base their queues share.
+
 pub mod notif;
 pub mod observer;
 pub mod plugin;

@@ -8,6 +8,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 mod tests_task {
+    use thryve_utils::errors::{NameInputType, NamingError};
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::graphs::callsite::TaskCallSite;
     use thryve_utils::packets::task::*;
@@ -25,17 +26,19 @@ mod tests_task {
             task_name,
             priority,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         let task2 = Task::new(
             task_name,
             priority,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Assert
         assert_ne!(task1.id, task2.id);
-        assert_eq!(task1.task_name.inner(), "TestTask");
+        assert_eq!(task1.task_name(), "TestTask");
         assert_eq!(task1.base_priority, 5);
     }
 
@@ -46,7 +49,8 @@ mod tests_task {
             "LowPriority",
             0,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(task.base_priority, 0);
@@ -59,7 +63,8 @@ mod tests_task {
             "MaxPriority",
             u8::MAX,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(task.base_priority, u8::MAX);
@@ -72,7 +77,8 @@ mod tests_task {
             "ProcessTest",
             1,
             TaskJob::new(|| TaskResult::new("Success", "Processed".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task_id = task.id;
 
         // Act
@@ -82,7 +88,7 @@ mod tests_task {
         assert!(result.is_some());
         let (id, res_result) = result.unwrap();
         assert_eq!(id, task_id);
-        assert_eq!(res_result.result_type.inner(), "Success");
+        assert_eq!(res_result.result_type(), "Success");
         assert_eq!(res_result.message, "Processed");
     }
 
@@ -93,7 +99,8 @@ mod tests_task {
             "HighPriority",
             10,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let max_priority = 4u8;
 
         // Act
@@ -110,7 +117,8 @@ mod tests_task {
             "ValidPriority",
             3,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let max_priority = 4u8;
 
         // Act
@@ -127,7 +135,8 @@ mod tests_task {
             "BoundaryPriority",
             4,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let max_priority = 4u8;
 
         // Act
@@ -144,7 +153,8 @@ mod tests_task {
             "AnyPriority",
             100,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let max_priority = 0u8;
 
         // Act
@@ -161,17 +171,20 @@ mod tests_task {
             "T1",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task2 = Task::new(
             "T2",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task3 = Task::new(
             "T3",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Assert
         assert_eq!(task2.id, task1.id + 1);
@@ -179,14 +192,18 @@ mod tests_task {
     }
 
     #[test]
-    #[should_panic(expected = "The field `task_name` in a Task cannot be empty")]
-    fn test_task_with_empty_name() {
-        // Arrange & Act & Assert - empty name should panic
-        let _task = Task::new(
-            "",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+    fn test_task_with_empty_name_is_rejected() {
+        // Arrange & Act & Assert - rejected: an empty name is an error
+        assert!(matches!(
+            Task::new(
+                "",
+                1,
+                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
+            ),
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::TaskName
+            })
+        ));
     }
 
     #[test]
@@ -196,20 +213,23 @@ mod tests_task {
             "Task123",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Assert
-        assert_eq!(task.task_name.inner(), "Task123");
+        assert_eq!(task.task_name(), "Task123");
     }
 
     #[test]
-    #[should_panic(expected = "NamedInput must be alphanumeric")]
-    fn test_task_with_invalid_name_panics() {
+    fn test_task_with_hyphen_in_name_is_accepted() {
         // Arrange & Act
-        let _ = Task::new(
-            "Invalid-Name",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
+        assert!(
+            Task::new(
+                "Invalid-Name",
+                1,
+                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
+            )
+            .is_ok()
         );
     }
 
@@ -220,7 +240,8 @@ mod tests_task {
             "IdTest",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let expected_id = task.id;
 
         // Act
@@ -238,7 +259,8 @@ mod tests_task {
             "SizeTest",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
         let size = task.size_in_bytes();
@@ -255,12 +277,14 @@ mod tests_task {
             "Task1",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task2 = Task::new(
             "Task2",
             2,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
         let size1 = task1.size_in_bytes();
@@ -277,7 +301,8 @@ mod tests_task {
             "MemSizeTest",
             5,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
         let size = task.size_in_bytes();
@@ -293,11 +318,11 @@ mod tests_task {
             "CallsiteTest",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         let callsite = TaskCallSite::new(
             std::path::PathBuf::from("src/test.rs"),
-            "test_module".to_string(),
             42,
             "TestTask".to_string(),
         );
@@ -309,7 +334,6 @@ mod tests_task {
         assert!(task.callsite.is_some());
         let retrieved = task.get_callsite();
         assert_eq!(retrieved.file_path, callsite.file_path);
-        assert_eq!(retrieved.module_path, callsite.module_path);
         assert_eq!(retrieved.line_number, callsite.line_number);
     }
 
@@ -320,14 +344,14 @@ mod tests_task {
             "NoCallsite",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
         let callsite = task.get_callsite();
 
         // Assert
         assert_eq!(callsite.file_path, std::path::PathBuf::new());
-        assert_eq!(callsite.module_path, "");
         assert_eq!(callsite.line_number, 0);
     }
 
@@ -337,10 +361,9 @@ mod tests_task {
         let task = Task::new(
             "ErrorTest",
             1,
-            TaskJob::new(|| {
-                TaskResult::new("Error", "Something went wrong".to_string(), "Error")
-            }),
-        );
+            TaskJob::new(|| TaskResult::new("Error", "Something went wrong".to_string(), "Error")),
+        )
+        .unwrap();
 
         // Act
         let result = task.process();
@@ -348,18 +371,20 @@ mod tests_task {
         // Assert
         assert!(result.is_some());
         let (_, res_result) = result.unwrap();
-        assert_eq!(res_result.result_type.inner(), "Error");
+        assert_eq!(res_result.result_type(), "Error");
         assert_eq!(res_result.message, "Something went wrong");
     }
 
     #[test]
-    #[should_panic(expected = "NamedInput must be alphanumeric")]
-    fn test_task_with_special_characters_in_name_panics() {
-        // Arrange & Act & Assert - special characters should panic
-        let _task = Task::new(
-            "Task-With_Dots.And123",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
+    fn test_task_with_special_characters_in_name_is_accepted() {
+        // Arrange & Act & Assert - accepted: names only reject empty text and control characters
+        assert!(
+            Task::new(
+                "Task-With_Dots.And123",
+                1,
+                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
+            )
+            .is_ok()
         );
     }
 
@@ -370,11 +395,11 @@ mod tests_task {
             "CallsitePreserve",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         let callsite = TaskCallSite::new(
             std::path::PathBuf::from("src/preserved.rs"),
-            "preserved_module".to_string(),
             100,
             "PreservedTask".to_string(),
         );
@@ -390,6 +415,7 @@ mod tests_task {
 
 mod tests_packet_handle {
     use thryve_utils::bases::notif::Notif;
+    use thryve_utils::errors::{NameInputType, NamingError};
     use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::*;
@@ -423,14 +449,15 @@ mod tests_packet_handle {
             "TestTask",
             0,
             TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
-        handle.send_task(task);
+        handle.send_task(task).unwrap();
 
         // Assert
         let received = task_rx.recv().unwrap();
-        assert_eq!(received.task_name.inner(), "TestTask");
+        assert_eq!(received.task_name(), "TestTask");
         // Notification channel should be empty
         assert!(notif_rx.try_recv().is_err());
     }
@@ -444,11 +471,11 @@ mod tests_packet_handle {
         let notif = Log::log("Test message".to_string(), "Main");
 
         // Act
-        handle.send_notification(notif);
+        handle.send_notification(notif).unwrap();
 
         // Assert
         let received = notif_rx.recv().unwrap();
-        assert_eq!(received.notif_type.inner(), "Log");
+        assert_eq!(received.notif_type(), "Log");
         // Task channel should be empty
         assert!(task_rx.try_recv().is_err());
     }
@@ -468,21 +495,23 @@ mod tests_packet_handle {
             "Task1",
             0,
             TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task2 = Task::new(
             "Task2",
             0,
             TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
-        handle1.send_task(task1);
-        handle2.send_task(task2);
+        handle1.send_task(task1).unwrap();
+        handle2.send_task(task2).unwrap();
 
         let received1 = task_rx.recv().unwrap();
         let received2 = task_rx.recv().unwrap();
 
-        assert!(received1.task_name.inner() == "Task1" || received1.task_name.inner() == "Task2");
-        assert!(received2.task_name.inner() == "Task1" || received2.task_name.inner() == "Task2");
+        assert!(received1.task_name() == "Task1" || received1.task_name() == "Task2");
+        assert!(received2.task_name() == "Task1" || received2.task_name() == "Task2");
     }
 
     #[test]
@@ -498,14 +527,15 @@ mod tests_packet_handle {
                 &format!("Task{}", i),
                 0,
                 TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-            );
-            handle.send_task(task);
+            )
+            .unwrap();
+            handle.send_task(task).unwrap();
         }
 
         // Assert
         for _ in 0..5 {
             let received = task_rx.recv().unwrap();
-            assert!(received.task_name.inner().starts_with("Task"));
+            assert!(received.task_name().starts_with("Task"));
         }
         assert!(task_rx.try_recv().is_err()); // Channel empty
         assert!(notif_rx.try_recv().is_err()); // Notification channel empty
@@ -521,13 +551,13 @@ mod tests_packet_handle {
         // Act
         for i in 0..5 {
             let notif = Log::log(format!("Message {}", i), "Main");
-            handle.send_notification(notif);
+            handle.send_notification(notif).unwrap();
         }
 
         // Assert
         for _ in 0..5 {
             let received = notif_rx.recv().unwrap();
-            assert_eq!(received.notif_type.inner(), "Log");
+            assert_eq!(received.notif_type(), "Log");
         }
         assert!(notif_rx.try_recv().is_err()); // Channel empty
         assert!(task_rx.try_recv().is_err()); // Task channel empty
@@ -541,27 +571,41 @@ mod tests_packet_handle {
         let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act - send interleaved
-        handle.send_task(Task::new(
-            "T1",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        ));
-        handle.send_notification(Log::log("N1".to_string(), "Main"));
-        handle.send_task(Task::new(
-            "T2",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        ));
-        handle.send_notification(Log::log("N2".to_string(), "Main"));
+        handle
+            .send_task(
+                Task::new(
+                    "T1",
+                    0,
+                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        handle
+            .send_notification(Log::log("N1".to_string(), "Main"))
+            .unwrap();
+        handle
+            .send_task(
+                Task::new(
+                    "T2",
+                    0,
+                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        handle
+            .send_notification(Log::log("N2".to_string(), "Main"))
+            .unwrap();
 
         // Assert - tasks go to task channel
-        assert_eq!(task_rx.recv().unwrap().task_name.inner(), "T1");
-        assert_eq!(task_rx.recv().unwrap().task_name.inner(), "T2");
+        assert_eq!(task_rx.recv().unwrap().task_name(), "T1");
+        assert_eq!(task_rx.recv().unwrap().task_name(), "T2");
         assert!(task_rx.try_recv().is_err());
 
         // Notifications go to notification channel
-        assert_eq!(notif_rx.recv().unwrap().notif_type.inner(), "Log");
-        assert_eq!(notif_rx.recv().unwrap().notif_type.inner(), "Log");
+        assert_eq!(notif_rx.recv().unwrap().notif_type(), "Log");
+        assert_eq!(notif_rx.recv().unwrap().notif_type(), "Log");
         assert!(notif_rx.try_recv().is_err());
     }
 
@@ -573,21 +617,36 @@ mod tests_packet_handle {
         let handle = PacketHandle::new(task_tx, notif_tx, false);
 
         // Act
-        handle.send_task(Task::new(
-            "Low",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        ));
-        handle.send_task(Task::new(
-            "Medium",
-            50,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        ));
-        handle.send_task(Task::new(
-            "High",
-            100,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        ));
+        handle
+            .send_task(
+                Task::new(
+                    "Low",
+                    0,
+                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        handle
+            .send_task(
+                Task::new(
+                    "Medium",
+                    50,
+                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        handle
+            .send_task(
+                Task::new(
+                    "High",
+                    100,
+                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
 
         // Assert
         let t1 = task_rx.recv().unwrap();
@@ -609,28 +668,35 @@ mod tests_packet_handle {
 
         // Act
         let notif = Log::err("Error occurred".to_string());
-        handle.send_notification(notif);
+        handle.send_notification(notif).unwrap();
 
         // Assert
         let received = notif_rx.recv().unwrap();
-        assert_eq!(received.notif_type.inner(), "Error");
+        assert_eq!(received.notif_type(), "Error");
     }
 
     #[test]
-    #[should_panic(expected = "The field `task_name` in a Task cannot be empty")]
-    fn test_packet_handle_with_empty_task_name() {
+    fn test_packet_handle_with_empty_task_name_is_rejected() {
         // Arrange
-        let (task_tx, _task_rx) = crossbeam::channel::bounded::<Task>(10);
+        let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, _notif_rx) = crossbeam::channel::bounded::<Notif>(10);
-        let handle = PacketHandle::new(task_tx, notif_tx, false);
+        let _handle = PacketHandle::new(task_tx, notif_tx, false);
 
-        // Act & Assert - should panic with empty name
+        // Act - a task with an empty name can't be created, so nothing can be sent
         let task = Task::new(
             "",
             0,
             TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
         );
-        handle.send_task(task);
+
+        // Assert
+        assert!(matches!(
+            task,
+            Err(NamingError::NameEmpty {
+                kind: NameInputType::TaskName
+            })
+        ));
+        assert!(task_rx.is_empty());
     }
 
     #[test]
@@ -642,11 +708,11 @@ mod tests_packet_handle {
 
         // Act
         let notif = Log::log("Hello 世界 🌍".to_string(), "Main");
-        handle.send_notification(notif);
+        handle.send_notification(notif).unwrap();
 
         // Assert
         let received = notif_rx.recv().unwrap();
-        assert_eq!(received.notif_type.inner(), "Log");
+        assert_eq!(received.notif_type(), "Log");
     }
 
     #[test]
@@ -675,17 +741,91 @@ mod tests_packet_handle {
             "TestTaskWithGraph",
             0,
             TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - send task with graph visualization enabled
-        handle.send_task(task);
+        handle.send_task(task).unwrap();
 
         // Assert - task is received with callsite information
         let received = task_rx.recv().unwrap();
-        assert_eq!(received.task_name.inner(), "TestTaskWithGraph");
+        assert_eq!(received.task_name(), "TestTaskWithGraph");
         // When graph visualization is enabled, callsite should be set
         let callsite = received.get_callsite();
         assert!(!callsite.file_path.to_str().unwrap().is_empty());
+    }
+
+    // The call site is passed in by the compiler (`#[track_caller]`), not read from a backtrace,
+    // so these lines are exact however the code was optimized or inlined.
+    fn graph_handle() -> (PacketHandle, crossbeam::channel::Receiver<Task>) {
+        let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
+        let (notif_tx, _) = crossbeam::channel::bounded::<Notif>(10);
+        (PacketHandle::new(task_tx, notif_tx, true), task_rx)
+    }
+
+    fn any_task() -> Task {
+        Task::new("Probe", 0, TaskJob::new(TaskResult::default)).unwrap()
+    }
+
+    #[test]
+    fn test_send_task_records_the_exact_call_line() {
+        let (handle, task_rx) = graph_handle();
+
+        handle.send_task(any_task()).unwrap();
+        let sent_at = line!() - 1;
+
+        let callsite = task_rx.recv().unwrap().get_callsite();
+        assert_eq!(callsite.line_number, sent_at);
+        assert_eq!(callsite.file_path, std::path::PathBuf::from(file!()));
+        assert_eq!(callsite.callsite_name, "Probe");
+    }
+
+    // A helper that calls `send_task` is the call site, not the helper's caller.
+    fn send_from_helper(handle: &PacketHandle) -> u32 {
+        handle.send_task(any_task()).unwrap();
+        line!() - 1
+    }
+
+    #[test]
+    fn test_send_task_records_its_direct_caller() {
+        let (handle, task_rx) = graph_handle();
+
+        let helper_line = send_from_helper(&handle);
+
+        assert_eq!(
+            task_rx.recv().unwrap().get_callsite().line_number,
+            helper_line
+        );
+    }
+
+    // A helper marked `#[track_caller]` passes its own caller on.
+    #[track_caller]
+    fn forward(handle: &PacketHandle) {
+        handle.send_task(any_task()).unwrap();
+    }
+
+    #[test]
+    fn test_send_task_through_a_track_caller_helper_records_the_helper_call() {
+        let (handle, task_rx) = graph_handle();
+
+        forward(&handle);
+        let forwarded_at = line!() - 1;
+
+        assert_eq!(
+            task_rx.recv().unwrap().get_callsite().line_number,
+            forwarded_at
+        );
+    }
+
+    #[test]
+    fn test_send_task_records_no_call_site_with_graph_mode_off() {
+        let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
+        let (notif_tx, _) = crossbeam::channel::bounded::<Notif>(10);
+        let handle = PacketHandle::new(task_tx, notif_tx, false);
+
+        handle.send_task(any_task()).unwrap();
+
+        assert!(task_rx.recv().unwrap().callsite.is_none());
     }
 
     #[test]
@@ -697,11 +837,11 @@ mod tests_packet_handle {
         let notif = Log::log("Test notification".to_string(), "Main");
 
         // Act
-        handle.send_notification(notif);
+        handle.send_notification(notif).unwrap();
 
         // Assert - notification is still sent correctly
         let received = notif_rx.recv().unwrap();
-        assert_eq!(received.notif_type.inner(), "Log");
+        assert_eq!(received.notif_type(), "Log");
     }
 }
 
@@ -720,8 +860,8 @@ mod tests_notif_log {
         let notif = Log::log(message, log_file);
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "Log");
-        assert_eq!(notif.notif_receiver.inner(), "Logging");
+        assert_eq!(notif.notif_type(), "Log");
+        assert_eq!(notif.notif_receiver(), "Logging");
     }
 
     #[test]
@@ -747,7 +887,7 @@ mod tests_notif_log {
 
         // Assert
         let log_ref = notif.notif_core.as_any().downcast_ref::<Log>().unwrap();
-        assert_eq!(log_ref.logfile.inner(), "CustomLog");
+        assert_eq!(log_ref.logfile(), "CustomLog");
     }
 
     #[test]
@@ -759,8 +899,8 @@ mod tests_notif_log {
         let notif = Log::err(error_message);
 
         // Assert
-        assert_eq!(notif.notif_type.inner(), "Error");
-        assert_eq!(notif.notif_receiver.inner(), "Logging");
+        assert_eq!(notif.notif_type(), "Error");
+        assert_eq!(notif.notif_receiver(), "Logging");
     }
 
     #[test]
@@ -770,7 +910,7 @@ mod tests_notif_log {
 
         // Assert
         let log_ref = notif.notif_core.as_any().downcast_ref::<Log>().unwrap();
-        assert_eq!(log_ref.logfile.inner(), "Error");
+        assert_eq!(log_ref.logfile(), "Error");
     }
 
     #[test]
@@ -810,14 +950,13 @@ mod tests_notif_log {
     }
 
     #[test]
-    fn test_log_invalid_logfile_panics() {
-        // Arrange & Act - Log file must be alphanumeric
-        assert!(
-            std::panic::catch_unwind(|| {
-                let _ = Log::log("msg".to_string(), "Invalid/File");
-            })
-            .is_err()
-        );
+    fn test_log_keeps_unchecked_logfile_name() {
+        // Arrange & Act - the logger decides when it writes, so Log keeps the name as written
+        let notif = Log::log("msg".to_string(), "Invalid/File");
+
+        // Assert
+        let log_ref = notif.notif_core.as_any().downcast_ref::<Log>().unwrap();
+        assert_eq!(log_ref.logfile(), "Invalid/File");
     }
 
     #[test]

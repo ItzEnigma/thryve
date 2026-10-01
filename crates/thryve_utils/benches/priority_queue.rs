@@ -56,7 +56,7 @@ fn make_queue(
 }
 
 fn no_op_task() -> Task {
-    Task::new("Bench", 1, TaskJob::new(TaskResult::default))
+    Task::new("Bench", 1, TaskJob::new(TaskResult::default)).expect("valid task name")
 }
 
 /// Pushes `total_tasks` (split across `pushers` threads) and pops the same

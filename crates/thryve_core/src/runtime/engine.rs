@@ -324,9 +324,23 @@ impl Engine {
 
     /// Finalizes the engine and shuts down all components.
     ///
-    /// Sets the exit flag, finalizes the plugin manager, processes
-    /// any remaining notifications, and cleans up the observer
-    /// manager. This should be called during service shutdown.
+    /// In order, it:
+    ///
+    /// 1. sets the exit flag;
+    /// 2. finalizes the plugin manager, which stops and joins the worker threads and cleans up
+    ///    the plugins;
+    /// 3. processes any remaining notifications;
+    /// 4. finalizes the observer manager, which stops and joins the notification sorter and
+    ///    cleans up the observers;
+    /// 5. writes the final lines (and the metrics, when enabled) to the logger, then stops it;
+    /// 6. joins every observer thread, the logger's included, so no engine thread is left.
+    ///
+    /// It also works on a half-built engine, which is how a failed startup stops what it
+    /// started. Parts that never started are skipped, and without a logger the status lines are
+    /// skipped too. A `Fin` task result calls this from inside [`run_once`](Self::run_once).
+    ///
+    /// Each observer's loop must return once its exit flag is set, or step 6 waits for it
+    /// forever.
     ///
     /// # Example
     ///
@@ -343,17 +357,34 @@ impl Engine {
 
         let logger = self.obs_manager.finalize();
 
-        let notif = Log::log("Engine Finalized".to_string(), "Main");
-        logger.obs_queue.push(notif);
+        if let Some(logger) = &logger {
+            let notif = Log::log("Engine Finalized".to_string(), "Main");
+            logger.obs_queue.push(notif);
+        }
 
         if self.is_debug_enabled && self.is_metric_calc_enabled {
             let metrics_readable = self.metrics.calculate_metrics();
 
-            let notif = Log::log(metrics_readable, "Debug");
-            logger.obs_queue.push(notif);
+            if let Some(logger) = &logger {
+                let notif = Log::log(metrics_readable, "Debug");
+                logger.obs_queue.push(notif);
+            }
         }
 
-        logger.clean_up();
+        if let Some(logger) = &logger {
+            logger.clean_up(Some(logger.clone()));
+        }
+
+        for _ in 0..self.obs_manager.threadpool.workers.len() {
+            if let Some(handle) = self.obs_manager.threadpool.workers.pop()
+                && !handle.is_finished()
+            {
+                let res = handle.join();
+                if res.is_err() {
+                    continue;
+                }
+            }
+        }
     }
 
     /// Pauses the engine.
@@ -413,9 +444,9 @@ impl Engine {
     ///
     /// * `task_result` - Tuple of task ID and result
     pub fn handle_result(&mut self, task_result: (u64, TaskResult)) {
-        let result = task_result.1;
+        let mut result = task_result.1;
 
-        if let Some(next_task) = result.next_task {
+        if let Some(next_task) = result.next_task.take() {
             if self.is_debug_enabled && self.is_metric_calc_enabled {
                 self.manage_metrics_tasks(&next_task);
             }
@@ -437,20 +468,21 @@ impl Engine {
             self.obs_manager.forward_notif(notif);
         }
 
-        let result_type = result.result_type.inner();
-        let result_message = result.message;
-        let log_file = result.log_msg_to_file.inner();
+        let result_message = std::mem::take(&mut result.message);
+        let result_type = result.result_type();
+        let log_file = result.log_msg_to_file();
 
         if result_type.is_empty() {
             if !result_message.is_empty() {
-                panic!(
-                    "Result type cannot be empty because the result message is not empty.\n
-                    found message: {}",
-                    result_message
-                )
+                let notif = Log::err(String::from(
+                    "result type cannot be empty if the result message is not empty",
+                ));
+                self.obs_manager.forward_notif(notif);
             } else if !log_file.is_empty() {
-                panic!("Result type cannot be empty because the result is directed to log a message to a file.\n
-                    The log file found in the result: {}" , log_file)
+                let notif = Log::err(String::from(
+                    "result type cannot be empty if the result should log to a file",
+                ));
+                self.obs_manager.forward_notif(notif);
             }
             return;
         }

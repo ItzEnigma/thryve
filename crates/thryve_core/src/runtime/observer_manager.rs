@@ -34,6 +34,7 @@
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
 use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::errors::{NameInputType, StartupError, ThryveError};
 use thryve_utils::extras::named_input::NamedInput;
 use thryve_utils::packets::notif_log::Log;
 use thryve_utils::queues::seg_queue::QChild;
@@ -43,7 +44,7 @@ use thryve_utils::traits::queue::Queue;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 /// Manager for observers in the Thryve runtime.
 ///
@@ -54,6 +55,7 @@ use std::thread;
 /// # Fields
 ///
 /// - `observers`: Mapping of observer types to instances
+/// - `st_handle`: The notification sorter's thread, once it's started
 /// - `threadpool`: Thread pool for processing notifications
 ///
 /// # Thread Pool Sizing
@@ -65,13 +67,19 @@ use std::thread;
 /// # Example
 ///
 /// ```ignore
-/// let manager = ObserverManager::new(&ctx);
-/// manager.load_observer(observer);
+/// let mut manager = ObserverManager::new(&ctx);
+/// manager.load_observer(observer)?;
 /// manager.forward_notif(notification);
 /// ```
 pub struct ObserverManager {
     /// Mapping of observer types to instances.
     observers: HashMap<NamedInput, Arc<Observer>>,
+
+    /// The notification sorter's thread, once it's started. It's kept apart from the thread
+    /// pool's observer threads because [`finalize`](Self::finalize) joins the sorter before it
+    /// stops the observers, while the observer threads are joined only at the very end.
+    st_handle: Option<JoinHandle<()>>,
+
     /// Thread pool for processing notifications.
     pub threadpool: ThreadPool<QChild, Notif>,
 }
@@ -103,7 +111,8 @@ impl ObserverManager {
 
         ObserverManager {
             observers: HashMap::new(),
-            threadpool: ThreadPool::new(num_workers, queue, ctx.packet_handle(), None),
+            st_handle: None,
+            threadpool: ThreadPool::new(num_workers, queue, ctx.packet_handle()),
         }
     }
 
@@ -114,31 +123,38 @@ impl ObserverManager {
     /// the notification's receiver type. The thread exits gracefully
     /// when the engine signals for shutdown.
     ///
+    /// The sorter copies the observer map when it starts, so load every observer first.
+    /// A notification for an observer that doesn't exist is logged to `Error.log` (when the
+    /// logger exists) and dropped, never a panic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::ThreadInit`] if the sorter thread can't be started.
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// manager.init_obs_sorter_thread();
+    /// manager.init_obs_sorter_thread()?;
     /// // Sorter thread now routing notifications
     /// ```
-    pub fn init_obs_sorter_thread(&mut self) {
+    pub fn init_obs_sorter_thread(&mut self) -> Result<(), ThryveError> {
         let mut arc_observers: HashMap<NamedInput, Arc<Observer>> = HashMap::new();
         let queue = Arc::clone(&self.threadpool.main_queue);
         let exit_flag = Arc::clone(&self.threadpool.pool_exit_flag());
 
         for observer in self.observers.values() {
-            arc_observers.insert(
-                NamedInput::new(observer.obs_type.inner()),
-                Arc::clone(observer),
-            );
+            arc_observers.insert(observer.obs_type_input().clone(), Arc::clone(observer));
         }
 
+        let thread_name = "ObsSorterThread".to_string();
         let handle = thread::Builder::new()
-            .name("ObsSorterThread".to_string())
+            .name(thread_name.clone())
             .spawn(move || {
                 loop {
                     if exit_flag.load(Ordering::SeqCst) {
                         // Non-fatal: if logger not found, send to main queue instead
-                        if let Some(logger) = arc_observers.get(&NamedInput::new("Logging")) {
+                        let obs_type = NamedInput::new_logging();
+                        if let Some(logger) = arc_observers.get(&obs_type) {
                             let notif =
                                 Log::log("Obs Sorter Thread Finalized...".to_string(), "Main");
                             logger.obs_queue.push(notif);
@@ -147,20 +163,19 @@ impl ObserverManager {
                         while !queue.main_queue.is_empty() {
                             if let Some(obj) = queue.main_queue.pop() {
                                 // Non-fatal: if target observer not found, skip the notification
-                                if let Some(target_obs) = arc_observers.get(&obj.notif_receiver) {
+                                if let Some(target_obs) = arc_observers.get(obj.notif_receiver()) {
                                     target_obs.obs_queue.push(obj);
                                 } else {
                                     // Log the missing observer notification
                                     let notif = Log::log(
                                         format!(
                                             "Observer not found for notification: {}",
-                                            obj.notif_receiver.inner()
+                                            obj.notif_receiver()
                                         ),
                                         "Error",
                                     );
-                                    if let Some(logger) =
-                                        arc_observers.get(&NamedInput::new("Logging"))
-                                    {
+                                    let obs_type = NamedInput::new_logging();
+                                    if let Some(logger) = arc_observers.get(&obs_type) {
                                         logger.obs_queue.push(notif);
                                     }
                                 }
@@ -181,54 +196,44 @@ impl ObserverManager {
                     }
 
                     // Non-fatal: if target observer not found, skip the notification
-                    if let Some(target_obs) = arc_observers.get(&obj.notif_receiver) {
+                    if let Some(target_obs) = arc_observers.get(obj.notif_receiver()) {
                         target_obs.obs_queue.push(obj);
                     } else {
                         // Log the missing observer notification
                         let notif = Log::log(
                             format!(
                                 "Observer not found for notification: {}",
-                                obj.notif_receiver.inner()
+                                obj.notif_receiver()
                             ),
                             "Error",
                         );
-                        if let Some(logger) = arc_observers.get(&NamedInput::new("Logging")) {
+                        let obs_type = NamedInput::new_logging();
+                        if let Some(logger) = arc_observers.get(&obs_type) {
                             logger.obs_queue.push(notif);
                         }
                     }
                 }
             })
-            .unwrap_or_else(|e| panic!("Failed to spawn observer sorter thread: {}", e));
+            .map_err(|e| StartupError::ThreadInit {
+                thread_name,
+                source: e,
+            })?;
 
-        self.threadpool.add_worker(handle);
-    }
+        self.st_handle = Some(handle);
 
-    /// Checks if an observer of the specified type exists.
-    ///
-    /// # Arguments
-    ///
-    /// * `obs_type` - The observer type to check
-    ///
-    /// # Returns
-    ///
-    /// `true` if an observer of the given type exists.
-    fn check_observer(&self, obs_type: &NamedInput) -> bool {
-        self.observers.contains_key(obs_type)
+        Ok(())
     }
 
     /// Forwards a notification to the main queue.
     ///
-    /// Validates that the target observer exists, then pushes the
-    /// notification to the main queue for processing by the sorter
-    /// thread.
+    /// Pushes the notification to the main queue for processing by the sorter thread. It
+    /// doesn't check the receiver: the sorter does. A notification for an observer that doesn't
+    /// exist is logged to `Error.log` (when the logger exists) and dropped. That also covers a
+    /// half-built engine being finalized after a failed startup, which may have no logger at all.
     ///
     /// # Arguments
     ///
     /// * `notif` - The notification to forward
-    ///
-    /// # Panics
-    ///
-    /// Panics if the target observer does not exist.
     ///
     /// # Example
     ///
@@ -236,13 +241,6 @@ impl ObserverManager {
     /// manager.forward_notif(notification);
     /// ```
     pub fn forward_notif(&mut self, notif: Notif) {
-        assert!(
-            self.check_observer(&notif.notif_receiver),
-            "Observer Manager Cannot Find Requested Observer: {}.
-            Check that the receiver of the notification is written correctly.",
-            notif.notif_receiver
-        );
-
         self.threadpool.main_queue.push(notif);
     }
 
@@ -268,64 +266,106 @@ impl ObserverManager {
 
     /// Loads a new observer into the manager.
     ///
-    /// Starts the observer's thread and adds it to the observers
-    /// hashmap, keyed by its type.
+    /// Adds the observer to the observers hashmap, keyed by its type, and
+    /// then starts its thread.
     ///
     /// # Arguments
     ///
     /// * `observer` - The observer to load
     ///
+    /// # Errors
+    ///
+    /// Returns [`ThryveError::Startup`] with:
+    /// - [`StartupError::RegisterDuplicate`] if an observer of the same type is already loaded.
+    ///   Nothing is added or started.
+    /// - [`StartupError::ThreadInit`] if the observer's thread can't be started. The observer
+    ///   is removed from the hashmap again, so the manager is left as it was.
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// manager.load_observer(observer);
+    /// manager.load_observer(observer)?;
     /// ```
-    pub fn load_observer(&mut self, observer: Observer) {
+    pub fn load_observer(&mut self, observer: Observer) -> Result<(), ThryveError> {
         let x = Arc::new(observer);
-        self.threadpool.run_thread_obs(Arc::clone(&x));
-        self.observers
-            .insert(NamedInput::new(x.obs_type.inner()), x);
+        let obs_type = x.obs_type_input().clone();
+
+        if self.observers.contains_key(&obs_type) {
+            return Err(StartupError::RegisterDuplicate {
+                name: obs_type.inner().to_string(),
+                kind: NameInputType::ObsType,
+            }
+            .into());
+        }
+
+        self.observers.insert(obs_type.clone(), x.clone());
+
+        let thread_spawn_res = self.threadpool.run_thread_obs(x.clone());
+        if let Err(e) = thread_spawn_res {
+            self.observers.remove(&obs_type);
+
+            return Err(e.into());
+        }
+
+        Ok(())
     }
 
     /// Finalizes the observer manager.
     ///
-    /// Sets the exit flag, finalizes the thread pool, processes
-    /// any remaining notifications, and cleans up all observers.
-    /// Returns the logger observer for final logging.
+    /// In order, it:
+    ///
+    /// 1. takes the logger out of the registry and sets its exit flag;
+    /// 2. finalizes the thread pool, which tells the sorter to stop and wakes it;
+    /// 3. joins the sorter, so every notification it routes reaches its observer's queue
+    ///    before the observers stop;
+    /// 4. cleans up every other observer, which tells its thread to stop and sends its queue's
+    ///    final line to the logger;
+    /// 5. writes a final line to the logger.
+    ///
+    /// The observer threads aren't joined here: [`Engine::finalize`] joins them once it has
+    /// stopped the logger too. On a half-built engine, the parts that never started (the
+    /// sorter, the logger) are skipped.
+    ///
+    /// [`Engine::finalize`]: crate::runtime::engine::Engine::finalize
     ///
     /// # Returns
     ///
-    /// The logger observer for final logging operations.
+    /// The logger observer for final logging operations, or `None` if it was never loaded
+    /// (a startup that failed before the logger started).
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let logger = manager.finalize();
-    /// logger.obs_queue.push(final_notification);
+    /// if let Some(logger) = manager.finalize() {
+    ///     logger.obs_queue.push(final_notification);
+    /// }
     /// ```
-    /// Finalizes the observer manager.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the Logging observer is not found in the registry,
-    /// which indicates a fatal configuration error.
-    pub fn finalize(&mut self) -> Arc<Observer> {
-        let logger = self
-            .observers
-            .remove(&NamedInput::new("Logging"))
-            .expect("Failed to find Logging observer during finalize - this is a fatal error");
-        logger.exit_flag.store(true, Ordering::SeqCst);
+    pub fn finalize(&mut self) -> Option<Arc<Observer>> {
+        let obs_type = NamedInput::new_logging();
+        let logger = self.observers.remove(&obs_type);
+
+        if let Some(logger) = &logger {
+            logger.clone().exit_flag.store(true, Ordering::SeqCst);
+        }
 
         self.threadpool.finalize_obs(logger.clone());
 
+        // A sorter that panicked was already reported by the panic hook. Its join error is
+        // dropped, so that the shutdown goes on.
+        if let Some(handle) = self.st_handle.take() {
+            let _ = handle.join();
+        }
+
         if !self.observers.is_empty() {
             for (_, observer) in self.observers.drain() {
-                observer.clean_up();
+                observer.clean_up(logger.clone());
             }
         }
 
-        let notif = Log::log("Observer manager Finalized".to_string(), "Main");
-        logger.obs_queue.push(notif);
+        if let Some(logger) = &logger {
+            let notif = Log::log("Observer manager Finalized".to_string(), "Main");
+            logger.obs_queue.push(notif);
+        }
 
         logger
     }

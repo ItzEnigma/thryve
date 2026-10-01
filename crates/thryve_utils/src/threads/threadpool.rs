@@ -36,6 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crate::bases::observer::Observer;
+use crate::errors::StartupError;
 use crate::extras::thread_local::{self, tl_set_current_task_fingerprint};
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
 use crate::res::TaskResult;
@@ -59,17 +60,19 @@ use crate::traits::{packets::Packet, queue::Queue};
 /// - `pool_exit_flag`: Flag for graceful shutdown
 /// - `pool_pause_flag`: Flag for pause/resume
 /// - `main_queue`: The queue being processed
-/// - `res_tx`: Optional result sender for task completion
 /// - `packet_handle`: Handle for sending notifications
+///
+/// The plugin pool's workers need a sender for task results and the observer pool's don't, so
+/// the pool doesn't store one: [`run_threads_plugins`](Self::run_threads_plugins) takes it.
 ///
 /// # Example
 ///
 /// ```ignore
 /// // Thread pools are typically created by the engine
-/// let pool = ThreadPool::new(worker_count, queue, packet_handle, result_sender);
-/// pool.run_threads_plugins(); // For plugin tasks
+/// let mut pool = ThreadPool::new(worker_count, queue, packet_handle);
+/// pool.run_threads_plugins(result_sender)?; // For plugin tasks
 /// // or
-/// pool.run_thread_obs(observer); // For observers
+/// pool.run_thread_obs(observer)?; // For observers
 /// ```
 pub struct ThreadPool<Q, P> {
     /// Number of worker threads to spawn.
@@ -82,8 +85,6 @@ pub struct ThreadPool<Q, P> {
     pub pool_pause_flag: Arc<AtomicBool>,
     /// The queue being processed.
     pub main_queue: Arc<Q>,
-    /// Optional result sender for task completion.
-    pub res_tx: Option<Arc<Sender<(u64, TaskResult)>>>,
     /// Handle for sending notifications.
     packet_handle: PacketHandle,
     /// Phantom data for the packet type.
@@ -97,15 +98,14 @@ where
     /// Creates a new thread pool.
     ///
     /// Initializes a new thread pool with the specified number of
-    /// worker threads, queue, packet handle, and optional result
-    /// sender. If `num_workers` is 0, no thread pool is created.
+    /// worker threads, queue and packet handle. If `num_workers` is 0,
+    /// no thread pool is created.
     ///
     /// # Arguments
     ///
     /// * `num_workers` - Number of worker threads (0 disables the pool)
     /// * `queue` - The queue to process
     /// * `packet_handle` - Handle for sending notifications
-    /// * `res_tx` - Optional result sender for task completion
     ///
     /// # Returns
     ///
@@ -115,14 +115,9 @@ where
     ///
     /// ```ignore
     /// // Thread pools are typically created by the engine
-    /// let pool = ThreadPool::new(4, queue, packet_handle, result_sender);
+    /// let pool = ThreadPool::new(4, queue, packet_handle);
     /// ```
-    pub fn new(
-        num_workers: usize,
-        queue: Q,
-        packet_handle: PacketHandle,
-        res_tx: Option<Arc<Sender<(u64, TaskResult)>>>,
-    ) -> Self {
+    pub fn new(num_workers: usize, queue: Q, packet_handle: PacketHandle) -> Self {
         // Adopt the queue's own shutdown flag rather than allocating a
         // separate one -- see Queue::exit_flag's doc comment for why two
         // independent flags here is a shutdown race waiting to happen.
@@ -134,7 +129,6 @@ where
             pool_exit_flag,
             pool_pause_flag: Arc::new(AtomicBool::new(false)),
             main_queue: Arc::new(queue),
-            res_tx,
             packet_handle,
             _marker: PhantomData,
         }
@@ -165,31 +159,41 @@ where
     /// back through the result channel. Threads exit when the
     /// pool exit flag is set.
     ///
+    /// # Arguments
+    ///
+    /// * `res_tx` - Sender for the task results, which the engine reads. Every worker gets a
+    ///   clone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::ThreadInit`] if a worker thread can't be started. Workers
+    /// started before the failing one keep running.
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// pool.run_threads_plugins();
+    /// pool.run_threads_plugins(result_sender)?;
     /// // Worker threads now processing tasks
     /// ```
-    pub fn run_threads_plugins(&mut self) {
+    pub fn run_threads_plugins(
+        &mut self,
+        res_tx: Arc<Sender<(u64, TaskResult)>>,
+    ) -> Result<(), StartupError> {
         for i in 0..self.num_workers {
             let queue = Arc::clone(&self.main_queue);
-            let res_tx = self
-                .res_tx
-                .clone()
-                .expect("TaskResult Sender Has to be Present!");
             let exit_flag = Arc::clone(&self.pool_exit_flag);
             let tx = self.packet_handle.clone();
+            let res_tx = res_tx.clone();
 
             let thread_name = format!("plugin-worker-{}", i);
             let handle = thread::Builder::new()
-                .name(thread_name)
+                .name(thread_name.clone())
                 .spawn(move || {
                     thread_local::tl_set_worker_park_idx(i);
                     loop {
                         if exit_flag.load(Ordering::SeqCst) {
                             let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                            tx.send_notification(notif);
+                            tx.send_status(notif);
                             break;
                         }
 
@@ -201,7 +205,7 @@ where
                         // task -- recheck before treating it as real work.
                         if exit_flag.load(Ordering::SeqCst) {
                             let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                            tx.send_notification(notif);
+                            tx.send_status(notif);
                             break;
                         }
 
@@ -214,15 +218,20 @@ where
                             if let Err(e) = res_tx.send(res_container) {
                                 let notif =
                                     Log::log(format!("Failed to send result: {}", e), "Error");
-                                tx.send_notification(notif);
+                                tx.send_status(notif);
                             }
                         }
                     }
                 })
-                .unwrap_or_else(|e| panic!("Failed to spawn plugin worker thread: {}", e));
+                .map_err(|e| StartupError::ThreadInit {
+                    thread_name,
+                    source: e,
+                })?;
 
             self.workers.push(handle);
         }
+
+        Ok(())
     }
 
     /// Starts a worker thread for processing an observer.
@@ -235,23 +244,34 @@ where
     ///
     /// * `obs` - The observer to run
     ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::ThreadInit`] if the observer's thread can't be started.
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// pool.run_thread_obs(logger_observer);
+    /// pool.run_thread_obs(logger_observer)?;
     /// // Observer thread now processing notifications
     /// ```
-    pub fn run_thread_obs(&mut self, obs: Arc<Observer>) {
+    pub fn run_thread_obs(&mut self, obs: Arc<Observer>) -> Result<(), StartupError> {
         let arc_obs = Arc::clone(&obs);
 
+        let thread_name = obs.obs_type().to_string();
+
         let handle = thread::Builder::new()
-            .name(format!("{}", obs.obs_type))
+            .name(thread_name.clone())
             .spawn(move || {
                 arc_obs.run_loop(arc_obs.clone());
             })
-            .unwrap_or_else(|e| panic!("Failed to spawn observer worker thread: {}", e));
+            .map_err(|e| StartupError::ThreadInit {
+                thread_name,
+                source: e,
+            })?;
 
         self.workers.push(handle);
+
+        Ok(())
     }
 
     /// Returns the number of worker threads.
@@ -309,9 +329,9 @@ where
 
     /// Finalizes the plugin thread pool.
     ///
-    /// Sets the exit flag, finalizes the main queue, and sends
-    /// a notification indicating completion. This should be called
-    /// during engine shutdown.
+    /// Sets the exit flag, finalizes the main queue (which wakes any parked worker), joins every
+    /// worker thread, and sends a notification indicating completion. This should be called
+    /// during engine shutdown. A pool whose workers were never started has nothing to join.
     ///
     /// # Example
     ///
@@ -323,38 +343,45 @@ where
         self.pool_exit_flag.store(true, Ordering::SeqCst);
         self.main_queue.finalize(None);
 
+        // A worker that panicked was already reported by the panic hook. Its join error is
+        // dropped, so that the other workers are still joined and the shutdown goes on.
         for handle in self.workers.drain(..) {
-            if !handle.is_finished() {
-                handle.join().expect("Could not join on plugin thread");
-            }
+            let _ = handle.join();
         }
 
         let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     /// Finalizes the observer thread pool.
     ///
-    /// Sets the exit flag, finalizes the main queue with the
-    /// logger, and sends a notification. This should be called
-    /// during engine shutdown.
+    /// Sets the exit flag (which tells the notification sorter to stop), finalizes the main
+    /// queue (which wakes the sorter), and sends a notification to the logger. This should be
+    /// called during engine shutdown.
+    ///
+    /// It doesn't join any thread. The observers are told to stop only later, by their
+    /// `clean_up`, so a join here would wait forever. The observer manager joins the sorter
+    /// right after this call, and the engine joins the observer threads at the very end.
     ///
     /// # Arguments
     ///
-    /// * `logger` - The logger observer for draining notifications
+    /// * `logger` - The logger observer for the final notifications, or `None` if it was never
+    ///   loaded; the status lines are skipped then
     ///
     /// # Example
     ///
     /// ```ignore
-    /// pool.finalize_obs(logger.clone());
-    /// // Observer threads will exit gracefully
+    /// pool.finalize_obs(Some(logger.clone()));
+    /// // The sorter will exit gracefully
     /// ```
-    pub fn finalize_obs(&mut self, logger: Arc<Observer>) {
+    pub fn finalize_obs(&mut self, logger: Option<Arc<Observer>>) {
         self.pool_exit_flag.store(true, Ordering::SeqCst);
-        self.main_queue.finalize(Some(logger.clone()));
+        self.main_queue.finalize(logger.clone());
 
-        let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
-        logger.obs_queue.push(notif);
+        if let Some(logger) = &logger {
+            let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
+            logger.obs_queue.push(notif);
+        }
     }
 
     /// Pauses the thread pool.
@@ -372,7 +399,7 @@ where
     /// ```
     pub fn pause(&mut self) {
         self.pool_pause_flag.store(true, Ordering::SeqCst);
-        self.main_queue.pause();
+        self.main_queue.pause()
     }
 
     /// Resumes the thread pool.
@@ -388,6 +415,6 @@ where
     /// ```
     pub fn resume(&mut self) {
         self.pool_pause_flag.store(false, Ordering::SeqCst);
-        self.main_queue.resume();
+        self.main_queue.resume()
     }
 }

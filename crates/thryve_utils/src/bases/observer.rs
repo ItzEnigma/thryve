@@ -33,6 +33,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::errors::{NameInputType, NamingError};
 use crate::extras::{jobs::ObsJob, named_input::NamedInput};
 use crate::packets::packet_handle::PacketHandle;
 use crate::queues::seg_queue::QChild;
@@ -48,8 +49,7 @@ use crate::traits::queue::Queue;
 ///
 /// # Fields
 ///
-/// - `obs_name`: Unique identifier for the observer
-/// - `obs_type`: Type classifier for routing notifications
+/// - `obs_type`: Type classifier for routing notifications; it identifies the observer and must be unique
 /// - `obs_queue`: Dedicated queue for receiving notifications
 /// - `obs_core`: Core logic implementing custom observer behavior
 /// - `exit_flag`: Atomic flag for graceful shutdown coordination
@@ -63,10 +63,8 @@ use crate::traits::queue::Queue;
 /// // passing the core logic to Observer::new along with a run function
 /// ```
 pub struct Observer {
-    /// Unique identifier for the observer.
-    pub obs_name: String,
     /// Type classifier for routing notifications to the correct observer.
-    pub obs_type: NamedInput,
+    obs_type: NamedInput,
     /// Dedicated queue for receiving notifications.
     pub obs_queue: QChild,
     /// Core logic implementing custom observer behavior.
@@ -84,14 +82,13 @@ impl ObsB for Observer {}
 impl Observer {
     /// Creates a new observer with the specified configuration.
     ///
-    /// Initializes a new observer instance with the given name, type, core logic,
+    /// Initializes a new observer instance with the given type, core logic,
     /// run function, and packet handle. The observer starts with its exit flag
     /// set to `false`, indicating it is ready to process notifications.
     ///
     /// # Arguments
     ///
-    /// * `obs_name` - Unique identifier for the observer
-    /// * `obs_type` - Type classifier for routing notifications
+    /// * `obs_type` - Type classifier for routing notifications; it identifies the observer and must be unique
     /// * `obs_core` - Core logic implementing custom observer behavior
     /// * `obs_job`  - Closure that runs the observer's main processing loop
     /// * `tx` - Packet handle for communicating with the engine
@@ -99,20 +96,20 @@ impl Observer {
     /// # Returns
     ///
     /// A new `Observer` instance configured with the provided parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NamingError::NameEmpty`] if `obs_type` is empty, or
+    /// [`NamingError::NameContainsControlChar`] if it contains a control character. The
+    /// error's kind is `NameInputType::ObsType`.
     pub fn new(
-        obs_name: &str,
         obs_type: &str,
         obs_core: Arc<dyn ObsLogic>,
         obs_job: ObsJob,
         tx: PacketHandle,
-    ) -> Self {
-        if obs_type.is_empty() {
-            panic!("The field `obs_type` in the Observer cannot be empty");
-        }
-
-        Self {
-            obs_name: obs_name.to_string(),
-            obs_type: NamedInput::new(obs_type),
+    ) -> Result<Self, NamingError> {
+        Ok(Self {
+            obs_type: NamedInput::new(obs_type, NameInputType::ObsType)?,
             // Capacity 1: this observer's own dedicated thread (run via
             // `run_loop`) is the only thread that ever pops from obs_queue.
             obs_queue: QChild::new(1, tx.clone()),
@@ -120,7 +117,7 @@ impl Observer {
             exit_flag: AtomicBool::new(false),
             tx,
             obs_job,
-        }
+        })
     }
 
     /// Gracefully shuts down the observer.
@@ -131,9 +128,15 @@ impl Observer {
     ///
     /// This method should be called during engine shutdown to ensure proper
     /// resource cleanup and orderly termination of the observer.
-    pub fn clean_up(self: &Arc<Self>) {
+    ///
+    /// # Arguments
+    ///
+    /// * `logger` - The logger, which receives the queue's "Obs Queue Finalized" line, or `None`
+    ///   to skip the line (a half-built engine after a failed startup may have no logger). For
+    ///   the logger's own clean-up, pass the logger itself.
+    pub fn clean_up(self: &Arc<Self>, logger: Option<Arc<Observer>>) {
         self.exit_flag.store(true, Ordering::SeqCst);
-        self.obs_queue.finalize(Some(self.clone()));
+        self.obs_queue.finalize(logger);
         self.obs_core.clean_up(self.clone());
     }
 
@@ -150,5 +153,58 @@ impl Observer {
     pub fn run_loop(&self, arc_obs: Arc<Observer>) {
         // Take the ObsJob and replace it with a default one (similar to Task::process)
         self.obs_job.call_once(arc_obs);
+    }
+
+    /// Returns the observer's type, which identifies it and routes notifications to it.
+    pub fn obs_type(&self) -> &str {
+        self.obs_type.inner()
+    }
+
+    /// Returns the observer's type as a checked name.
+    ///
+    /// For Thryve's own crates, which key their maps by checked names. Not part of the public API.
+    #[doc(hidden)]
+    pub fn obs_type_input(&self) -> &NamedInput {
+        &self.obs_type
+    }
+}
+
+impl Observer {
+    /// Creates the topology handler's observer, of type `TopologyHandler`.
+    ///
+    /// The type is a fixed name, so this can't fail. Use [`Observer::new`] for any other observer.
+    pub fn new_topo_handler(
+        obs_core: Arc<dyn ObsLogic>,
+        obs_job: ObsJob,
+        tx: PacketHandle,
+    ) -> Self {
+        let obs_type = NamedInput::new_topo_handler();
+        Self {
+            obs_type,
+            // Capacity 1: this observer's own dedicated thread (run via
+            // `run_loop`) is the only thread that ever pops from obs_queue.
+            obs_queue: QChild::new(1, tx.clone()),
+            obs_core,
+            exit_flag: AtomicBool::new(false),
+            tx,
+            obs_job,
+        }
+    }
+
+    /// Creates the logger's observer, of type `Logging`.
+    ///
+    /// The type is a fixed name, so this can't fail. Use [`Observer::new`] for any other observer.
+    pub fn new_logging(obs_core: Arc<dyn ObsLogic>, obs_job: ObsJob, tx: PacketHandle) -> Self {
+        let obs_type = NamedInput::new_logging();
+        Self {
+            obs_type,
+            // Capacity 1: this observer's own dedicated thread (run via
+            // `run_loop`) is the only thread that ever pops from obs_queue.
+            obs_queue: QChild::new(1, tx.clone()),
+            obs_core,
+            exit_flag: AtomicBool::new(false),
+            tx,
+            obs_job,
+        }
     }
 }

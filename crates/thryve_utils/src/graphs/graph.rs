@@ -29,7 +29,7 @@
 //! # Usage
 //!
 //! The graph is automatically populated when graph visualization is enabled
-//! in the debugging configuration. The [`TopologyHandlerObserver`](crate::topology_handler::TopologyHandlerObserver)
+//! in the debugging configuration. The topology handler (`TopologyHandlerObserver`, in `thryve_observers`)
 //! receives notifications about new nodes and edges and maintains the graph.
 //!
 //! # Example
@@ -63,6 +63,15 @@ use crate::graphs::callsite::TaskCallSite;
 ///
 /// - `callsite`: The call site information for this node
 /// - `fingerprint`: A unique identifier for this node
+/// - `failure`: Why graph mode turned off, set only on the failure node
+///
+/// # The failure node
+///
+/// When graph mode fails, the topology handler adds one last node, made by
+/// [`TopologyNode::failure`]. It carries the reason in `failure`, and an edge leads to it from the
+/// node where the failure happened, when that's known. Nothing is recorded after it, so a
+/// viewer can show where the graph ends and why. Normal nodes don't have the field in the
+/// exported file, so exports without a failure look exactly as before.
 ///
 /// # Example
 ///
@@ -73,7 +82,6 @@ use crate::graphs::callsite::TaskCallSite;
 ///
 /// let callsite = TaskCallSite::new(
 ///     PathBuf::from("src/my_module.rs"),
-///     "my_crate::my_module".to_string(),
 ///     42,
 ///     "MyTask".to_string(),
 /// );
@@ -86,6 +94,9 @@ pub struct TopologyNode {
     pub callsite: TaskCallSite,
     /// A unique identifier for this node.
     pub fingerprint: String,
+    /// Why graph mode turned off. Set only on the failure node; see [`TopologyNode::failure`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 /// The task topology graph.
@@ -97,7 +108,7 @@ pub struct TopologyNode {
 ///
 /// # Fields
 ///
-/// - `enabled`: Whether topology tracking is enabled
+/// - `enabled`: Whether the graph still takes new nodes and edges
 /// - `graph`: The underlying petgraph StableGraph
 /// - `graph_node_indices`: A map from fingerprints to node indices for O(1) lookup
 /// - `workspace_root`: The workspace root path for relative path computation
@@ -112,7 +123,10 @@ pub struct TopologyNode {
 /// ```
 #[derive(Default, Serialize, Deserialize)]
 pub struct TaskTopology {
-    /// Whether topology tracking is enabled.
+    /// Whether the graph still takes new nodes and edges.
+    ///
+    /// The topology handler starts it on. It turns off once the failure node is recorded, so the
+    /// failure is the last thing in the graph.
     pub enabled: bool,
     /// The underlying petgraph StableGraph.
     pub graph: StableGraph<TopologyNode, u64>,
@@ -188,7 +202,8 @@ impl TaskTopology {
     ///
     /// # Returns
     ///
-    /// A clone of the node if it exists, or a default `TopologyNode` otherwise.
+    /// A clone of the node if it exists, or a default `TopologyNode` otherwise (also when the
+    /// stored index no longer points into the graph).
     ///
     /// # Example
     ///
@@ -199,11 +214,35 @@ impl TaskTopology {
     /// let node = topology.get_node("fingerprint_123");
     /// ```
     pub fn get_node(&self, fingerprint: &str) -> TopologyNode {
-        if let Some(&node_index) = self.graph_node_indices.get(fingerprint) {
-            self.graph[node_index].clone()
-        } else {
-            TopologyNode::default()
-        }
+        self.node_index(fingerprint)
+            .and_then(|node_index| self.graph.node_weight(node_index))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Returns the index of the node with the given fingerprint, if that node is in the graph.
+    ///
+    /// Unlike [`get_node_index`](Self::get_node_index), a missing node, or a stored index that no
+    /// longer points into the graph, gives `None` instead of an index that belongs to another
+    /// node.
+    ///
+    /// # Arguments
+    ///
+    /// * `fingerprint` - The fingerprint of the node
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use thryve_utils::graphs::graph::TaskTopology;
+    ///
+    /// let topology = TaskTopology::default();
+    /// assert!(topology.node_index("fingerprint_123").is_none());
+    /// ```
+    pub fn node_index(&self, fingerprint: &str) -> Option<NodeIndex> {
+        self.graph_node_indices
+            .get(fingerprint)
+            .copied()
+            .filter(|&node_index| self.graph.contains_node(node_index))
     }
 
     /// Retrieves the edge index between two nodes.
@@ -325,7 +364,6 @@ impl TopologyNode {
     ///
     /// let callsite = TaskCallSite::new(
     ///     PathBuf::from("src/my_module.rs"),
-    ///     "my_crate::my_module".to_string(),
     ///     42,
     ///     "MyTask".to_string(),
     /// );
@@ -336,6 +374,34 @@ impl TopologyNode {
         Self {
             callsite,
             fingerprint,
+            failure: None,
+        }
+    }
+
+    /// The fingerprint of the failure node. Real fingerprints are hashes, so it can't collide
+    /// with one.
+    pub const FAILURE_FINGERPRINT: &'static str = "graph_mode_failure";
+
+    /// Creates the failure node, which records why graph mode turned off.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - Why graph mode turned off
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use thryve_utils::graphs::graph::TopologyNode;
+    ///
+    /// let node = TopologyNode::failure("the topology lock was poisoned".to_string());
+    /// assert_eq!(node.fingerprint, TopologyNode::FAILURE_FINGERPRINT);
+    /// assert_eq!(node.failure.as_deref(), Some("the topology lock was poisoned"));
+    /// ```
+    pub fn failure(reason: String) -> Self {
+        Self {
+            callsite: TaskCallSite::default(),
+            fingerprint: Self::FAILURE_FINGERPRINT.to_string(),
+            failure: Some(reason),
         }
     }
 }

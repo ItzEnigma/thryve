@@ -7,5 +7,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The Windows service wrapper around the engine.
+
 #[allow(clippy::module_inception)]
 pub mod service;

@@ -18,8 +18,6 @@
     serde.workspace = true
     toml = "1.1.2"
     petgraph.workspace = true
-    backtrace = "0.3"
-    anyhow.workspace = true
     thiserror.workspace = true
 
 [dev-dependencies]

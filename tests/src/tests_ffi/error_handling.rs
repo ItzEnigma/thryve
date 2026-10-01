@@ -29,11 +29,11 @@ mod tests_config_errors {
     }
 
     #[test]
-    fn test_config_from_file_with_invalid_max_priority_does_not_panic_across_ffi() {
-        // Arrange — a config file with max_priority >= 15 must fall back to
-        // defaults rather than panic inside Config::load_config_from_file: a
-        // panic crossing this extern "C" boundary is undefined behavior.
-        // ffi_guard is the backstop if that invariant is ever violated.
+    fn test_config_from_file_with_invalid_max_priority_returns_null() {
+        // Arrange — a config file with max_priority >= 15 must be rejected with
+        // NULL rather than panic inside Config::load_config_from_file: a panic
+        // crossing this extern "C" boundary is undefined behavior. ffi_guard is
+        // the backstop if that invariant is ever violated.
         use std::fs::File;
         use std::io::Write;
 
@@ -46,56 +46,49 @@ mod tests_config_errors {
 
         let path_cstring = CString::new(file_path.to_str().unwrap()).unwrap();
 
-        // Act — must return a usable default config, not panic/abort the process.
+        // Act — must return NULL, not panic/abort the process.
         let config = unsafe { thryve_config_from_file(path_cstring.as_ptr()) };
 
         // Assert
         assert!(
-            !config.is_null(),
-            "thryve_config_from_file should fall back to defaults instead of panicking"
+            config.is_null(),
+            "thryve_config_from_file should reject an invalid file with NULL"
         );
 
         // Cleanup
-        thryve_config_free(config);
         let _ = std::fs::remove_file(&file_path);
     }
 
     #[test]
-    fn test_config_from_file_with_invalid_utf8_returns_default() {
+    fn test_config_from_file_with_invalid_utf8_returns_null() {
         // Arrange — create a C string with invalid UTF-8 (3 bytes + null terminator)
         let invalid_utf8_bytes = b"\xFF\xFE\x00";
         let invalid_path = std::ffi::CStr::from_bytes_with_nul(invalid_utf8_bytes).unwrap();
         let path_ptr = invalid_path.as_ptr();
 
-        // Act — thryve_config_from_file converts invalid UTF-8 to empty string, then loads defaults
+        // Act — invalid UTF-8 can't name the file, so it's rejected like a missing file
         let config = unsafe { thryve_config_from_file(path_ptr) };
 
-        // Assert — should return a valid config (defaults), not NULL
+        // Assert
         assert!(
-            !config.is_null(),
-            "thryve_config_from_file should return a default config for invalid UTF-8 path"
+            config.is_null(),
+            "thryve_config_from_file should return NULL for an invalid UTF-8 path"
         );
-
-        // Cleanup
-        thryve_config_free(config);
     }
 
     #[test]
-    fn test_config_from_file_with_nonexistent_file_returns_default() {
+    fn test_config_from_file_with_nonexistent_file_returns_null() {
         // Arrange
         let path = CString::new("/nonexistent/path/config.toml").unwrap();
 
-        // Act — thryve_config_from_file falls back to defaults on IO error
+        // Act — a file that can't be read has no fallback to the defaults
         let config = unsafe { thryve_config_from_file(path.as_ptr()) };
 
-        // Assert — should return a valid config (defaults), not NULL
+        // Assert
         assert!(
-            !config.is_null(),
-            "thryve_config_from_file should return a default config for nonexistent file"
+            config.is_null(),
+            "thryve_config_from_file should return NULL for a nonexistent file"
         );
-
-        // Cleanup
-        thryve_config_free(config);
     }
 
     #[test]
@@ -439,37 +432,6 @@ mod tests_plugin_errors {
     extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) {}
 
     #[test]
-    fn test_plugin_create_with_null_name_returns_null() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
-
-        // Act
-        let plugin = unsafe {
-            thryve_plugin_create(
-                std::ptr::null(),
-                CString::new("TestType").unwrap().as_ptr(),
-                std::ptr::null_mut(),
-                pkt,
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
-            )
-        };
-
-        // Cleanup
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert!(
-            plugin.is_null(),
-            "thryve_plugin_create should return NULL for null name"
-        );
-    }
-
-    #[test]
     fn test_plugin_create_with_null_type_returns_null() {
         // Arrange
         let config = thryve_config_default();
@@ -479,7 +441,6 @@ mod tests_plugin_errors {
         // Act
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 pkt,
@@ -505,7 +466,6 @@ mod tests_plugin_errors {
         // Act
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -541,37 +501,6 @@ mod tests_observer_errors {
     extern "C" fn dummy_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
     #[test]
-    fn test_observer_create_with_null_name_returns_null() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
-
-        // Act
-        let observer = unsafe {
-            thryve_observer_create(
-                std::ptr::null(),
-                CString::new("TestType").unwrap().as_ptr(),
-                std::ptr::null_mut(),
-                pkt,
-                dummy_obs_cleanup,
-                dummy_obs_job,
-            )
-        };
-
-        // Cleanup
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert!(
-            observer.is_null(),
-            "thryve_observer_create should return NULL for null name"
-        );
-    }
-
-    #[test]
     fn test_observer_create_with_null_type_returns_null() {
         // Arrange
         let config = thryve_config_default();
@@ -581,7 +510,6 @@ mod tests_observer_errors {
         // Act
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 pkt,
@@ -607,7 +535,6 @@ mod tests_observer_errors {
         // Act
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -966,7 +893,6 @@ mod tests_task_create_null_job {
         // but we can test with null core_ptr and a valid entry point
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(), // null core_ptr
                 pkt,

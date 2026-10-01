@@ -56,7 +56,7 @@ use thryve_utils::res::TaskResult;
 let task = Task::new("MyTask", 2, TaskJob::new(|| {
     // Task execution logic
     TaskResult::new("Success", "Task completed".to_string(), "Main")
-}));
+})).expect("valid task name");
 ```
 
 **Task Properties:**
@@ -80,7 +80,7 @@ let result = TaskResult::new("Success", "Done".to_string(), "Main");
 // Chained result — executes the next task once this one completes
 let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
     TaskResult::new("Ok", "".to_string(), "Main")
-}));
+})).expect("valid task name");
 let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
 ```
 
@@ -166,9 +166,13 @@ Service initialization and execution.
 
 ## Configuration
 
-Configuration is loaded from a TOML file or uses defaults.
+Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
+
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
+
+This complete file holds the defaults:
 
 ```toml
 [service]
@@ -226,14 +230,16 @@ use thryve_utils::packets::task::Task;
 use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::res::TaskResult;
 use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::errors::ThryveError;
 
-fn send_calculation(handle: &PacketHandle) {
+fn send_calculation(handle: &PacketHandle) -> Result<(), ThryveError> {
     let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
         let result = 2 + 2;
         TaskResult::new("Success", format!("Result: {}", result), "Main")
-    }));
+    }))?;
 
-    handle.send_task(task);
+    // Fails only once the engine is gone; the task is then dropped.
+    handle.send_task(task)
 }
 ```
 
@@ -253,7 +259,7 @@ use thryve_utils::res::TaskResult;
 struct MyPlugin;
 
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
@@ -262,7 +268,7 @@ impl MyPlugin {
         // access to whatever state the plugin needs.
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
 
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
 
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
@@ -295,7 +301,7 @@ use thryve_utils::packets::packet_handle::PacketHandle;
 struct MyObserver;
 
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
 
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
@@ -316,7 +322,7 @@ impl MyObserver {
             }
         });
 
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 
@@ -342,6 +348,7 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
+use thryve_utils::errors::get_err;
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::res::TaskResult;
@@ -349,12 +356,12 @@ use thryve_utils::impl_as_any;
 
 struct MyPlugin;
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
         TaskResult::new("Success", "Task A completed".to_string(), "Main")
@@ -367,7 +374,7 @@ impl PlgLogic for MyPlugin {
 
 struct MyObserver;
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
             loop {
@@ -386,7 +393,7 @@ impl MyObserver {
                 // Handle the notification.
             }
         });
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 impl ObsLogic for MyObserver {
@@ -398,8 +405,8 @@ fn main() {
     let config = Config::load_def_config();
     let (svc, mut ctx) = run_service::create_service(config);
 
-    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
-    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
+    let plugin = MyPlugin::new(ctx.packet_handle());
+    let observer = MyObserver::new(ctx.packet_handle());
 
     ctx.plugins.push(plugin);
     ctx.observers.push(observer);
@@ -407,7 +414,13 @@ fn main() {
     // A TestFile is added to the logging files.
     ctx.logging_file_names.push("TestFile".to_string());
 
-    run_service::try_run_as_service(svc, ctx);
+    // A failed start has already stopped every thread it started, and its error is in
+    // Error.log once the log folder exists. Under the service manager stderr goes nowhere,
+    // but the exit code is recorded.
+    if let Err(e) = run_service::try_run_as_service(svc, ctx) {
+        eprintln!("{}", get_err(&e));
+        std::process::exit(1);
+    }
 }
 ```
 
@@ -422,6 +435,7 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
+use thryve_utils::errors::get_err;
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::res::TaskResult;
@@ -429,12 +443,12 @@ use thryve_utils::impl_as_any;
 
 struct MyPlugin;
 impl MyPlugin {
-    pub fn new(tx: PacketHandle, plg_name: &str) -> Plugin {
+    pub fn new(tx: PacketHandle) -> Plugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
         let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
-        Plugin::new(plg_name, "MyPluginType", core, tx, entry_point)
+        Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
         TaskResult::new("Success", "Task A completed".to_string(), "Main")
@@ -447,7 +461,7 @@ impl PlgLogic for MyPlugin {
 
 struct MyObserver;
 impl MyObserver {
-    pub fn new(tx: PacketHandle, obs_name: &str) -> Observer {
+    pub fn new(tx: PacketHandle) -> Observer {
         let core = Arc::new(Self);
         let run_fn = ObsJob::new(move |observer: Arc<Observer>| {
             loop {
@@ -466,7 +480,7 @@ impl MyObserver {
                 // Handle the notification.
             }
         });
-        Observer::new(obs_name, "MyObserverType", core, run_fn, tx)
+        Observer::new("MyObserverType", core, run_fn, tx).expect("valid observer type")
     }
 }
 impl ObsLogic for MyObserver {
@@ -478,8 +492,8 @@ fn main() {
     let config = Config::load_def_config();
     let mut ctx = run_interactive::summon_requirements(config);
 
-    let plugin = MyPlugin::new(ctx.packet_handle(), "MyPlugin");
-    let observer = MyObserver::new(ctx.packet_handle(), "MyObserver");
+    let plugin = MyPlugin::new(ctx.packet_handle());
+    let observer = MyObserver::new(ctx.packet_handle());
 
     ctx.plugins.push(plugin);
     ctx.observers.push(observer);
@@ -487,8 +501,13 @@ fn main() {
     // A TestFile is added to the logging files.
     ctx.logging_file_names.push("TestFile".to_string());
 
-    if let Some(handle) = run_interactive::run_interactive(ctx) {
-        let _ = handle.join();
+    match run_interactive::run_interactive(ctx) {
+        Ok(handle) => {
+            let _ = handle.join();
+        }
+        // A failed start has already stopped every thread it started. Its error is also
+        // written to Error.log once the log folder exists.
+        Err(e) => eprintln!("{}", get_err(&e)),
     }
 }
 ```
@@ -499,13 +518,20 @@ When enabled via the `visual_graph` configuration option, Thryve automatically t
 
 ### How It Works
 
-1. **Call Site Capture**: When a task is created, the system captures a stack backtrace to determine the exact file path, module path, and line number
+1. **Call Site Capture**: When a task is sent (`send_task`) or chained (`chain`), the system records the file path and line number of that call. The compiler passes them in (`#[track_caller]`), so they're exact in every build, with or without debug info. A function of yours that wraps `send_task` is the call site for every task it sends, unless you mark it `#[track_caller]` too.
 2. **Fingerprint Generation**: Each call site is assigned a unique fingerprint based on its location
 3. **Graph Building**: The [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) receives notifications and builds a graph where:
    - **Nodes** represent call sites where tasks are created
    - **Edges** represent parent-child task relationships
    - **Edge weights** represent how many times a call path was taken
 4. **Visualization**: On shutdown, the graph is exported to a RON file and a GUI viewer is launched
+
+### When Graph Mode Fails
+
+Graph mode is a debugging aid, so a failure in it never stops the engine:
+
+- If the graph would be wrong from some point on, graph mode turns off until the program restarts, with a warning in `Error.log`. That happens when an edge points to a node that isn't in the graph, or the graph's lock was poisoned. The graph recorded so far is still exported. It ends with a *failure node* that says why, linked from the node where the failure happened.
+- Smaller problems are handled on the spot and noted in `Error.log`: outside a cargo workspace, file paths stay absolute; a failed export or viewer launch is reported, and the shutdown goes on.
 
 ### Enabling Graph Visualization
 
@@ -523,7 +549,7 @@ The graph visualization system consists of:
 
 | Component | Description |
 |-----------|-------------|
-| [`TaskCallSite`](thryve_utils/src/graphs/callsite.rs) | Represents a single call site with file path, module path, line number |
+| [`TaskCallSite`](thryve_utils/src/graphs/callsite.rs) | Represents a single call site with file path, line number and task name |
 | [`TaskTopology`](thryve_utils/src/graphs/graph.rs) | Maintains the graph structure using petgraph's StableGraph |
 | [`TopologyModifier`](thryve_utils/src/packets/notif_topology.rs) | Notification type for adding nodes and edges |
 | [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) | Observer that maintains the graph and exports it on shutdown |

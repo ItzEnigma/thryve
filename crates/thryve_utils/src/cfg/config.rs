@@ -15,9 +15,44 @@
 //!
 //! # Loading Configuration
 //!
-//! Configuration can be loaded from a TOML file using [`load_config_from_file`],
-//! or default values can be used via [`load_def_config`]. When loading from a
-//! file, any missing or invalid values fall back to defaults.
+//! Configuration can be loaded from a TOML file using
+//! [`Config::load_config_from_file`], or default values can be used via
+//! [`Config::load_def_config`].
+//!
+//! Loading a file never falls back to the defaults. A file must set every key of every section;
+//! a missing key, an unknown or misspelled key, or a value of the wrong type is a parse error with
+//! its line and column. After parsing, every value is checked, and a file with invalid values is
+//! rejected with an error that lists all of them. Whether to use the defaults instead is the
+//! caller's choice. The `Default` values documented on each field are what
+//! [`Config::load_def_config`] uses.
+//!
+//! ```toml
+//! [service]
+//! can_stop = true
+//! can_pause = true
+//!
+//! [engine]
+//! sleep_tick_rate = 4
+//!
+//! [threads]
+//! worker_count = 4
+//!
+//! [pipes]
+//! task_pipe_capacity = 1024
+//! notif_pipe_capacity = 1024
+//! res_pipe_capacity = 1024
+//!
+//! [tasks]
+//! max_priority = 4
+//! aging_interval = 3
+//!
+//! [debugging]
+//! is_debugging = false
+//! wait_before_execution = 10
+//! visual_graph = false
+//! calculate_metrics = false
+//! log_tasks = false
+//! ```
 //!
 //! # Configuration Hierarchy
 //!
@@ -31,9 +66,12 @@
 
 use serde::Deserialize;
 
-use std::fs;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use crate::errors::ThryveUtilsError;
+use crate::errors::{ConfigError, ConfigViolations, RuleError, ThryveError};
 
 /// Root configuration structure for the Thryve Task Manager application.
 ///
@@ -53,15 +91,19 @@ use crate::errors::ThryveUtilsError;
 ///
 /// ```no_run
 /// use thryve_utils::cfg::config::Config;
+/// use thryve_utils::errors::get_err;
 ///
-/// // Load from file with fallback to defaults
-/// let config = Config::load_config_from_file("config.toml");
+/// // Load from file; falling back to the defaults is the caller's choice
+/// let config = Config::load_config_from_file("config.toml").unwrap_or_else(|e| {
+///     eprintln!("{}", get_err(&e));
+///     Config::load_def_config()
+/// });
 ///
 /// // Or use default configuration
 /// let default_config = Config::load_def_config();
 /// ```
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// Service behavior configuration.
     pub service: SerivceConfig,
@@ -115,9 +157,15 @@ impl Config {
 
     /// Loads configuration from a TOML file.
     ///
-    /// Attempts to parse the specified file as TOML configuration. If the
-    /// file cannot be read or parsed, returns the default configuration
-    /// instead of failing.
+    /// Reads and parses the file, then checks every value. It never falls back to the defaults:
+    /// if the caller wants them after an error, it asks for them with [`Config::load_def_config`].
+    ///
+    /// The file must set every key of every section. The checks reject values that would break
+    /// the engine, and all failing values are reported together:
+    ///
+    /// - `engine.sleep_tick_rate`, `threads.worker_count`, `tasks.aging_interval` and the three
+    ///   `pipes` capacities must be at least 1;
+    /// - `tasks.max_priority` must be 14 or lower.
     ///
     /// # Arguments
     ///
@@ -125,43 +173,106 @@ impl Config {
     ///
     /// # Returns
     ///
-    /// A `Config` instance loaded from the file, or defaults if the file
-    /// can't be read/parsed, or if `max_priority` is out of range (0-14).
+    /// The `Config` loaded from the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThryveError::Config`] with:
+    /// - [`ConfigError::FileRead`] if the file can't be read;
+    /// - [`ConfigError::FileParse`] if it isn't valid TOML, or a key is missing, unknown or of the
+    ///   wrong type. TOML stops at the first such problem, and its message gives the line and
+    ///   column;
+    /// - [`ConfigError::ConfigViolation`] if it parses but has invalid values. The message lists
+    ///   every one of them.
     ///
     /// # Example
     ///
     /// ```no_run
     /// use thryve_utils::cfg::config::Config;
     ///
-    /// let config = Config::load_config_from_file("config.toml");
+    /// let config = Config::load_config_from_file("config.toml")?;
+    /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
-    pub fn load_config_from_file(path: &str) -> Config {
-        let config = match read_config_file(path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                // Non-fatal: fall back to defaults if config file cannot be read
-                // This allows the application to start even if the config file is missing or corrupted
-                eprintln!(
-                    "Warning: Failed to load config from '{}': {}. Using defaults.",
-                    path, e
-                );
-                Config::load_def_config()
-            }
-        };
+    pub fn load_config_from_file(path: impl AsRef<Path>) -> Result<Config, ThryveError> {
+        let path: PathBuf = path.as_ref().to_path_buf();
+        let config = read_config_file(path.clone())?;
 
-        // max_priority must stay below 15 for priority encoding to hold. This is
-        // file-provided data, not an internal invariant, so fall back to defaults
-        // instead of panicking (a panic here would cross the FFI boundary as UB
-        // when triggered via thryve_config_from_file).
-        if config.tasks.max_priority >= 15 {
-            eprintln!(
-                "Warning: Maximum Task Priority cannot exceed 15 (got {}). Using defaults.",
-                config.tasks.max_priority
-            );
-            return Config::load_def_config();
+        let mut violations = Vec::new();
+
+        let sleep_tick_rate_is = config.engine.sleep_tick_rate;
+        let worker_count_is = config.threads.worker_count;
+        let task_pipe_cap_is = config.pipes.task_pipe_capacity;
+        let notif_pipe_cap_is = config.pipes.notif_pipe_capacity;
+        let res_pipe_cap_is = config.pipes.res_pipe_capacity;
+        let max_priority_is = config.tasks.max_priority;
+        let aging_interval_is = config.tasks.aging_interval;
+
+        let sleep_tick_rate_should_be: usize = 1;
+        let worker_count_should_be: usize = 1;
+        let task_pipe_cap_should_be: usize = 1;
+        let notif_pipe_cap_should_be: usize = 1;
+        let res_pipe_cap_should_be: usize = 1;
+        let max_priority_should_be: usize = 15;
+        let aging_interval_should_be: usize = 1;
+
+        if sleep_tick_rate_is < sleep_tick_rate_should_be as u64 {
+            violations.push(RuleError::SleepTickRate(
+                sleep_tick_rate_is,
+                sleep_tick_rate_should_be,
+            ));
         }
 
-        config
+        if worker_count_is < worker_count_should_be {
+            violations.push(RuleError::WorkerCount(
+                worker_count_is,
+                worker_count_should_be,
+            ));
+        }
+
+        if task_pipe_cap_is < task_pipe_cap_should_be {
+            violations.push(RuleError::TaskPipeCap(
+                task_pipe_cap_is,
+                task_pipe_cap_should_be,
+            ));
+        }
+
+        if notif_pipe_cap_is < notif_pipe_cap_should_be {
+            violations.push(RuleError::NotifPipeCap(
+                notif_pipe_cap_is,
+                notif_pipe_cap_should_be,
+            ));
+        }
+
+        if res_pipe_cap_is < res_pipe_cap_should_be {
+            violations.push(RuleError::ResultPipeCap(
+                res_pipe_cap_is,
+                res_pipe_cap_should_be,
+            ));
+        }
+
+        if max_priority_is >= max_priority_should_be as u8 {
+            violations.push(RuleError::MaxPriority(
+                max_priority_is,
+                max_priority_should_be,
+            ));
+        }
+
+        if aging_interval_is < aging_interval_should_be as u64 {
+            violations.push(RuleError::AgingInterval(
+                aging_interval_is,
+                aging_interval_should_be,
+            ));
+        }
+
+        if !violations.is_empty() {
+            return Err(ConfigError::ConfigViolation {
+                path,
+                violation: ConfigViolations { types: violations },
+            }
+            .into());
+        }
+
+        Ok(config)
     }
 }
 
@@ -176,7 +287,7 @@ impl Config {
 /// - `can_stop`: Whether the service accepts stop commands
 /// - `can_pause`: Whether the service accepts pause/resume commands
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SerivceConfig {
     /// Whether the service accepts stop commands.
     ///
@@ -210,7 +321,7 @@ impl Default for SerivceConfig {
 ///
 /// - `sleep_tick_rate`: Milliseconds to sleep when idle
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct EngineConfig {
     /// Milliseconds to sleep when the engine has no tasks.
     ///
@@ -239,7 +350,7 @@ impl Default for EngineConfig {
 ///
 /// - `worker_count`: Number of worker threads in the pool
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct ThreadConfig {
     /// Number of worker threads for task execution.
     ///
@@ -271,7 +382,7 @@ impl Default for ThreadConfig {
 /// - `notif_pipe_capacity`: Buffer size for notification channel
 /// - `res_pipe_capacity`: Buffer size for result channel
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct PipeConfig {
     /// Buffer size for the task channel.
     ///
@@ -310,7 +421,7 @@ impl Default for PipeConfig {
 /// - `max_priority`: Highest valid priority level (0-14)
 /// - `aging_interval`: Seconds before priority boost is applied
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct TaskConfig {
     /// Maximum valid task priority level.
     ///
@@ -351,7 +462,7 @@ impl Default for TaskConfig {
 /// - `is_debugging`: Whether debugging mode is enabled
 /// - `wait_before_execution`: Seconds to wait before starting execution
 #[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DebugConfig {
     /// Whether debugging mode is enabled.
     ///
@@ -409,7 +520,8 @@ impl Default for DebugConfig {
 /// Reads and parses a TOML configuration file.
 ///
 /// Internal helper that reads the file contents and deserializes them
-/// into a `Config` structure.
+/// into a `Config` structure. It doesn't check the values;
+/// [`Config::load_config_from_file`] does that afterwards.
 ///
 /// # Arguments
 ///
@@ -418,9 +530,17 @@ impl Default for DebugConfig {
 /// # Returns
 ///
 /// * `Ok(Config)` - Parsed configuration on success
-/// * `Err(ThryveUtilsError)` - File I/O or parsing error
-fn read_config_file(path: &str) -> Result<Config, ThryveUtilsError> {
-    let contents = fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&contents).map_err(ThryveUtilsError::ConfigParse)?;
+/// * `Err(ConfigError::FileRead)` - The file couldn't be read
+/// * `Err(ConfigError::FileParse)` - The contents aren't valid TOML, or a key is missing, unknown
+///   or of the wrong type
+fn read_config_file(path: PathBuf) -> Result<Config, ConfigError> {
+    let contents = fs::read_to_string(path.clone()).map_err(|e| ConfigError::FileRead {
+        path: path.clone(),
+        source: e,
+    })?;
+
+    let config: Config =
+        toml::from_str(&contents).map_err(|e| ConfigError::FileParse { path, source: e })?;
+
     Ok(config)
 }

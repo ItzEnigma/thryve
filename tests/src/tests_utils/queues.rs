@@ -44,7 +44,7 @@ mod tests_seg_queue {
         // Assert
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
-        assert!(queue.task_config.is_none());
+        // The observer queue has no task config: its config type is `()`.
     }
 
     #[test]
@@ -159,13 +159,8 @@ mod tests_seg_queue {
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let logger = Arc::new(Observer::new(
-            "logger",
-            "loggertype",
-            obs_core,
-            obs_job,
-            logger_packet_handle,
-        ));
+        let logger =
+            Arc::new(Observer::new("loggertype", obs_core, obs_job, logger_packet_handle).unwrap());
 
         // Assert initially not exiting
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
@@ -254,7 +249,11 @@ mod tests_priority_queue {
         // Assert
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
-        assert!(queue.task_config.is_some());
+        assert_eq!(queue.task_config.max_priority, config.tasks.max_priority);
+        assert_eq!(
+            queue.task_config.aging_interval,
+            config.tasks.aging_interval
+        );
     }
 
     #[test]
@@ -269,7 +268,8 @@ mod tests_priority_queue {
             "testTask",
             5,
             TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - push task
         queue.push(task);
@@ -278,7 +278,7 @@ mod tests_priority_queue {
         let popped = queue.pop();
 
         // Assert
-        assert_eq!(popped.task_name.inner(), "testTask");
+        assert_eq!(popped.task_name(), "testTask");
     }
 
     #[test]
@@ -297,7 +297,7 @@ mod tests_priority_queue {
         let task = queue.pop();
 
         // Assert
-        assert_eq!(task.task_name.inner(), "Fin");
+        assert_eq!(task.task_name(), "Fin");
     }
 
     #[test]
@@ -372,12 +372,14 @@ mod tests_priority_queue {
             "lowPriority",
             1,
             TaskJob::new(|| TaskResult::new("OK", "low".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let task_high = Task::new(
             "highPriority",
             10,
             TaskJob::new(|| TaskResult::new("OK", "high".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - push in reverse order
         queue.push(task_low);
@@ -388,8 +390,8 @@ mod tests_priority_queue {
         let second = queue.pop();
 
         // Assert
-        assert_eq!(first.task_name.inner(), "highPriority");
-        assert_eq!(second.task_name.inner(), "lowPriority");
+        assert_eq!(first.task_name(), "highPriority");
+        assert_eq!(second.task_name(), "lowPriority");
     }
 
     #[test]

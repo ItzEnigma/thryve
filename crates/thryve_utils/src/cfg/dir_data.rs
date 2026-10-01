@@ -33,7 +33,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use crate::extras::{dir_paths::DirName, named_input::NamedInput};
+use crate::extras::{dir_paths::DirName, named_input::LogFileNamedInput};
 
 /// Static storage for the log directory path, accessible globally.
 ///
@@ -69,7 +69,7 @@ pub struct DirData {
     /// Path to the timestamped log directory.
     pub dir_paths: HashMap<DirName, PathBuf>,
     /// HashMap mapping module types to their log file handles.
-    pub log_hash_map: HashMap<NamedInput, Arc<File>>,
+    pub log_hash_map: HashMap<LogFileNamedInput, Arc<File>>,
 }
 
 impl Default for DirData {
@@ -119,7 +119,7 @@ impl DirData {
     ///
     /// let dir_data = DirData::new(exe_dir, log_dir_path, log_hash_map);
     /// ```
-    pub fn new(exe_dir: PathBuf, log_hash_map: HashMap<NamedInput, Arc<File>>) -> Self {
+    pub fn new(exe_dir: PathBuf, log_hash_map: HashMap<LogFileNamedInput, Arc<File>>) -> Self {
         Self {
             exe_dir,
             dir_paths: HashMap::new(),
@@ -127,6 +127,10 @@ impl DirData {
         }
     }
 
+    /// Records where one of Thryve's folders is.
+    ///
+    /// The log folder is also stored in a global, so the panic hook can find `Error.log` without a
+    /// context. That global is set only once: a later call changes only this `DirData`.
     pub fn set_path(&mut self, dir_name: DirName, file_path: PathBuf) {
         match dir_name {
             DirName::Log => {
@@ -140,8 +144,14 @@ impl DirData {
         }
     }
 
-    pub fn get_dir_path(&self, dir_name: &DirName) -> PathBuf {
-        self.dir_paths[dir_name].clone()
+    /// Returns the path of one of Thryve's folders, or `None` if no path was recorded for
+    /// `dir_name` with [`set_path`](Self::set_path).
+    ///
+    /// Not every folder always exists (the topology folder only in graph mode), so the caller
+    /// decides what a missing one means. Thryve's own callers check once, when they're created,
+    /// and fail startup if a folder they need is missing.
+    pub fn get_dir_path(&self, dir_name: &DirName) -> Option<PathBuf> {
+        self.dir_paths.get(dir_name).cloned()
     }
 
     /// Returns the log directory path from the static storage.

@@ -7,5 +7,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Startup steps: creating the log folder and files, and building the engine with its threads.
+
 #[allow(clippy::module_inception)]
 pub mod init;

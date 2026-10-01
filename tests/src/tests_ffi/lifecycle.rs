@@ -113,7 +113,6 @@ mod tests_ctx_lifecycle {
 
         let plugin = unsafe {
             thryve_plugin_create(
-                std::ffi::CString::new("TestPlugin").unwrap().as_ptr(),
                 std::ffi::CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -147,7 +146,6 @@ mod tests_ctx_lifecycle {
         // Create observer
         let observer = unsafe {
             thryve_observer_create(
-                std::ffi::CString::new("TestObserver").unwrap().as_ptr(),
                 std::ffi::CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -197,7 +195,6 @@ mod tests_plugin_lifecycle {
         // Act — create plugin
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -225,7 +222,6 @@ mod tests_plugin_lifecycle {
         // Act — try to create plugin without packet handle (should fail)
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(), // NULL packet handle
@@ -266,7 +262,6 @@ mod tests_observer_lifecycle {
         // Act — create observer
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -294,7 +289,6 @@ mod tests_observer_lifecycle {
         // Act — try to create observer with null packet handle
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(), // NULL packet handle
@@ -411,7 +405,6 @@ mod tests_full_interactive_lifecycle {
         // 4. Create plugin
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -451,7 +444,6 @@ mod tests_full_interactive_lifecycle {
         // 4. Create plugin
         let plugin = unsafe {
             thryve_plugin_create(
-                CString::new("TestPlugin").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -466,7 +458,6 @@ mod tests_full_interactive_lifecycle {
         // 6. Create observer
         let observer = unsafe {
             thryve_observer_create(
-                CString::new("TestObserver").unwrap().as_ptr(),
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
@@ -658,9 +649,9 @@ mod tests_full_interactive_lifecycle {
             let internal_result = ffi_result_to_result(ffi_result);
 
             // Assert
-            assert_eq!(internal_result.result_type.inner(), "Success");
+            assert_eq!(internal_result.result_type(), "Success");
             assert_eq!(internal_result.message, "Task completed");
-            assert_eq!(internal_result.log_msg_to_file.inner(), "Main");
+            assert_eq!(internal_result.log_msg_to_file(), "Main");
         }
 
         #[test]
@@ -685,9 +676,9 @@ mod tests_full_interactive_lifecycle {
             let internal_result = ffi_result_to_result(ffi_result);
 
             // Assert
-            assert_eq!(internal_result.result_type.inner(), "Chained");
+            assert_eq!(internal_result.result_type(), "Chained");
             assert_eq!(internal_result.message, "Chaining");
-            assert_eq!(internal_result.log_msg_to_file.inner(), "Main");
+            assert_eq!(internal_result.log_msg_to_file(), "Main");
             assert!(internal_result.next_task.is_some());
 
             // NOTE: Do NOT free task here — ffi_result_to_result takes ownership
@@ -714,7 +705,7 @@ mod tests_full_interactive_lifecycle {
             let internal_result = ffi_result_to_result(ffi_result);
 
             // Assert — should not panic, next_task should be None
-            assert_eq!(internal_result.result_type.inner(), "Chained");
+            assert_eq!(internal_result.result_type(), "Chained");
             assert!(internal_result.next_task.is_none());
         }
     }

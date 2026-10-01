@@ -29,12 +29,13 @@
 //! - Plugin results: Results that load new plugins
 
 use std::fmt::Display;
+use std::panic::Location;
+use std::path::PathBuf;
 
 use crate::bases::observer::Observer;
 use crate::bases::plugin::Plugin;
-use crate::extras::named_input::NamedInput;
-use crate::extras::stack::get_task_data;
 use crate::extras::thread_local;
+use crate::graphs::callsite::TaskCallSite;
 use crate::packets::task::Task;
 use crate::traits::packets::Packet;
 
@@ -72,19 +73,19 @@ use crate::traits::packets::Packet;
 /// // Tasked result (chains to next task)
 /// let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
 ///     TaskResult::new("Ok", "".to_string(), "Main")
-/// }));
+/// })).expect("valid task name");
 /// let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main")
 ///     .chain(next_task);
 /// ```
 ///
 #[derive(Default)]
 pub struct TaskResult {
-    /// Type identifier for the result.
-    pub result_type: NamedInput,
+    /// Type identifier for the result. Empty means there's nothing to report.
+    result_type: String,
     /// Human-readable result message.
     pub message: String,
     /// Log file name for the message.
-    pub log_msg_to_file: NamedInput,
+    log_msg_to_file: String,
     /// Optional task to execute next.
     pub next_task: Option<Task>,
     /// Optional observer to spawn.
@@ -126,9 +127,9 @@ impl TaskResult {
     /// ```
     pub fn new(res_type: &str, msg: String, logging_file: &str) -> Self {
         TaskResult {
-            result_type: NamedInput::new(res_type),
+            result_type: res_type.to_string(),
             message: msg,
-            log_msg_to_file: NamedInput::new(logging_file),
+            log_msg_to_file: logging_file.to_string(),
             next_task: None,
             observer: None,
             plugin: None,
@@ -168,7 +169,7 @@ impl TaskResult {
     /// // Create a result and chain a follow-up task
     /// let next_task = Task::new("FollowUp", 1, TaskJob::new(|| {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// }));
+    /// })).expect("valid task name");
     ///
     /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
     ///     .chain(next_task);
@@ -184,23 +185,28 @@ impl TaskResult {
     /// // Create a result and chain a follow-up task
     /// let next_task_1 = Task::new("FollowUp2", 1, TaskJob::new(|| {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// }));
+    /// })).expect("valid task name");
     ///
     ///
     /// let next_task_2 = Task::new("FollowUp2", 1, TaskJob::new(|| {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// }));
+    /// })).expect("valid task name");
     ///
     /// // A double chain should make next_task_2 overwrite next_task_1
     /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
     ///     .chain(next_task_1).chain(next_task_2);
     ///
-    /// assert!(chained_result.next_task.unwrap().task_name.inner() == "FollowUp2");
+    /// assert!(chained_result.next_task.unwrap().task_name() == "FollowUp2");
     /// ```
+    #[track_caller]
     pub fn chain(mut self, mut task: Task) -> Self {
         if thread_local::tl_get_current_task_fingerprint() != String::default() {
-            let backtrace = backtrace::Backtrace::new();
-            let mut callsite = get_task_data(backtrace, task.task_name.to_string());
+            let caller = Location::caller();
+            let file_path = PathBuf::from(caller.file().to_string());
+            let line_num = caller.line();
+            let task_name = task.task_name().to_string();
+
+            let mut callsite = TaskCallSite::new(file_path, line_num, task_name);
 
             let child_fingerprint = callsite.fingerprint();
             let current_task_fingerprint = thread_local::tl_get_current_task_fingerprint();
@@ -236,14 +242,27 @@ impl TaskResult {
 }
 
 impl TaskResult {
+    /// A result of type `Fin`, which tells the engine to shut down.
+    ///
+    /// Its message is written to `Main.log` before the engine finalizes.
     pub fn fin() -> Self {
         TaskResult {
-            result_type: NamedInput::new("Fin"),
+            result_type: "Fin".to_string(),
             message: String::from("finishing capture: starting exit now."),
-            log_msg_to_file: NamedInput::new("Main"),
+            log_msg_to_file: "Main".to_string(),
             next_task: None,
             observer: None,
             plugin: None,
         }
+    }
+
+    /// Returns the result's type. An empty type means there's nothing to report.
+    pub fn result_type(&self) -> &str {
+        &self.result_type
+    }
+
+    /// Returns the name of the log file the message is written to.
+    pub fn log_msg_to_file(&self) -> &str {
+        &self.log_msg_to_file
     }
 }

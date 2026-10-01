@@ -16,79 +16,72 @@
 //! - [`jobs`]: Type aliases for task and observer job closures
 
 pub mod named_input {
-    //! Type-safe wrapper for developer-provided names.
+    //! Checked names for tasks, plugins, observers, notifications and log files.
     //!
-    //! This module provides the [`NamedInput`] type, which wraps a `String`
-    //! and ensures that developer-provided names are always alphanumeric.
-    //! This validation prevents security issues that could arise from
-    //! special characters in names used throughout the system.
+    //! - [`NamedInput`] holds a general name: not empty and without control characters. Names end up
+    //!   in log lines and thread names, and a NUL in a thread name makes spawning panic.
+    //! - [`LogFileNamedInput`] holds a log-file name, which becomes part of a file path: ASCII letters
+    //!   and digits only, and not a Windows device name such as `CON`.
     //!
-    //! # Security
-    //!
-    //! The alphanumeric requirement ensures that names can be safely used
-    //! in file paths, log messages, and other contexts where special
-    //! characters could cause issues.
+    //! Both types can only be built through constructors that check, so holding one means the name
+    //! was checked. Thryve's own fixed names have constructors that take no text and can't fail.
 
-    use std::fmt::Display;
+    use std::{borrow::Borrow, fmt::Display};
 
-    /// Type-safe wrapper for alphanumeric names.
-    ///
-    /// This struct wraps a `String` and ensures that the contained
-    /// value is always alphanumeric. This validation prevents
-    /// security issues that could arise from special characters
-    /// in names used throughout the system.
-    ///
-    /// # Fields
-    ///
-    /// The inner string is private and can only be accessed via
-    /// the [`inner`](NamedInput::inner) method.
+    use crate::errors::{NameInputType, NamingError};
+
+    /// A checked general name: not empty and without control characters.
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
+    /// use thryve_utils::errors::NameInputType;
     /// use thryve_utils::extras::named_input::NamedInput;
     ///
-    /// let name = NamedInput::new("ValidName123");
-    /// println!("Name: {}", name.inner());
+    /// let name = NamedInput::new("Valid-Name 1", NameInputType::TaskName).unwrap();
+    /// assert_eq!(name.inner(), "Valid-Name 1");
     ///
-    /// // This would panic:
-    /// // let invalid = NamedInput::new("Invalid-Name!");
+    /// assert!(NamedInput::new("", NameInputType::TaskName).is_err());
     /// ```
-    #[derive(Clone, PartialEq, Eq, Hash, Default)]
+    #[derive(Clone, PartialEq, Eq, Hash)]
     pub struct NamedInput(String);
 
     impl NamedInput {
-        /// Creates a new `NamedInput` from an alphanumeric string.
-        ///
-        /// Validates that the input contains only alphanumeric characters.
-        /// Panics with a descriptive error message if validation fails.
+        /// Checks `s` and wraps it.
         ///
         /// # Arguments
         ///
-        /// * `s` - The string to wrap (must be alphanumeric)
+        /// * `s` - The name to check
+        /// * `kind` - What the name is for; the error reports it
         ///
-        /// # Panics
+        /// # Errors
         ///
-        /// Panics if the string contains non-alphanumeric characters.
+        /// - [`NamingError::NameEmpty`] if `s` is empty;
+        /// - [`NamingError::NameContainsControlChar`] if `s` contains a control character.
         ///
         /// # Example
         ///
-        /// ```no_run
+        /// ```
+        /// use thryve_utils::errors::{NameInputType, NamingError};
         /// use thryve_utils::extras::named_input::NamedInput;
         ///
-        /// let name = NamedInput::new("ValidName");
+        /// let name = NamedInput::new("ValidName", NameInputType::PlgType)?;
         /// assert_eq!(name.inner(), "ValidName");
-        ///
-        /// // Panics:
-        /// // let invalid = NamedInput::new("Invalid-Name");
+        /// # Ok::<(), NamingError>(())
         /// ```
-        pub fn new(s: &str) -> Self {
-            assert!(
-                s.chars().all(|c| c.is_alphanumeric()),
-                "NamedInput must be alphanumeric. Got '{}'",
-                s
-            );
-            NamedInput(s.to_owned())
+        pub fn new(s: &str, kind: NameInputType) -> Result<Self, NamingError> {
+            if s.is_empty() {
+                return Err(NamingError::NameEmpty { kind });
+            }
+
+            if s.chars().any(|c| c.is_control()) {
+                return Err(NamingError::NameContainsControlChar {
+                    name: s.to_string(),
+                    kind,
+                });
+            }
+
+            Ok(NamedInput(s.to_owned()))
         }
 
         /// Returns a reference to the inner string.
@@ -99,10 +92,11 @@ pub mod named_input {
         ///
         /// # Example
         ///
-        /// ```no_run
+        /// ```
+        /// use thryve_utils::errors::NameInputType;
         /// use thryve_utils::extras::named_input::NamedInput;
         ///
-        /// let name = NamedInput::new("MyName");
+        /// let name = NamedInput::new("MyName", NameInputType::TaskName).unwrap();
         /// assert_eq!(name.inner(), "MyName");
         /// ```
         pub fn inner(&self) -> &str {
@@ -110,7 +104,201 @@ pub mod named_input {
         }
     }
 
+    // Thryve's own fixed names. They take no text, so they can't fail.
+    impl NamedInput {
+        /// `TopologyHandler`: the topology handler's observer type, and the receiver of topology
+        /// notifications.
+        pub fn new_topo_handler() -> Self {
+            NamedInput(String::from("TopologyHandler"))
+        }
+
+        /// `AddNode`: the type of the notification that adds a node to the task graph.
+        pub fn new_topo_add_node() -> Self {
+            NamedInput(String::from("AddNode"))
+        }
+
+        /// `AddEdge`: the type of the notification that adds an edge to the task graph.
+        pub fn new_topo_add_edge() -> Self {
+            NamedInput(String::from("AddEdge"))
+        }
+
+        /// `Logging`: the logger's observer type, and the receiver of log notifications.
+        pub fn new_logging() -> Self {
+            NamedInput(String::from("Logging"))
+        }
+
+        /// `Log`: the type of a regular log notification, from
+        /// [`Log::log`](crate::packets::notif_log::Log::log).
+        pub fn new_logging_log() -> Self {
+            NamedInput(String::from("Log"))
+        }
+
+        /// `Error`: the type of an error log notification, from
+        /// [`Log::err`](crate::packets::notif_log::Log::err).
+        pub fn new_logging_err() -> Self {
+            NamedInput(String::from("Error"))
+        }
+
+        /// `Empty`: the name of the placeholder task from
+        /// [`Task::new_empty`](crate::packets::task::Task::new_empty).
+        pub fn new_empty() -> Self {
+            NamedInput(String::from("Empty"))
+        }
+
+        /// `DefTask`: the name of the default task, from
+        /// [`Task::new_default`](crate::packets::task::Task::new_default).
+        pub fn new_def_task() -> Self {
+            NamedInput(String::from("DefTask"))
+        }
+
+        /// `Fin`: the name of the sentinel task the task queue returns once it's finalized.
+        pub fn new_fin() -> Self {
+            NamedInput(String::from("Fin"))
+        }
+    }
+
+    /// Lets maps keyed by `NamedInput` be searched with plain text. Sound because `Hash` and `Eq`
+    /// come straight from the inner `String`.
+    impl Borrow<str> for NamedInput {
+        fn borrow(&self) -> &str {
+            self.inner()
+        }
+    }
+
     impl Display for NamedInput {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    /// A checked log-file name: ASCII letters and digits only.
+    ///
+    /// It's the key the logger looks files up by. The user's names are stored in uppercase, and so are
+    /// the built-in `MAIN`, `ERROR` and `DEBUG`, so a lookup ignores letter case once the requested name
+    /// is uppercased too. The files on disk keep their normal spelling.
+    #[derive(Clone, PartialEq, Eq, Hash)]
+    pub struct LogFileNamedInput(String);
+
+    impl LogFileNamedInput {
+        /// Checks only the form of `s`: not empty, ASCII letters and digits only.
+        ///
+        /// # Errors
+        ///
+        /// [`NamingError::NameEmpty`] or [`NamingError::LogFileNameASCII`].
+        pub fn new(s: &str) -> Result<Self, NamingError> {
+            validate_input(s)?;
+
+            Ok(LogFileNamedInput(s.to_owned()))
+        }
+
+        /// Checks a log-file name the user registers at startup.
+        ///
+        /// On top of the form check in [`new`](Self::new), the name can't be one of Thryve's own files
+        /// (`Main`, `Error`, `Debug`) or a Windows device name, both compared ignoring case.
+        ///
+        /// # Errors
+        ///
+        /// The errors of [`new`](Self::new), [`NamingError::LogFileNameReservedThryve`] or
+        /// [`NamingError::LogFileNameReserved`].
+        pub fn new_register(s: &str) -> Result<Self, NamingError> {
+            validate_input(s)?;
+
+            if s.eq_ignore_ascii_case("Main")
+                || s.eq_ignore_ascii_case("Error")
+                || s.eq_ignore_ascii_case("Debug")
+            {
+                return Err(NamingError::LogFileNameReservedThryve {
+                    name: s.to_string(),
+                });
+            }
+
+            if is_device_name(s) {
+                return Err(NamingError::LogFileNameReserved {
+                    name: s.to_string(),
+                });
+            }
+
+            Ok(LogFileNamedInput(s.to_owned()))
+        }
+
+        /// The key of Thryve's own Main.log.
+        pub fn new_main() -> Self {
+            Self(String::from("MAIN"))
+        }
+
+        /// The key of Thryve's own Error.log.
+        pub fn new_err() -> Self {
+            Self(String::from("ERROR"))
+        }
+
+        /// The key of Thryve's own Debug.log.
+        pub fn new_debug() -> Self {
+            Self(String::from("DEBUG"))
+        }
+
+        /// Returns a reference to the inner string.
+        ///
+        /// # Returns
+        ///
+        /// A string slice reference to the wrapped value.
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// use thryve_utils::extras::named_input::LogFileNamedInput;
+        ///
+        /// assert_eq!(LogFileNamedInput::new_main().inner(), "MAIN");
+        /// ```
+        pub fn inner(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl Borrow<str> for LogFileNamedInput {
+        fn borrow(&self) -> &str {
+            self.inner()
+        }
+    }
+
+    /// The form check every log-file name gets: not empty, and ASCII letters and digits only.
+    ///
+    /// Allowing nothing else also rules out path separators, dots, spaces, and the superscript
+    /// digits that Windows accepts in device names.
+    fn validate_input(s: &str) -> Result<(), NamingError> {
+        if s.is_empty() {
+            return Err(NamingError::NameEmpty {
+                kind: NameInputType::LogFileName,
+            });
+        }
+
+        if !s.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(NamingError::LogFileNameASCII {
+                name: s.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Returns whether `s` is a Windows reserved device name, ignoring case: `CON`, `PRN`, `AUX`,
+    /// `NUL`, or `COM`/`LPT` followed by one digit.
+    ///
+    /// Older Windows versions treat such a name as the device even with an extension (`NUL.log` is
+    /// the null device), so a log file with that name would lose its lines. The superscript forms
+    /// (`COM¹`) need no check here, because log-file names are ASCII only.
+    fn is_device_name(s: &str) -> bool {
+        let is_port = s.len() == 4
+            && s.get(..3)
+                .is_some_and(|p| p.eq_ignore_ascii_case("COM") || p.eq_ignore_ascii_case("LPT"))
+            && s.as_bytes()[3].is_ascii_digit();
+
+        is_port
+            || ["CON", "PRN", "AUX", "NUL"]
+                .iter()
+                .any(|d| s.eq_ignore_ascii_case(d))
+    }
+
+    impl Display for LogFileNamedInput {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}", self.0)
         }
@@ -185,8 +373,19 @@ pub mod jobs {
             }
         }
 
+        /// A job that does nothing and reports nothing: its result has an empty type, message and log
+        /// file.
         pub fn new_empty() -> Self {
-            TaskJob { inner: Box::new(|| TaskResult::new("", "".to_string(), "")) }
+            TaskJob {
+                inner: Box::new(|| TaskResult::new("", "".to_string(), "")),
+            }
+        }
+
+        /// A job that returns [`TaskResult::fin`], which tells the engine to shut down.
+        pub fn new_fin() -> Self {
+            TaskJob {
+                inner: Box::new(TaskResult::fin),
+            }
         }
 
         /// Calls the task job and returns the result.
@@ -334,13 +533,116 @@ pub mod jobs {
     }
 }
 
-pub mod panic_hook {
+/// The one line format that every line in Thryve's log files uses, and the one way to write it.
+///
+/// The logger observer, [`Ctx::e_log`](crate::cfg::ctx::Ctx::e_log), the topology handler and the
+/// panic hook all build their lines with [`log_line`](log_format::log_line), so `Main.log`,
+/// `Error.log` and the other log files read as one format, whoever wrote a line. They write them
+/// with [`write_line`](log_format::write_line), so a line whose file can't be written goes to
+/// stderr instead of being lost.
+///
+/// Public only because Thryve's other crates use it; it isn't part of the public API.
+#[doc(hidden)]
+pub mod log_format {
     use chrono::{DateTime, Local};
+    use std::fs::File;
+    use std::io::{self, Write};
+    use std::time::SystemTime;
+
+    /// Formats one log line.
+    ///
+    /// `source` says who wrote the line: `LOGGING` for the logger observer, `STARTUP` for a
+    /// failed startup written by [`Ctx::e_log`](crate::cfg::ctx::Ctx::e_log), `TOPOLOGY` for the
+    /// topology handler, and `PANIC` for the panic hook. `event_type` says what kind of line it
+    /// is, such as `Log`, `Error` or `Panic`. The line ends with a newline, so it can be written
+    /// with a single call.
+    ///
+    /// Control characters in `source`, `event_type` and `message` are escaped (a newline becomes
+    /// `\n`, an escape character `\u{1b}`). So one entry stays one line, and a terminal showing
+    /// the log runs no escape codes hidden in a message. Everything else, other alphabets
+    /// included, is kept as it is.
+    ///
+    /// ```text
+    /// Log_Creation: 2024-01-15 10:30:45, [ STARTUP ], Event_Type: Error, Message: failed to start up: ...
+    /// ```
+    ///
+    /// ```
+    /// use std::time::SystemTime;
+    /// use thryve_utils::extras::log_format::log_line;
+    ///
+    /// let line = log_line(SystemTime::now(), "LOGGING", "Log", "first\nsecond\u{1b}[31m");
+    /// assert!(line.ends_with("Message: first\\nsecond\\u{1b}[31m\n"));
+    /// assert_eq!(line.lines().count(), 1);
+    /// ```
+    pub fn log_line(
+        timestamp: SystemTime,
+        source: &str,
+        event_type: &str,
+        message: &str,
+    ) -> String {
+        let datetime: DateTime<Local> = timestamp.into();
+        format!(
+            "Log_Creation: {}, [ {} ], Event_Type: {}, Message: {}\n",
+            datetime.format("%Y-%m-%d %H:%M:%S"),
+            escape_control(source),
+            escape_control(event_type),
+            escape_control(message),
+        )
+    }
+
+    /// Escapes the control characters in `text` and keeps everything else as it is.
+    fn escape_control(text: &str) -> String {
+        let mut escaped = String::with_capacity(text.len());
+
+        for c in text.chars() {
+            if c.is_control() {
+                escaped.extend(c.escape_default());
+            } else {
+                escaped.push(c);
+            }
+        }
+
+        escaped
+    }
+
+    /// Writes one finished line to `file`.
+    ///
+    /// If the write fails (for example, because the disk is full), the line goes to stderr
+    /// instead, behind a note with the reason. So the line isn't lost, and whoever reads stderr
+    /// can fix the cause:
+    ///
+    /// ```text
+    /// [could not write to its log file: There is not enough space on the disk. (os error 112)] Log_Creation: ...
+    /// ```
+    pub fn write_line(file: &File, line: &str) {
+        let mut writer = file;
+
+        if let Err(e) = writer.write_all(line.as_bytes()) {
+            write_stderr(&format!("[could not write to its log file: {e}] {line}"));
+        }
+    }
+
+    /// Writes `text` to stderr, and ignores a failure.
+    ///
+    /// It's the last place left to report anything, so a failure here has nowhere to go. Unlike
+    /// `eprint!`, which panics when stderr can't be written, this can't fail. In the Windows
+    /// service, stderr goes nowhere.
+    pub fn write_stderr(text: &str) {
+        let _ = io::stderr().lock().write_all(text.as_bytes());
+    }
+}
+
+/// Thryve's panic hook.
+///
+/// `init_panic_hook` replaces Rust's default panic hook with one that writes each panic, with
+/// its time and location, to `Error.log` and to stderr, and then ends the process with exit code 1.
+pub mod panic_hook {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::panic;
     use std::time::SystemTime;
 
+    use super::log_format::{log_line, write_stderr};
     use crate::cfg::dir_data::DirData;
 
     /// Initializes a custom panic hook that writes panic information to the Error.log file.
@@ -370,8 +672,13 @@ pub mod panic_hook {
                 .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
                 .unwrap_or_else(|| "unknown location".to_string());
 
-            // Format timestamp
-            let timestamp: DateTime<Local> = SystemTime::now().into();
+            // One line in the logger's format, written to both Error.log and stderr.
+            let line = log_line(
+                SystemTime::now(),
+                "PANIC",
+                "Panic",
+                &format!("{message} at {location}"),
+            );
 
             // Get the log directory path from the static
             let log_dir = match DirData::get_log_dir_path() {
@@ -387,24 +694,12 @@ pub mod panic_hook {
                 .append(true)
                 .open(&error_file_path)
             {
-                // Write to file
-                let _ = writeln!(
-                    file,
-                    "[PANIC] {}: {} at {}",
-                    timestamp.format("%Y-%m-%d %H:%M:%S%.6f"),
-                    message,
-                    location
-                );
-                let _ = file.flush();
+                let _ = file.write_all(line.as_bytes());
             }
 
-            // Also print to stderr (for non-service mode debugging)
-            eprintln!(
-                "[PANIC] {}: {} at {}",
-                timestamp.format("%Y-%m-%d %H:%M:%S%.6f"),
-                message,
-                location
-            );
+            // Also print to stderr (for non-service mode debugging). `eprint!` would panic if
+            // stderr can't be written, and a panic inside the panic hook aborts the process.
+            write_stderr(&line);
             let _ = std::io::stderr().flush();
             std::process::exit(1);
         }));
@@ -461,135 +756,23 @@ pub mod thread_local {
         CURRENT_TASK_FINGERPRINT.with(|data| data.borrow().clone())
     }
 
+    /// Records the current thread's slot in the worker registry.
+    ///
+    /// A worker thread must call this once, with its own index, before it takes tasks: the queues
+    /// mark that slot while the worker is parked waiting for work.
     pub fn tl_set_worker_park_idx(idx: usize) {
         WORKER_PARK_IDX.with(|c| c.set(idx));
     }
 
+    /// Returns the current thread's slot in the worker registry, as set by
+    /// [`tl_set_worker_park_idx`]. It's 0 on a thread that never set it.
     pub fn tl_get_worker_park_idx() -> usize {
         WORKER_PARK_IDX.with(Cell::get)
     }
 }
-
-/// Stack trace analysis for call site extraction.
-///
-/// This module provides functionality to analyze stack traces and extract
-/// call site information for graph visualization. When a task is created,
-/// a backtrace is captured and this module processes it to determine:
-///
-/// - The source file where the task was created
-/// - The module path within the crate
-/// - The line number of creation
-///
-/// # How It Works
-///
-/// 1. A backtrace is captured at the point of task creation
-/// 2. The backtrace frames are analyzed to find the actual caller
-/// 3. Symbol information is extracted (file path, line number, symbol name)
-/// 4. The module path is parsed from the symbol name
-/// 5. A [`TaskCallSite`](crate::graphs::callsite::TaskCallSite) is constructed
-///
-/// # Frame Skipping
-///
-/// The first 4 frames are skipped to bypass internal Thryve function calls
-/// and reach the actual user code that created the task.
-pub mod stack {
-    use std::path::PathBuf;
-
-    use backtrace::Backtrace;
-
-    use crate::graphs::callsite::TaskCallSite;
-
-    /// Extracts call site information from a backtrace.
-    ///
-    /// This function analyzes the provided backtrace to determine where
-    /// a task was created in the source code. It skips internal Thryve
-    /// frames and extracts file path, module path, line number, and
-    /// symbol name information.
-    ///
-    /// # Arguments
-    ///
-    /// * `backtrace` - The backtrace to analyze
-    /// * `name` - The name of the task being created
-    ///
-    /// # Returns
-    ///
-    /// A [`TaskCallSite`](crate::graphs::callsite::TaskCallSite) containing
-    /// the extracted call site information.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the backtrace cannot be properly analyzed or if the
-    /// expected frame structure is not found.
-    pub fn get_task_data(backtrace: Backtrace, name: String) -> TaskCallSite {
-        // println!("\n=== ALL FRAMES ===");
-        // for (i, frame) in backtrace.frames().iter().enumerate() {
-        //     println!("Frame {}: {:?}", i, frame);
-        //     if let Some(sym) = frame.symbols().first() {
-        //         if let Some(name) = sym.name() {
-        //             println!("  Symbol: {}", name);
-        //         }
-        //         if let Some(file) = sym.filename() {
-        //             println!("  File: {}", file.display());
-        //         }
-        //         if let Some(line) = sym.lineno() {
-        //             println!("  Line: {}", line);
-        //         }
-        //     }
-        // }
-        // println!("==================\n");
-
-        let mut counter: u8 = 0;
-
-        // Iterate through frames to find the actual caller
-        for frame in backtrace.frames() {
-            if counter != 4 {
-                counter += 1;
-                continue;
-            }
-
-            // Get symbol information for this frame
-            if let Some(symbol) = frame.symbols().first()
-                && let Some(filename) = symbol.filename()
-            {
-                // filename is &Path, convert to string and extract just the filename
-                let filename = PathBuf::from(filename.to_string_lossy().to_string());
-
-                if let Some(line_num) = symbol.lineno() {
-                    let symbol_name = symbol
-                        .name()
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    // Parse the module path (everything before the last ::function_name)
-                    let module_path = extract_module_path(&symbol_name);
-
-                    return TaskCallSite::new(filename, module_path, line_num, name);
-                }
-            }
-        }
-
-        panic!("This function: get_task_data got called in a very wrong place");
-    }
-
-    fn extract_module_path(symbol_name: &str) -> String {
-        // Remove common suffixes
-        let cleaned = symbol_name
-            .replace("::{{closure}}", "")
-            .replace("::{{closure}}::{{closure}}", "")
-            .replace("::{anonymous}", "");
-
-        // Split by :: and take all but the last component (the function/method name)
-        let parts: Vec<&str> = cleaned.split("::").collect();
-
-        if parts.len() > 1 {
-            parts[..parts.len() - 1].join("::")
-        } else {
-            cleaned.to_string()
-        }
-    }
-}
-
+/// Finding the executable's folder, and creating the folders Thryve keeps next to it.
 pub mod dir_paths {
+    use crate::{errors::StartupError, extras::misc::get_current_date_time};
     use std::{
         env::current_exe,
         fs::create_dir_all,
@@ -597,12 +780,12 @@ pub mod dir_paths {
         process::Command,
     };
 
-    use crate::errors::ThryveUtilsError;
-    use crate::extras::misc::get_current_date_time;
-
+    /// The folders Thryve creates next to the executable.
     #[derive(Clone, PartialEq, Eq, Hash)]
     pub enum DirName {
+        /// `log/<timestamp>`: this run's log files. Each run gets a new folder.
         Log,
+        /// `topology`: where graph mode writes the task graph.
         Topology,
     }
 
@@ -611,17 +794,13 @@ pub mod dir_paths {
     /// # Returns
     ///
     /// * `Ok(PathBuf)` - The directory path
-    /// * `Err(ThryveUtilsError)` - If `current_exe()` fails
-    pub fn get_current_exec_dir() -> Result<PathBuf, ThryveUtilsError> {
+    /// * `Err(StartupError::RootFolder)` - If `current_exe()` fails; the OS error is its source
+    /// * `Err(StartupError::NoParentFolder)` - If the executable has no parent directory
+    pub fn get_current_exec_dir() -> Result<PathBuf, StartupError> {
         let exe_dir = current_exe()
-            .map_err(ThryveUtilsError::Io)?
+            .map_err(|e| StartupError::RootFolder { source: e })?
             .parent()
-            .ok_or_else(|| {
-                ThryveUtilsError::Io(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Executable has no parent directory",
-                ))
-            })?
+            .ok_or(StartupError::NoParentFolder)?
             .to_path_buf();
 
         Ok(exe_dir)
@@ -636,8 +815,9 @@ pub mod dir_paths {
     /// # Returns
     ///
     /// * `Ok(PathBuf)` - The created directory path
-    /// * `Err(ThryveUtilsError)` - If directory creation fails
-    pub fn create_dir(file_path: DirName) -> Result<PathBuf, ThryveUtilsError> {
+    /// * `Err(StartupError)` - Any error from [`get_current_exec_dir`], or
+    ///   `LogDirCreation` / `TopologyDirCreation` if the directory can't be created (the OS error is its source)
+    pub fn create_dir(file_path: DirName) -> Result<PathBuf, StartupError> {
         let current_root_dir = get_current_exec_dir()?;
 
         match file_path {
@@ -647,11 +827,9 @@ pub mod dir_paths {
                 let log_dir_path = current_root_dir
                     .join("log")
                     .join(datetime.format("%Y_%m_%d_%H_%M").to_string());
-                create_dir_all(&log_dir_path).map_err(|e| {
-                    ThryveUtilsError::DirectoryCreation(format!(
-                        "Failed to create log directory: {}\n{e}",
-                        log_dir_path.display()
-                    ))
+                create_dir_all(&log_dir_path).map_err(|e| StartupError::LogDirCreation {
+                    path: log_dir_path.clone(),
+                    source: e,
                 })?;
 
                 Ok(log_dir_path)
@@ -660,10 +838,10 @@ pub mod dir_paths {
             DirName::Topology => {
                 let topology_dir_path = current_root_dir.join("topology");
                 create_dir_all(&topology_dir_path).map_err(|e| {
-                    ThryveUtilsError::DirectoryCreation(format!(
-                        "Failed to create topology directory: {}\n{e}",
-                        topology_dir_path.display()
-                    ))
+                    StartupError::TopologyDirCreation {
+                        path: topology_dir_path.clone(),
+                        source: e,
+                    }
                 })?;
 
                 Ok(topology_dir_path)
@@ -673,13 +851,14 @@ pub mod dir_paths {
 
     /// Gets the workspace root directory by running `cargo locate-project`.
     ///
-    /// # Panics
+    /// Graph mode uses it to show file paths relative to the workspace.
     ///
-    /// This function panics if:
-    /// - The cargo command fails to execute
-    /// - The output is not valid UTF-8
-    /// - The cargo.toml path has no parent directory
-    pub fn get_workspace_root() -> PathBuf {
+    /// # Returns
+    ///
+    /// The folder that holds the workspace's `Cargo.toml`, or `None` if it can't be found:
+    /// cargo can't be run, the program doesn't run inside a cargo project (a deployed program,
+    /// for example), or cargo's answer can't be read.
+    pub fn get_workspace_root() -> Option<PathBuf> {
         // Look up the cargo executable used to build the project
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
 
@@ -688,20 +867,26 @@ pub mod dir_paths {
             .arg("--workspace")
             .arg("--message-format=plain")
             .output()
-            .expect("Failed to execute cargo command");
+            .ok()?;
 
-        let stdout = str::from_utf8(&output.stdout).expect("Invalid UTF-8 output");
-        let cargo_toml_path = Path::new(stdout.trim());
+        // Outside a cargo project, cargo fails and prints nothing to stdout.
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = str::from_utf8(&output.stdout).ok()?;
 
         // Pop "Cargo.toml" off the path to get the root directory
-        cargo_toml_path.parent().unwrap().to_path_buf()
+        Path::new(stdout.trim()).parent().map(Path::to_path_buf)
     }
 }
 
+/// Small helpers that don't fit anywhere else.
 pub mod misc {
     use chrono::{DateTime, Local};
     use std::time::SystemTime;
 
+    /// Returns the current local date and time.
     pub fn get_current_date_time() -> DateTime<Local> {
         SystemTime::now().into()
     }

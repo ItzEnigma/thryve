@@ -7,5 +7,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The ways to start Thryve: interactively from a program ([`run_interactive`]) or as a Windows
+//! service ([`run_service`]).
+
 pub mod run_interactive;
 pub mod run_service;

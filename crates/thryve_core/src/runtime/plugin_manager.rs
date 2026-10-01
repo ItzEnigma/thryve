@@ -40,6 +40,7 @@ use crossbeam::channel::Sender;
 use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
+use thryve_utils::errors::{NameInputType, StartupError, ThryveError};
 use thryve_utils::extras::named_input::NamedInput;
 use thryve_utils::packets::{notif_log::Log, packet_handle::PacketHandle, task::Task};
 use thryve_utils::queues::priority_queue::PQChild;
@@ -80,6 +81,9 @@ pub struct PluginManager {
     pub threadpool: ThreadPool<PQChild<Task>, Task>,
     /// Handle for sending tasks and notifications.
     packet_handle: PacketHandle,
+    /// Sender for task results, handed to the worker threads when they start (see
+    /// [`ThreadPool::run_threads_plugins`]).
+    pub res_tx: Arc<Sender<(u64, TaskResult)>>,
 }
 
 impl PluginManager {
@@ -113,13 +117,9 @@ impl PluginManager {
 
         PluginManager {
             plugins: HashMap::new(),
-            threadpool: ThreadPool::new(
-                num_workers,
-                queue,
-                ctx.packet_handle(),
-                Some(Arc::new(res_tx)),
-            ),
+            threadpool: ThreadPool::new(num_workers, queue, ctx.packet_handle()),
             packet_handle: ctx.packet_handle(),
+            res_tx: Arc::new(res_tx),
         }
     }
 
@@ -163,16 +163,24 @@ impl PluginManager {
     /// ```ignore
     /// manager.load_plugin(my_plugin);
     /// ```
-    pub fn load_plugin(&mut self, config: &Config, mut plugin: Plugin) {
-        let plg_type = format!("Init{}", plugin.plg_type.inner());
-        let task_init = Task::new(
-            &plg_type,
+    pub fn load_plugin(&mut self, config: &Config, mut plugin: Plugin) -> Result<(), ThryveError> {
+        let plg_type = plugin.plg_type_input().clone();
+        let task_init = Task::new_init(
+            plg_type.clone(),
             config.tasks.max_priority,
             plugin.plg_entry_point(),
         );
-        self.packet_handle.send_task(task_init);
-        self.plugins
-            .insert(NamedInput::new(plugin.plg_type.inner()), plugin);
+
+        if self.plugins.contains_key(&plg_type) {
+            return Err(StartupError::RegisterDuplicate {
+                name: plg_type.inner().to_string(),
+                kind: NameInputType::PlgType,
+            }
+            .into());
+        }
+
+        self.plugins.insert(plg_type, plugin);
+        self.packet_handle.send_task(task_init)
     }
 
     /// Finalizes the plugin manager.
@@ -202,6 +210,6 @@ impl PluginManager {
         }
 
         let notif = Log::log("Plugin Manager Finalized".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 }

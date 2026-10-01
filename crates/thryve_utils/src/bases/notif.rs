@@ -27,6 +27,7 @@
 //! Any struct implementing the [`NotifLogic`] trait can serve as the core
 //! of a notification, enabling flexible and extensible notification handling
 //! throughout the system.
+use crate::errors::{NameInputType, NamingError};
 use crate::extras::named_input::NamedInput;
 use crate::graphs::callsite::TaskCallSite;
 use crate::traits::notif_logic::NotifLogic;
@@ -63,7 +64,7 @@ use std::time::SystemTime;
 /// ```
 pub struct Notif {
     /// Type identifier for categorizing the notification.
-    pub notif_type: NamedInput,
+    notif_type: NamedInput,
     /// Optional call site information for graph visualization.
     ///
     /// This field is populated when graph visualization is enabled
@@ -71,7 +72,7 @@ pub struct Notif {
     /// in the source code.
     pub callsite: Option<TaskCallSite>,
     /// Receiver identifier for routing to the appropriate observer.
-    pub notif_receiver: NamedInput,
+    notif_receiver: NamedInput,
     /// Core logic implementing custom notification behavior.
     pub notif_core: Box<dyn NotifLogic>,
     /// Time when the notification was created.
@@ -83,7 +84,7 @@ impl Packet for Notif {
     ///
     /// This method is called by the packet handling system when graph
     /// visualization is enabled. It attaches call site information
-    /// (file path, module path, line number, fingerprints) to the
+    /// (file path, line number, fingerprints) to the
     /// notification for topology graph construction.
     ///
     /// # Arguments
@@ -123,21 +124,76 @@ impl Notif {
     /// # Returns
     ///
     /// A new `Notif` instance configured with the provided parameters.
-    pub fn new(notif_type: &str, notif_receiver: &str, notif_core: Box<dyn NotifLogic>) -> Self {
-        if notif_type.is_empty() || notif_receiver.is_empty() {
-            panic!("Both fields, `notif_type` and `notif_receiver` cannot be empty");
-        }
-
-        Self {
-            notif_type: NamedInput::new(notif_type),
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NamingError::NameEmpty`] if `notif_type` or `notif_receiver` is empty, or
+    /// [`NamingError::NameContainsControlChar`] if one of them contains a control character. The
+    /// error's kind (`NameInputType::NotifType` or `NameInputType::NotifReceiver`) says which one.
+    pub fn new(
+        notif_type: &str,
+        notif_receiver: &str,
+        notif_core: Box<dyn NotifLogic>,
+    ) -> Result<Self, NamingError> {
+        Ok(Self {
+            notif_type: NamedInput::new(notif_type, NameInputType::NotifType)?,
             callsite: None,
-            notif_receiver: NamedInput::new(notif_receiver),
+            notif_receiver: NamedInput::new(notif_receiver, NameInputType::NotifReceiver)?,
+            notif_core,
+            timestamp: SystemTime::now(),
+        })
+    }
+
+    /// Returns the size of the notification struct in bytes.
+    ///
+    /// Heap memory owned by its fields, such as the names and the core logic, isn't included.
+    pub fn size_in_bytes(&self) -> usize {
+        std::mem::size_of_val(self)
+    }
+
+    /// Returns the notification's type.
+    pub fn notif_type(&self) -> &str {
+        self.notif_type.inner()
+    }
+
+    /// Returns the type of the observer this notification is routed to.
+    pub fn notif_receiver(&self) -> &str {
+        self.notif_receiver.inner()
+    }
+}
+
+impl Notif {
+    /// Creates one of Thryve's own notifications from names that are already checked.
+    ///
+    /// Thryve's notifications use fixed names, built with `NamedInput`'s no-text constructors, so
+    /// this can't fail:
+    ///
+    /// - log notifications from [`Log::log`](crate::packets::notif_log::Log::log) and
+    ///   [`Log::err`](crate::packets::notif_log::Log::err): type `Log` or `Error`, receiver
+    ///   `Logging`;
+    /// - topology notifications from
+    ///   [`TopologyModifier`](crate::packets::notif_topology::TopologyModifier): type `AddNode` or
+    ///   `AddEdge`, receiver `TopologyHandler`.
+    ///
+    /// Use [`Notif::new`] for any other notification: it checks the names and returns an error for
+    /// a bad one.
+    ///
+    /// # Arguments
+    ///
+    /// * `notif_type` - The notification's type
+    /// * `notif_receiver` - The type of the observer it's routed to
+    /// * `notif_core` - Core logic implementing the notification's behavior
+    pub fn new_internal(
+        notif_type: NamedInput,
+        notif_receiver: NamedInput,
+        notif_core: Box<dyn NotifLogic>,
+    ) -> Self {
+        Self {
+            notif_type,
+            callsite: None,
+            notif_receiver,
             notif_core,
             timestamp: SystemTime::now(),
         }
-    }
-
-    pub fn size_in_bytes(&self) -> usize {
-        std::mem::size_of_val(self)
     }
 }

@@ -128,9 +128,9 @@ mod tests_ffi_task_result {
         let internal_result = ffi_result_to_result(ffi_result);
 
         // Assert
-        assert_eq!(internal_result.result_type.inner(), "Success");
+        assert_eq!(internal_result.result_type(), "Success");
         assert_eq!(internal_result.message, "Task completed");
-        assert_eq!(internal_result.log_msg_to_file.inner(), "Main");
+        assert_eq!(internal_result.log_msg_to_file(), "Main");
         assert!(internal_result.next_task.is_none());
     }
 
@@ -144,9 +144,9 @@ mod tests_ffi_task_result {
         let internal_result = ffi_result_to_result(ffi_result);
 
         // Assert
-        assert_eq!(internal_result.result_type.inner(), "Error");
+        assert_eq!(internal_result.result_type(), "Error");
         assert_eq!(internal_result.message, "No message");
-        assert_eq!(internal_result.log_msg_to_file.inner(), "Main");
+        assert_eq!(internal_result.log_msg_to_file(), "Main");
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod tests_ffi_task_result {
         let internal_result = ffi_result_to_result(ffi_result);
 
         // Assert — invalid UTF-8 should fall back to "Error"
-        assert_eq!(internal_result.result_type.inner(), "Error");
+        assert_eq!(internal_result.result_type(), "Error");
         assert_eq!(internal_result.message, "No message");
     }
 
@@ -214,7 +214,7 @@ mod tests_ffi_task_result {
             internal_result.next_task.is_none(),
             "next_task should be None"
         );
-        assert_eq!(internal_result.result_type.inner(), "Success");
+        assert_eq!(internal_result.result_type(), "Success");
     }
 }
 

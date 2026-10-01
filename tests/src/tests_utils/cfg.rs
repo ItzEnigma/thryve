@@ -434,7 +434,7 @@ mod tests_dir_data {
 
     use thryve_utils::cfg::dir_data::*;
     use thryve_utils::extras::dir_paths::DirName;
-    use thryve_utils::extras::named_input::NamedInput;
+    use thryve_utils::extras::named_input::LogFileNamedInput;
 
     #[test]
     fn test_dir_data_default() {
@@ -452,7 +452,7 @@ mod tests_dir_data {
         // Arrange
         let exe_dir = PathBuf::from("/test/exe");
         let log_dir = PathBuf::from("/test/logs");
-        let log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+        let log_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
 
         // Act
         let mut dir_data = DirData::new(exe_dir.clone(), log_hash_map);
@@ -469,14 +469,16 @@ mod tests_dir_data {
         // Arrange
         let exe_dir = PathBuf::from("/test/exe");
         let log_dir = PathBuf::from("/test/logs");
-        let log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+        let log_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
 
         // Act
         let mut dir_data = DirData::new(exe_dir, log_hash_map);
         dir_data.set_path(DirName::Log, log_dir.clone());
 
         // Assert
-        let retrieved = dir_data.get_dir_path(&DirName::Log);
+        let retrieved = dir_data
+            .get_dir_path(&DirName::Log)
+            .expect("the log folder was just recorded");
 
         println!("{:?}", retrieved.clone());
         println!("{:?}", log_dir);
@@ -501,12 +503,15 @@ mod tests_dir_data {
         // Arrange
         let exe_dir = PathBuf::from("/test/exe");
         let log_dir = PathBuf::from("/test/logs");
-        let mut log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+        let mut log_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
 
         // Create a temp file for testing using cross-platform temp directory
         let temp_path = std::env::temp_dir().join("test.log");
         let temp_file = std::fs::File::create(&temp_path).unwrap();
-        log_hash_map.insert(NamedInput::new("Test"), Arc::new(temp_file));
+        log_hash_map.insert(
+            LogFileNamedInput::new_register("Test").unwrap(),
+            Arc::new(temp_file),
+        );
 
         let mut dir_data1 = DirData::new(exe_dir.clone(), log_hash_map.clone());
         dir_data1.set_path(DirName::Log, log_dir);
@@ -527,7 +532,7 @@ mod tests_dir_data {
     fn test_dir_data_with_log_files() {
         // Arrange
         let exe_dir = PathBuf::from("/test/exe");
-        let mut log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+        let mut log_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
 
         // Create temp files using cross-platform temp directory
         let temp_path1 = std::env::temp_dir().join("test1.log");
@@ -535,20 +540,16 @@ mod tests_dir_data {
         let file1 = std::fs::File::create(&temp_path1).unwrap();
         let file2 = std::fs::File::create(&temp_path2).unwrap();
 
-        log_hash_map.insert(NamedInput::new("Main"), Arc::new(file1));
-        log_hash_map.insert(NamedInput::new("Error"), Arc::new(file2));
+        log_hash_map.insert(LogFileNamedInput::new_main(), Arc::new(file1));
+        log_hash_map.insert(LogFileNamedInput::new_err(), Arc::new(file2));
 
         // Act
         let dir_data = DirData::new(exe_dir, log_hash_map.clone());
 
         // Assert
         assert_eq!(dir_data.log_hash_map.len(), 2);
-        assert!(dir_data.log_hash_map.contains_key(&NamedInput::new("Main")));
-        assert!(
-            dir_data
-                .log_hash_map
-                .contains_key(&NamedInput::new("Error"))
-        );
+        assert!(dir_data.log_hash_map.contains_key("MAIN"));
+        assert!(dir_data.log_hash_map.contains_key("ERROR"));
     }
 }
 
@@ -605,13 +606,15 @@ mod tests_ctx {
         let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
 
         // Add a dummy observer
-        ctx.observers.push(Observer::new(
-            "TestObs",
-            "TestType",
-            Arc::new(TestObsLogic),
-            ObsJob::default(),
-            ctx.packet_handle(),
-        ));
+        ctx.observers.push(
+            Observer::new(
+                "TestType",
+                Arc::new(TestObsLogic),
+                ObsJob::default(),
+                ctx.packet_handle(),
+            )
+            .unwrap(),
+        );
 
         // Act
         let observers = ctx.observers();
@@ -630,13 +633,17 @@ mod tests_ctx {
         let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
 
         // Add a dummy plugin
-        ctx.plugins.push(Plugin::new(
-            "TestPlg",
-            "TestType",
-            Arc::new(TestPlgLogic),
-            ctx.packet_handle(),
-            TaskJob::new(|| thryve_utils::res::TaskResult::new("Ok", "Done".to_string(), "Main")),
-        ));
+        ctx.plugins.push(
+            Plugin::new(
+                "TestType",
+                Arc::new(TestPlgLogic),
+                ctx.packet_handle(),
+                TaskJob::new(|| {
+                    thryve_utils::res::TaskResult::new("Ok", "Done".to_string(), "Main")
+                }),
+            )
+            .unwrap(),
+        );
 
         // Act
         let plugins = ctx.plugins();
@@ -682,6 +689,7 @@ mod tests_ctx {
 
 mod tests_cfg {
     use thryve_utils::cfg::config::*;
+    use thryve_utils::errors::{ConfigError, ThryveError, get_err};
 
     // Tests for Config
     #[test]
@@ -916,20 +924,23 @@ mod tests_cfg {
 
     // Tests for load_config_from_file
     #[test]
-    fn test_load_config_from_file_nonexistent_returns_defaults() {
+    fn test_load_config_from_file_nonexistent_returns_read_error() {
         // Arrange
         let nonexistent_path = "/nonexistent/path/config.toml";
 
         // Act
-        let config = Config::load_config_from_file(nonexistent_path);
+        let result = Config::load_config_from_file(nonexistent_path);
 
-        // Assert - should return defaults
-        assert_eq!(config.threads.worker_count, 4);
+        // Assert - no fallback to the defaults: the read error is returned
+        assert!(matches!(
+            result,
+            Err(ThryveError::Config(ConfigError::FileRead { .. }))
+        ));
     }
 
     #[test]
     fn test_load_config_from_file_with_valid_content() {
-        // Arrange - create a temp file
+        // Arrange - create a temp file with every key set to a valid value
         use std::fs::File;
         use std::io::Write;
 
@@ -937,30 +948,54 @@ mod tests_cfg {
         let file_path = temp_dir.join("test_config.toml");
 
         let toml_content = r#"
-            [threads]
-            worker_count = 8
+            [service]
+            can_stop = true
+            can_pause = true
 
             [engine]
             sleep_tick_rate = 10
+
+            [threads]
+            worker_count = 8
+
+            [pipes]
+            task_pipe_capacity = 1024
+            notif_pipe_capacity = 1024
+            res_pipe_capacity = 1024
+
+            [tasks]
+            max_priority = 4
+            aging_interval = 3
+
+            [debugging]
+            is_debugging = false
+            wait_before_execution = 10
+            visual_graph = false
+            calculate_metrics = false
+            log_tasks = false
         "#;
 
         let mut file = File::create(&file_path).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
 
         // Act
-        let config = Config::load_config_from_file(file_path.to_str().unwrap());
-
-        // Assert
-        assert_eq!(config.threads.worker_count, 8);
-        assert_eq!(config.engine.sleep_tick_rate, 10);
+        let result = Config::load_config_from_file(file_path.to_str().unwrap());
 
         // Cleanup
         let _ = std::fs::remove_file(&file_path);
+
+        // Assert
+        let config = match result {
+            Ok(config) => config,
+            Err(e) => panic!("a valid config file should load: {}", get_err(&e)),
+        };
+        assert_eq!(config.threads.worker_count, 8);
+        assert_eq!(config.engine.sleep_tick_rate, 10);
     }
 
     #[test]
-    fn test_load_config_from_file_partial_content_uses_defaults() {
-        // Arrange - create a temp file with partial config
+    fn test_load_config_from_file_missing_section_returns_parse_error() {
+        // Arrange - create a temp file with only one section
         use std::fs::File;
         use std::io::Write;
 
@@ -976,18 +1011,20 @@ mod tests_cfg {
         file.write_all(toml_content.as_bytes()).unwrap();
 
         // Act
-        let config = Config::load_config_from_file(file_path.to_str().unwrap());
-
-        // Assert - specified value used, others default
-        assert_eq!(config.threads.worker_count, 16);
-        assert_eq!(config.engine.sleep_tick_rate, 4); // default
+        let result = Config::load_config_from_file(file_path.to_str().unwrap());
 
         // Cleanup
         let _ = std::fs::remove_file(&file_path);
+
+        // Assert - every key is required, so the missing ones are a parse error
+        assert!(matches!(
+            result,
+            Err(ThryveError::Config(ConfigError::FileParse { .. }))
+        ));
     }
 
     #[test]
-    fn test_load_config_from_file_invalid_priority_falls_back_to_defaults() {
+    fn test_load_config_from_file_invalid_priority_returns_error() {
         // Arrange - create a temp file with invalid priority
         use std::fs::File;
         use std::io::Write;
@@ -1005,16 +1042,13 @@ mod tests_cfg {
 
         // Act - an out-of-range max_priority must not panic (it can be reached
         // via thryve_config_from_file, and a panic there would cross the FFI
-        // boundary as undefined behavior); it should fall back to defaults.
-        let config = Config::load_config_from_file(file_path.to_str().unwrap());
-
-        // Assert
-        assert_eq!(
-            config.tasks.max_priority,
-            Config::load_def_config().tasks.max_priority
-        );
+        // boundary as undefined behavior); it must be returned as an error.
+        let result = Config::load_config_from_file(file_path.to_str().unwrap());
 
         // Cleanup
         let _ = std::fs::remove_file(&file_path);
+
+        // Assert
+        assert!(matches!(result, Err(ThryveError::Config(_))));
     }
 }

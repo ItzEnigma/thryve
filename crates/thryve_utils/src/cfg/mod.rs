@@ -7,6 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Configuration ([`config`]), the application context ([`ctx`]), and the data startup fills in:
+//! folders and log files ([`dir_data`]), run information ([`meta_data`]) and [`metrics`].
+
 pub mod config;
 pub mod ctx;
 pub mod dir_data;

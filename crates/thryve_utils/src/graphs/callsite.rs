@@ -17,9 +17,9 @@
 //! # Usage
 //!
 //! Call sites are automatically captured when graph visualization is
-//! enabled in the debugging configuration. The engine captures stack
-//! traces at task creation points and extracts relevant information
-//! about the calling location.
+//! enabled in the debugging configuration. `PacketHandle::send_task` and
+//! `TaskResult::chain` record the file and line they were called from, which
+//! the compiler passes in (`#[track_caller]`).
 //!
 //! # Example
 //!
@@ -29,7 +29,6 @@
 //!
 //! let callsite = TaskCallSite::new(
 //!     PathBuf::from("src/my_module.rs"),
-//!     "my_crate::my_module".to_string(),
 //!     42,
 //!     "MyTask".to_string(),
 //! );
@@ -41,19 +40,18 @@ use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 
-/// Represents a call site in the source code where a task is created.
+/// Represents a call site in the source code where a task is sent.
 ///
 /// A `TaskCallSite` captures the location in the source code where a
-/// task is instantiated, including the file path, module path, line
-/// number, and task name. This information is used to build a topology
-/// graph that visualizes task relationships and call hierarchies.
+/// task is sent or chained: the file path, the line number, and the task
+/// name. File, line and name identify a call site, and the topology graph
+/// labels its nodes with them.
 ///
 /// # Fields
 ///
-/// - `file_path`: The path to the source file where the task is created
-/// - `module_path`: The Rust module path (e.g., "my_crate::my_module")
+/// - `file_path`: The path to the source file, as the compiler saw it
 /// - `line_number`: The line number in the source file
-/// - `callsite_name`: The name of the task being created
+/// - `callsite_name`: The name of the task being sent
 /// - `this_callsite_fingerprint`: A unique identifier for this call site
 /// - `current_executing_task_fingerprint`: The fingerprint of the parent task
 ///
@@ -65,7 +63,6 @@ use std::path::PathBuf;
 ///
 /// let callsite = TaskCallSite::new(
 ///     PathBuf::from("src/my_module.rs"),
-///     "my_crate::my_module".to_string(),
 ///     42,
 ///     "MyTask".to_string(),
 /// );
@@ -74,8 +71,6 @@ use std::path::PathBuf;
 pub struct TaskCallSite {
     /// The path to the source file where the task is created.
     pub file_path: PathBuf,
-    /// The Rust module path (e.g., "my_crate::my_module").
-    pub module_path: String,
     /// The line number in the source file.
     pub line_number: u32,
     /// The name of the task being created.
@@ -89,14 +84,13 @@ pub struct TaskCallSite {
 impl TaskCallSite {
     /// Creates a new `TaskCallSite` with the specified information.
     ///
-    /// Initializes a new call site with the given file path, module path,
-    /// line number, and task name. The fingerprint fields are initialized
+    /// Initializes a new call site with the given file path, line number,
+    /// and task name. The fingerprint fields are initialized
     /// to empty strings and should be set after creation.
     ///
     /// # Arguments
     ///
     /// * `file_path` - The path to the source file
-    /// * `module_path` - The Rust module path
     /// * `line_num` - The line number in the source file
     /// * `name` - The name of the task
     ///
@@ -112,17 +106,15 @@ impl TaskCallSite {
     ///
     /// let callsite = TaskCallSite::new(
     ///     PathBuf::from("src/my_module.rs"),
-    ///     "my_crate::my_module".to_string(),
     ///     42,
     ///     "MyTask".to_string(),
     /// );
     /// ```
-    pub fn new(file_path: PathBuf, module_path: String, line_num: u32, name: String) -> Self {
+    pub fn new(file_path: PathBuf, line_num: u32, name: String) -> Self {
         let absolute_path = file_path;
 
         Self {
             file_path: absolute_path,
-            module_path,
             line_number: line_num,
             callsite_name: name,
             this_callsite_fingerprint: String::default(),
@@ -151,7 +143,6 @@ impl TaskCallSite {
     ///
     /// let callsite = TaskCallSite::new(
     ///     PathBuf::from("src/my_module.rs"),
-    ///     "my_crate::my_module".to_string(),
     ///     42,
     ///     "MyTask".to_string(),
     /// );

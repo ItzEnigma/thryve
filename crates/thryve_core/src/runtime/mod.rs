@@ -7,6 +7,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The engine ([`engine`]) and the two managers it drives: [`plugin_manager`], which owns the plugins
+//! and the worker pool, and [`observer_manager`], which owns the observers and routes notifications
+//! to them.
+
 pub mod engine;
 pub mod observer_manager;
 pub mod plugin_manager;

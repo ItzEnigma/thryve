@@ -6,6 +6,4 @@
 // https://thryve-framework.com for licensing options.
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-pub mod errors;
 pub mod init;

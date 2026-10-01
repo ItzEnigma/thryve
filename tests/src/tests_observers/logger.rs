@@ -21,7 +21,7 @@ mod tests_logger {
     use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::cfg::dir_data::DirData;
     use thryve_utils::cfg::meta_data::MetaData;
-    use thryve_utils::extras::named_input::NamedInput;
+    use thryve_utils::extras::named_input::LogFileNamedInput;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
@@ -39,11 +39,11 @@ mod tests_logger {
         let log_dir = exe_dir.join("test_logs");
         std::fs::create_dir_all(&log_dir).ok();
 
-        let mut log_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+        let mut log_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
         let main_log = std::fs::File::create(log_dir.join("Main.log")).unwrap();
-        log_hash_map.insert(NamedInput::new("Main"), Arc::new(main_log));
+        log_hash_map.insert(LogFileNamedInput::new_main(), Arc::new(main_log));
         let error_log = std::fs::File::create(log_dir.join("Error.log")).unwrap();
-        log_hash_map.insert(NamedInput::new("Error"), Arc::new(error_log));
+        log_hash_map.insert(LogFileNamedInput::new_err(), Arc::new(error_log));
 
         let dir_data = DirData::new(exe_dir, log_hash_map);
         let datetime: DateTime<Local> = SystemTime::now().into();
@@ -60,11 +60,10 @@ mod tests_logger {
         let ctx = create_test_ctx();
 
         // Act
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "Logger");
-        assert_eq!(observer.obs_type.inner(), "Logging");
+        assert_eq!(observer.obs_type(), "Logging");
     }
 
     #[test]
@@ -76,17 +75,16 @@ mod tests_logger {
         // Add custom log file to dir_data
         let custom_log =
             std::fs::File::create(ctx.meta_data.dir_data.exe_dir.join("Custom.log")).unwrap();
-        ctx.meta_data
-            .dir_data
-            .log_hash_map
-            .insert(NamedInput::new("Custom"), Arc::new(custom_log));
+        ctx.meta_data.dir_data.log_hash_map.insert(
+            LogFileNamedInput::new_register("CUSTOM").unwrap(),
+            Arc::new(custom_log),
+        );
 
         // Act
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_name, "Logger");
-        assert_eq!(observer.obs_type.inner(), "Logging");
+        assert_eq!(observer.obs_type(), "Logging");
     }
 
     #[test]
@@ -95,29 +93,17 @@ mod tests_logger {
         let ctx = create_test_ctx();
 
         // Act
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Assert
-        assert_eq!(observer.obs_type.inner(), "Logging");
-    }
-
-    #[test]
-    fn test_logger_observer_obs_name_is_logger() {
-        // Arrange
-        let ctx = create_test_ctx();
-
-        // Act
-        let observer = LoggerObserver::new(&ctx);
-
-        // Assert
-        assert_eq!(observer.obs_name, "Logger");
+        assert_eq!(observer.obs_type(), "Logging");
     }
 
     #[test]
     fn test_logger_observer_handle_log_writes_to_file() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -137,7 +123,7 @@ mod tests_logger {
     fn test_logger_observer_handle_log_error_message() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -160,12 +146,12 @@ mod tests_logger {
         // Add a custom log file
         let custom_log =
             std::fs::File::create(ctx.meta_data.dir_data.exe_dir.join("Custom.log")).unwrap();
-        ctx.meta_data
-            .dir_data
-            .log_hash_map
-            .insert(NamedInput::new("Custom"), Arc::new(custom_log));
+        ctx.meta_data.dir_data.log_hash_map.insert(
+            LogFileNamedInput::new_register("CUSTOM").unwrap(),
+            Arc::new(custom_log),
+        );
 
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -184,7 +170,7 @@ mod tests_logger {
     fn test_logger_observer_cleanup_processes_remaining_notifs() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
         let observer = Arc::new(observer);
 
         // Downcast to get the LoggerObserver
@@ -207,7 +193,7 @@ mod tests_logger {
     fn test_logger_observer_with_unicode_message() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -226,7 +212,7 @@ mod tests_logger {
     fn test_logger_observer_with_empty_message() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -245,7 +231,7 @@ mod tests_logger {
     fn test_logger_observer_with_multiline_message() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -265,7 +251,7 @@ mod tests_logger {
     fn test_logger_observer_log_with_exit_flag() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Create an Arc<Observer> with exit flag set
         let observer = Arc::new(observer);
@@ -283,11 +269,18 @@ mod tests_logger {
 
     // Tests for handle_log with unsupported notification type
     #[test]
-    #[should_panic(expected = "Logger Observer Received Unsupported Notification Type.")]
-    fn test_logger_observer_handle_log_with_unsupported_notification_type() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+    fn test_logger_observer_handle_log_with_unsupported_notification_type_writes_a_note() {
+        // Arrange: give this test its own Error.log so the check below only sees its line
+        let mut ctx = create_test_ctx();
+        let error_dir = std::env::temp_dir().join("test_logs_unsupported_notification");
+        std::fs::create_dir_all(&error_dir).unwrap();
+        let error_path = error_dir.join("Error.log");
+        let error_log = std::fs::File::create(&error_path).unwrap();
+        ctx.meta_data
+            .dir_data
+            .log_hash_map
+            .insert(LogFileNamedInput::new_err(), Arc::new(error_log));
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -298,17 +291,29 @@ mod tests_logger {
             thryve_utils::graphs::graph::TopologyNode::default(),
         );
 
-        // Act - should panic because it's not a Log type
+        // Act - not a Log: must not panic
         logger_observer.handle_log(notif);
+
+        // Assert - it was dropped, with a note in Error.log naming its type
+        let written = std::fs::read_to_string(&error_path).unwrap();
+        assert!(written.contains("[ LOGGING ], Event_Type: Error"));
+        assert!(written.contains("[dropped a notification of type \"AddNode\""));
     }
 
     // Tests for handle_log with non-existent log file
     #[test]
-    #[should_panic(expected = "Logger Observer Cannot Find Requested Log File. Got NonExistent")]
-    fn test_logger_observer_handle_log_with_non_existent_log_file() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+    fn test_logger_observer_handle_log_with_non_existent_log_file_writes_to_error_log() {
+        // Arrange: give this test its own Error.log so the check below only sees its line
+        let mut ctx = create_test_ctx();
+        let error_dir = std::env::temp_dir().join("test_logs_unregistered_file");
+        std::fs::create_dir_all(&error_dir).unwrap();
+        let error_path = error_dir.join("Error.log");
+        let error_log = std::fs::File::create(&error_path).unwrap();
+        ctx.meta_data
+            .dir_data
+            .log_hash_map
+            .insert(LogFileNamedInput::new_err(), Arc::new(error_log));
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -317,8 +322,12 @@ mod tests_logger {
         // Create a notification for a non-existent log file
         let notif = Log::log("Test message".to_string(), "NonExistent");
 
-        // Act - should panic because the log file doesn't exist
+        // Act - must not panic
         logger_observer.handle_log(notif);
+
+        // Assert - the message went to Error.log, behind a note naming the requested file
+        let written = std::fs::read_to_string(&error_path).unwrap();
+        assert!(written.contains("[log file \"NonExistent\" is not registered] Test message"));
     }
 
     // Tests for handle_log with empty message (should return early)
@@ -326,7 +335,7 @@ mod tests_logger {
     fn test_logger_observer_handle_log_empty_message_does_not_write() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -344,7 +353,7 @@ mod tests_logger {
     fn test_logger_observer_handle_log_error_notification() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -367,12 +376,12 @@ mod tests_logger {
         // Add debug log file to dir_data
         let debug_log =
             std::fs::File::create(ctx.meta_data.dir_data.exe_dir.join("Debug.log")).unwrap();
-        ctx.meta_data.dir_data.log_hash_map.insert(
-            thryve_utils::extras::named_input::NamedInput::new("Debug"),
-            Arc::new(debug_log),
-        );
+        ctx.meta_data
+            .dir_data
+            .log_hash_map
+            .insert(LogFileNamedInput::new_debug(), Arc::new(debug_log));
 
-        let observer = LoggerObserver::new(&ctx);
+        let observer = LoggerObserver::new(&ctx).unwrap();
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -390,7 +399,7 @@ mod tests_logger {
     fn test_logger_observer_cleanup_with_empty_queue() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = Arc::new(LoggerObserver::new(&ctx));
+        let observer = Arc::new(LoggerObserver::new(&ctx).unwrap());
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();
@@ -405,7 +414,7 @@ mod tests_logger {
     fn test_logger_observer_cleanup_flushes_files() {
         // Arrange
         let ctx = create_test_ctx();
-        let observer = Arc::new(LoggerObserver::new(&ctx));
+        let observer = Arc::new(LoggerObserver::new(&ctx).unwrap());
 
         // Downcast to get the LoggerObserver
         let obs_core = observer.obs_core.as_any();

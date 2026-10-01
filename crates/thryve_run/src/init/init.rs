@@ -7,96 +7,278 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! Initialization module for the Thryve engine.
+//! Startup for the Thryve engine.
 //!
-//! This module provides functions for initializing the Thryve engine
-//! and its components. It handles the creation of the engine instance,
-//! startup of the plugin thread pool, and initialization of the logger
-//! observer.
-//!
-//! # Initialization Flow
-//!
-//! 1. Create a new [`Engine`](thryve_core::runtime::engine::Engine) instance
-//! 2. Start the plugin thread pool for task processing
-//! 3. Initialize the logger observer for logging functionality
+//! [`EngineInitialization`] is the startup sequence that every run mode shares. Interactive mode
+//! and the Windows service use it today, and a Linux service can use it later. It spawns the
+//! engine thread, creates the log folders and files, installs the panic hook, and starts every
+//! thread the engine needs. If a step fails, it stops what it started and returns the error. The
+//! other functions here are the individual steps.
 //!
 //! # Example
 //!
 //! ```no_run
-//! use thryve_run::init::init::{init_directories, init_engine};
+//! use thryve_core::runtime::engine::Engine;
+//! use thryve_run::init::init::{init_directories, init_logger};
 //! use thryve_run::run::run_interactive::summon_requirements;
 //! use thryve_utils::cfg::config::Config;
 //!
 //! let mut ctx = summon_requirements(Config::load_def_config());
-//! init_directories(&mut ctx);
-//! let engine = init_engine(&ctx);
+//! init_directories(&mut ctx)?;
+//! let mut engine = Engine::new(&ctx);
+//! init_logger(&ctx, &mut engine)?;
+//! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
+use crossbeam::channel::Sender;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
     sync::Arc,
+    thread::{self, JoinHandle},
+    time::Duration,
 };
 use thryve_core::runtime::engine::Engine;
 use thryve_observers::{logger::LoggerObserver, topology_handler::TopologyHandlerObserver};
 use thryve_utils::{
     cfg::ctx::Ctx,
-    extras::dir_paths::{DirName, create_dir},
+    errors::{NameInputType, StartupError, ThryveError},
+    extras::{
+        self,
+        dir_paths::{DirName, create_dir},
+        named_input::LogFileNamedInput,
+    },
 };
 use thryve_utils::{
     cfg::{dir_data::DirData, meta_data::MetaData},
-    extras::{
-        dir_paths::get_current_exec_dir, misc::get_current_date_time, named_input::NamedInput,
-    },
+    extras::{dir_paths::get_current_exec_dir, misc::get_current_date_time},
 };
 
-/// Initializes the Thryve engine with the given context.
+/// An engine that is set up and ready to start: the startup sequence every run mode shares.
 ///
-/// Creates a new [`Engine`](thryve_core::runtime::engine::Engine) instance,
-/// starts the plugin thread pool for task processing, and initializes
-/// the logger observer for logging functionality.
+/// Starting the engine takes three steps:
 ///
-/// # Arguments
+/// 1. [`prepare`](Self::prepare) spawns the engine thread, which waits for its engine. Then it
+///    creates the engine and sets everything up on the caller's thread.
+/// 2. [`complete_and_run`](Self::complete_and_run) hands the engine to that thread, which starts
+///    the mode's loop.
+/// 3. `abort`, instead of step 2, stops a prepared engine that will never start. It's
+///    crate-internal: `prepare` calls it when a step fails, and the Windows service when it can't
+///    connect to the service manager.
 ///
-/// * `ctx` - The application context containing configuration and resources
+/// Interactive mode calls `complete_and_run` right after `prepare`. The Windows service prepares
+/// before it connects to the service manager, and completes when the service manager sends
+/// `Start`. A Linux service can do the same later.
 ///
-/// # Returns
-///
-/// A new [`Engine`](thryve_core::runtime::engine::Engine) instance ready for execution.
-///
-/// # Initialization Steps
-///
-/// 1. Creates a new engine instance from the context
-/// 2. Starts the plugin thread pool for processing tasks
-/// 3. Initializes the logger observer with configured log file names
+/// A value of this type owns running threads, so it must end in either `complete_and_run` or
+/// `abort`. Just dropping it leaves those threads running, which is why it's `#[must_use]`.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use thryve_run::init::init::{init_directories, init_engine};
+/// use thryve_run::init::init::EngineInitialization;
 /// use thryve_run::run::run_interactive::summon_requirements;
 /// use thryve_utils::cfg::config::Config;
 ///
-/// let mut ctx = summon_requirements(Config::load_def_config());
-/// init_directories(&mut ctx);
-/// let engine = init_engine(&ctx);
+/// let ctx = summon_requirements(Config::load_def_config());
+/// let prepared = EngineInitialization::prepare(ctx, |mut eng| {
+///     while !eng.exit_flag {
+///         eng.run_once();
+///     }
+/// })?;
+/// let handle = prepared.complete_and_run()?;
+/// let _ = handle.join();
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
-pub fn init_engine(ctx: &Ctx) -> Engine {
-    // Create a new instance of the `Engine` struct.
-    let mut eng = Engine::new(ctx);
+#[must_use]
+pub struct EngineInitialization {
+    /// The engine thread, waiting for `eng_thread_tx` to hand it the engine.
+    eng_thread_handle: JoinHandle<()>,
+    /// Hands the engine to the engine thread. Dropping it without sending tells the thread to end.
+    eng_thread_tx: Sender<Engine>,
+    /// The set-up engine. Its threads are already running, but its loop hasn't started.
+    eng: Engine,
+    /// The context, kept so that a later failure can still be written to `Error.log`.
+    ctx: Ctx,
+}
+
+impl EngineInitialization {
+    /// Spawns the engine thread, creates the engine and sets everything up.
+    ///
+    /// The engine thread starts first, waiting for its engine. That way a failed setup can
+    /// always stop it again. Then, on the caller's thread, this function:
+    ///
+    /// 1. creates the log folders and files, and installs the panic hook;
+    /// 2. starts the worker threads, the logger and, in graph mode, the topology handler;
+    /// 3. loads the context's observers and plugins;
+    /// 4. starts the notification sorter.
+    ///
+    /// If a step fails, the error is written to `Error.log` (once the log folder exists),
+    /// everything already started is stopped, the engine thread is joined, and the error is
+    /// returned. No Thryve thread is left running.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The context with the configuration, the observers, the plugins and the log-file
+    ///   names
+    /// * `func` - The run mode's loop. It runs on the engine thread once the engine arrives, after
+    ///   the debug wait (`wait_before_execution`) if debugging is on. If the engine never arrives,
+    ///   it never runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::ThreadInit`] if the engine thread or any of Thryve's threads can't
+    /// be started. It also returns every error of the setup steps: the folder and log-file errors
+    /// of [`init_directories`], [`NamingError`](thryve_utils::errors::NamingError) for a bad
+    /// log-file name, and [`StartupError::RegisterDuplicate`] for a plugin type, an observer type
+    /// or a log-file name used twice.
+    pub fn prepare(
+        mut ctx: Ctx,
+        func: impl FnOnce(Engine) + Send + 'static,
+    ) -> Result<Self, ThryveError> {
+        let builder = std::thread::Builder::new();
+        let (tx, rx) = crossbeam::channel::bounded::<Engine>(1);
+
+        let handle = builder
+            .name(String::from("Engine Thread"))
+            .spawn(move || {
+                if let Ok(eng) = rx.recv() {
+                    // Handle any debugging wait time if specified in the configuration.
+                    if ctx.config.debugging.is_debugging {
+                        thread::sleep(Duration::from_secs(
+                            ctx.config.debugging.wait_before_execution,
+                        ));
+                    }
+
+                    func(eng)
+                }
+            })
+            .map_err(|e| {
+                let error = StartupError::ThreadInit {
+                    thread_name: "Engine Thread".to_string(),
+                    source: e,
+                }
+                .into();
+
+                ctx.e_log(&error);
+
+                error
+            })?;
+
+        let mut eng = Engine::new(&ctx);
+
+        let init_result = init_sequence(&mut eng, &mut ctx);
+
+        let initialization_sequence = EngineInitialization {
+            eng_thread_handle: handle,
+            eng_thread_tx: tx,
+            eng,
+            ctx,
+        };
+
+        if let Err(e) = init_result {
+            initialization_sequence.abort(&e);
+            return Err(e);
+        }
+
+        Ok(initialization_sequence)
+    }
+
+    /// Hands the engine to the engine thread, which starts the run mode's loop.
+    ///
+    /// Returns the engine thread's handle. Joining it waits until the loop has ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::EngineThreadEnded`] if the engine thread ended before it received
+    /// the engine. Its code only waits, so this shouldn't happen. If it does, the engine is taken
+    /// back and stopped the same way as when a setup step fails.
+    pub fn complete_and_run(mut self) -> Result<JoinHandle<()>, ThryveError> {
+        if let Err(e) = self.eng_thread_tx.send(self.eng) {
+            let error: ThryveError = StartupError::EngineThreadEnded.into();
+            self.eng = e.0;
+
+            self.abort(&error);
+
+            return Err(error);
+        };
+
+        Ok(self.eng_thread_handle)
+    }
+
+    /// Stops a prepared engine that will never start.
+    ///
+    /// Writes `error` to `Error.log` first, so that the reason isn't lost even if the cleanup
+    /// hangs. Then it closes the channel (the waiting engine thread ends), finalizes the engine
+    /// (which stops every thread it started) and joins the engine thread.
+    ///
+    /// [`prepare`](Self::prepare) calls this when a setup step fails. The Windows service calls it
+    /// when it can't connect to the service manager.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - Why the engine won't start
+    pub(crate) fn abort(mut self, error: &ThryveError) {
+        self.ctx.e_log(error);
+
+        drop(self.eng_thread_tx);
+        self.eng.finalize();
+        let _ = self.eng_thread_handle.join();
+    }
+}
+
+/// Runs the setup steps of [`EngineInitialization::prepare`], in order, and stops at the first
+/// error.
+///
+/// The order matters:
+///
+/// - The folders and log files come first, because the logger needs them.
+/// - The logger and the topology handler load before the context's observers, so the duplicate
+///   check rejects a user observer typed `Logging`, or `TopologyHandler` in graph mode.
+/// - The sorter starts last, because it copies the observer map when it starts.
+///
+/// This function doesn't clean up after an error. `prepare` does, through
+/// [`EngineInitialization::abort`].
+fn init_sequence(eng: &mut Engine, ctx: &mut Ctx) -> Result<(), ThryveError> {
+    // Initialize the logging directories and panic hook.
+    init_directories(ctx)?;
+    extras::panic_hook::init_panic_hook();
 
     // Start the thread pool for the plugin manager to allow plugins to run
     // their threads and perform their tasks.
-    eng.plugin_manager.threadpool.run_threads_plugins();
+    eng.plugin_manager
+        .threadpool
+        .run_threads_plugins(eng.plugin_manager.res_tx.clone())?;
 
     // Initialize the logger observer with the specified log file names.
-    init_logger(ctx, &mut eng);
+    init_logger(ctx, eng)?;
 
     if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph {
-        init_topology_handler(ctx, &mut eng);
+        init_topology_handler(ctx, eng)?;
     }
 
-    eng
+    let len_obs_tasks = ctx.observers.len();
+    let len_plugin_tasks = ctx.plugins.len();
+
+    // Load the observers and plugins into the engine if there are any specified in the context.
+    if len_obs_tasks > 0 {
+        for obs in ctx.observers() {
+            eng.obs_manager.load_observer(obs)?;
+        }
+    }
+
+    // Load the plugins into the engine if there are any specified in the context.
+    if len_plugin_tasks > 0 {
+        for plugin in ctx.plugins() {
+            println!("loaded plugin: {}", plugin.plg_type());
+            eng.plugin_manager.load_plugin(&ctx.config, plugin)?;
+        }
+    }
+
+    // Initialize the observer sorter thread responsible for sorting incoming notifications and forwarding them to the correct observer queues.
+    eng.obs_manager.init_obs_sorter_thread()?;
+
+    Ok(())
 }
 
 /// Initializes the logger observer with the specified log file names.
@@ -107,9 +289,13 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 ///
 /// # Arguments
 ///
-/// * `ctx` - The application context containing the packet handle
+/// * `ctx` - The application context containing the packet handle and the log files
 /// * `eng` - Mutable reference to the engine to load the observer into
-/// * `file_names` - Vector of log file names to create
+///
+/// # Errors
+///
+/// Returns [`StartupError::LogFileFetch`] if the context has no `Error.log` (`init_directories`
+/// hasn't run), or [`StartupError::ThreadInit`] if the logger's thread can't be started.
 ///
 /// # Example
 ///
@@ -120,25 +306,47 @@ pub fn init_engine(ctx: &Ctx) -> Engine {
 /// use thryve_utils::cfg::config::Config;
 ///
 /// let mut ctx = summon_requirements(Config::load_def_config());
-/// init_directories(&mut ctx);
+/// init_directories(&mut ctx)?;
 /// let mut engine = Engine::new(&ctx);
-/// init_logger(&ctx, &mut engine);
+/// init_logger(&ctx, &mut engine)?;
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
-pub fn init_logger(ctx: &Ctx, eng: &mut Engine) {
+pub fn init_logger(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveError> {
     // Create a new instance of the `LoggerObserver` struct, passing the
     // checked log file names and the packet handle from the context for
     // communication.
-    let logger = LoggerObserver::new(ctx);
+    let logger = LoggerObserver::new(ctx)?;
 
     // Load the logger observer into the engine's observer manager to make it
     // available for handling notifications and logging messages.
-    eng.obs_manager.load_observer(logger);
+    eng.obs_manager.load_observer(logger)?;
+
+    Ok(())
 }
 
-pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) {
-    let topology_handler = TopologyHandlerObserver::new(ctx);
+/// Initializes the topology handler observer used by graph mode.
+///
+/// Creates a [`TopologyHandlerObserver`](thryve_observers::topology_handler::TopologyHandlerObserver)
+/// and loads it into the engine's observer manager. The startup sequence
+/// ([`EngineInitialization::prepare`]) calls this only when both `is_debugging` and
+/// `visual_graph` are enabled, after [`init_directories`] has created the topology directory.
+///
+/// # Arguments
+///
+/// * `ctx` - The application context containing the packet handle and the topology directory
+/// * `eng` - Mutable reference to the engine to load the observer into
+///
+/// # Errors
+///
+/// Returns [`StartupError::DirFetch`] if the context has no topology folder (`init_directories`
+/// didn't run in graph mode), or [`StartupError::ThreadInit`] if the topology handler's thread
+/// can't be started.
+pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveError> {
+    let topology_handler = TopologyHandlerObserver::new(ctx)?;
 
-    eng.obs_manager.load_observer(topology_handler);
+    eng.obs_manager.load_observer(topology_handler)?;
+
+    Ok(())
 }
 
 /// Initializes the directory structure and log files for the Thryve system.
@@ -176,12 +384,15 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) {
 /// - `Error.log`: Error messages
 /// - `<Module>.log`: Module-specific logs for each name in `ctx.logging_file_names`
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics if:
-/// - Cannot determine the executable path
-/// - Cannot create the log directory
-/// - Cannot create any of the log files
+/// Returns a [`StartupError`] if:
+/// - the executable's directory can't be found (`RootFolder`, `NoParentFolder`);
+/// - the log directory can't be created (`LogDirCreation`);
+/// - a log file can't be opened (`LogFileOpen`);
+/// - graph mode is on and the topology directory can't be created (`TopologyDirCreation`).
+///
+/// Folders and files created before the failing step are left on disk.
 ///
 /// # Example
 ///
@@ -191,50 +402,58 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) {
 /// use thryve_utils::cfg::config::Config;
 ///
 /// let mut ctx = summon_requirements(Config::load_def_config());
-/// init_directories(&mut ctx);
+/// init_directories(&mut ctx)?;
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
-pub fn init_directories(ctx: &mut Ctx) {
-    let log_dir_path = create_dir(DirName::Log)
-        .expect("Failed to create log directory - cannot initialize without logging capability");
-
+pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
     // Create log files for each module type and store them in a hashmap for easy access.
-    let mut temp_hash_map: HashMap<NamedInput, Arc<File>> = HashMap::new();
+    let mut temp_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
+    let mut temp_validation_hash_map: HashMap<LogFileNamedInput, String> = HashMap::new();
+
+    for name in ctx.logging_file_names.iter() {
+        let log_file_name = LogFileNamedInput::new_register(&name.to_ascii_uppercase())?;
+
+        if temp_validation_hash_map.contains_key(&log_file_name) {
+            return Err(ThryveError::Startup(StartupError::RegisterDuplicate {
+                name: name.to_string(),
+                kind: NameInputType::LogFileName,
+            }));
+        }
+
+        temp_validation_hash_map.insert(log_file_name, name.to_string());
+    }
+
+    let log_dir_path = create_dir(DirName::Log)?;
 
     // Create a main log file and an error log file for general logging and
     // error logging respectively.
     let log_file_path_main = log_dir_path.join("Main.log");
     temp_hash_map.insert(
-        NamedInput::new("Main"),
+        LogFileNamedInput::new_main(),
         Arc::new(
             OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&log_file_path_main)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to create main log file at {}: {}",
-                        log_file_path_main.display(),
-                        e
-                    )
-                }),
+                .map_err(|e| StartupError::LogFileOpen {
+                    path: log_file_path_main.clone(),
+                    source: e,
+                })?,
         ),
     );
 
     let log_file_path_err = log_dir_path.join("Error.log");
     temp_hash_map.insert(
-        NamedInput::new("Error"),
+        LogFileNamedInput::new_err(),
         Arc::new(
             OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&log_file_path_err)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to create error log file at {}: {}",
-                        log_file_path_err.display(),
-                        e
-                    )
-                }),
+                .map_err(|e| StartupError::LogFileOpen {
+                    path: log_file_path_err.clone(),
+                    source: e,
+                })?,
         ),
     );
 
@@ -242,60 +461,51 @@ pub fn init_directories(ctx: &mut Ctx) {
     if ctx.config.debugging.is_debugging {
         let log_file_path_debug = log_dir_path.join("Debug.log");
         temp_hash_map.insert(
-            NamedInput::new("Debug"),
+            LogFileNamedInput::new_debug(),
             Arc::new(
                 OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&log_file_path_debug)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to create debug log file at {}: {}",
-                            log_file_path_debug.display(),
-                            e
-                        )
-                    }),
+                    .map_err(|e| StartupError::LogFileOpen {
+                        path: log_file_path_debug.clone(),
+                        source: e,
+                    })?,
             ),
         );
     }
 
-    let file_names = ctx.logging_file_names.clone();
-
     // Create log files for each supplied file name and store them in the hashmap.
-    for name in file_names {
-        let log_file_path = log_dir_path.join(format!("{}.log", name));
+    for (key, value) in temp_validation_hash_map {
+        let log_file_path = log_dir_path.join(format!("{}.log", value));
 
         temp_hash_map.insert(
-            NamedInput::new(name.as_str()),
+            key,
             Arc::new(
                 OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&log_file_path)
-                    .unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to create log file at {}: {}",
-                            log_file_path.display(),
-                            e
-                        )
-                    }),
+                    .map_err(|e| StartupError::LogFileOpen {
+                        path: log_file_path.clone(),
+                        source: e,
+                    })?,
             ),
         );
     }
 
-    let current_exec_dir = get_current_exec_dir().expect(
-        "Failed to get current executable directory - cannot initialize DirData without this path",
-    );
+    let current_exec_dir = get_current_exec_dir()?;
     let mut dir_data = DirData::new(current_exec_dir, temp_hash_map);
     dir_data.set_path(DirName::Log, log_dir_path);
 
     if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph {
-        let topology_dir_path = create_dir(DirName::Topology)
-            .expect("Failed to create topology directory - cannot initialize topology tracking");
+        let topology_dir_path = create_dir(DirName::Topology)?;
         dir_data.set_path(DirName::Topology, topology_dir_path);
     }
 
     let meta_data = MetaData::new(get_current_date_time(), dir_data);
 
     ctx.meta_data = meta_data;
+
+    Ok(())
 }

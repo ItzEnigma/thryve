@@ -51,7 +51,7 @@ use crate::traits::queue::Queue;
 ///
 /// Uses crossbeam's `SegQueue` for lock-free concurrent access,
 /// wrapped in [`QueueBase`] for common queue functionality.
-pub type QChild = QueueBase<SegQueue<Notif>, Notif>;
+pub type QChild = QueueBase<SegQueue<Notif>, Notif, ()>;
 
 impl Queue<Notif> for QChild {
     /// Pushes a notification into the queue.
@@ -135,26 +135,22 @@ impl Queue<Notif> for QChild {
 
     /// Finalizes the queue for shutdown.
     ///
-    /// Drains remaining notifications to the logger, sets the exit
-    /// flag, and notifies all waiting threads.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `logger` is `None`, which indicates the queue was
-    /// finalized without a valid logger observer.
+    /// Sets the exit flag and wakes every waiting thread, so a blocked `pop` returns. Then it
+    /// sends an "Obs Queue Finalized" line to `logger`, if there is one.
     ///
     /// # Arguments
     ///
-    /// * `logger` - The logger observer for draining notifications
+    /// * `logger` - The observer that receives the final line, or `None` to skip it (for
+    ///   example, when a half-built engine is finalized after a failed startup and has no
+    ///   logger)
     fn finalize(&self, logger: Option<Arc<Observer>>) {
         self.exit_flag.store(true, Ordering::SeqCst);
         self.worker_registry.notify_all();
 
-        let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
-        let obs = logger.expect(
-            "Observer queue finalized without logger - cannot send finalization notification",
-        );
-        obs.obs_queue.push(notif);
+        if let Some(logger) = &logger {
+            let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
+            logger.obs_queue.push(notif);
+        }
     }
 
     /// Pauses the queue.
@@ -164,7 +160,7 @@ impl Queue<Notif> for QChild {
         self.pause_flag.store(true, Ordering::SeqCst);
 
         let notif = Log::log("Obs Queue Paused".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     /// Resumes the queue.
@@ -174,7 +170,7 @@ impl Queue<Notif> for QChild {
         self.pause_flag.store(false, Ordering::SeqCst);
 
         let notif = Log::log("Obs Queue continuing".to_string(), "Main");
-        self.packet_handle.send_notification(notif);
+        self.packet_handle.send_status(notif)
     }
 
     fn exit_flag(&self) -> Arc<AtomicBool> {
@@ -197,7 +193,7 @@ impl QChild {
     /// A new `QChild` instance.
     pub fn new(q_size: usize, packet_handle: PacketHandle) -> Self {
         Self {
-            task_config: None,
+            task_config: Arc::new(()),
             main_queue: SegQueue::new(),
             worker_registry: Arc::new(WorkerRegistry::new(q_size)),
             exit_flag: Arc::new(AtomicBool::new(false)),

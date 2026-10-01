@@ -9,6 +9,7 @@
 
 mod tests_extras {
     mod tests {
+        use thryve_utils::errors::NameInputType;
         use thryve_utils::extras::*;
 
         // Tests for named_input module
@@ -21,7 +22,8 @@ mod tests_extras {
                 let valid_name = "ValidName123";
 
                 // Act
-                let result = named_input::NamedInput::new(valid_name);
+                let result =
+                    named_input::NamedInput::new(valid_name, NameInputType::TaskName).unwrap();
 
                 // Assert
                 assert_eq!(result.inner(), "ValidName123");
@@ -33,7 +35,8 @@ mod tests_extras {
                 let letters_only = "HelloWorld";
 
                 // Act
-                let result = named_input::NamedInput::new(letters_only);
+                let result =
+                    named_input::NamedInput::new(letters_only, NameInputType::TaskName).unwrap();
 
                 // Assert
                 assert_eq!(result.inner(), "HelloWorld");
@@ -45,7 +48,8 @@ mod tests_extras {
                 let numbers_only = "123456";
 
                 // Act
-                let result = named_input::NamedInput::new(numbers_only);
+                let result =
+                    named_input::NamedInput::new(numbers_only, NameInputType::TaskName).unwrap();
 
                 // Assert
                 assert_eq!(result.inner(), "123456");
@@ -57,66 +61,78 @@ mod tests_extras {
                 let mixed_case = "CamelCase123";
 
                 // Act
-                let result = named_input::NamedInput::new(mixed_case);
+                let result =
+                    named_input::NamedInput::new(mixed_case, NameInputType::TaskName).unwrap();
 
                 // Assert
                 assert_eq!(result.inner(), "CamelCase123");
             }
 
             #[test]
-            #[should_panic(expected = "NamedInput must be alphanumeric")]
-            fn test_named_input_new_with_hyphen_panics() {
-                // Arrange
-                let invalid_name = "Invalid-Name";
+            fn test_named_input_new_accepts_hyphen() {
+                // Arrange: general names only reject empty text and control characters
+                let name = "Valid-Name";
 
-                // Act & Assert
-                let _ = named_input::NamedInput::new(invalid_name);
+                // Act
+                let result = named_input::NamedInput::new(name, NameInputType::TaskName);
+
+                // Assert
+                assert_eq!(result.unwrap().inner(), "Valid-Name");
             }
 
             #[test]
-            #[should_panic(expected = "NamedInput must be alphanumeric")]
-            fn test_named_input_new_with_underscore_panics() {
-                // Arrange
-                let invalid_name = "Invalid_Name";
+            fn test_named_input_new_accepts_underscore() {
+                // Arrange: general names only reject empty text and control characters
+                let name = "Valid_Name";
 
-                // Act & Assert
-                let _ = named_input::NamedInput::new(invalid_name);
+                // Act
+                let result = named_input::NamedInput::new(name, NameInputType::TaskName);
+
+                // Assert
+                assert_eq!(result.unwrap().inner(), "Valid_Name");
             }
 
             #[test]
-            #[should_panic(expected = "NamedInput must be alphanumeric")]
-            fn test_named_input_new_with_space_panics() {
-                // Arrange
-                let invalid_name = "Invalid Name";
+            fn test_named_input_new_accepts_space() {
+                // Arrange: general names only reject empty text and control characters
+                let name = "Valid Name";
 
-                // Act & Assert
-                let _ = named_input::NamedInput::new(invalid_name);
+                // Act
+                let result = named_input::NamedInput::new(name, NameInputType::TaskName);
+
+                // Assert
+                assert_eq!(result.unwrap().inner(), "Valid Name");
             }
 
             #[test]
-            #[should_panic(expected = "NamedInput must be alphanumeric")]
-            fn test_named_input_new_with_special_char_panics() {
-                // Arrange
-                let invalid_name = "Invalid@Name";
+            fn test_named_input_new_accepts_special_char() {
+                // Arrange: general names only reject empty text and control characters
+                let name = "Valid@Name";
 
-                // Act & Assert
-                let _ = named_input::NamedInput::new(invalid_name);
+                // Act
+                let result = named_input::NamedInput::new(name, NameInputType::TaskName);
+
+                // Assert
+                assert_eq!(result.unwrap().inner(), "Valid@Name");
             }
 
             #[test]
-            #[should_panic(expected = "NamedInput must be alphanumeric")]
-            fn test_named_input_new_with_dot_panics() {
-                // Arrange
-                let invalid_name = "Invalid.Name";
+            fn test_named_input_new_accepts_dot() {
+                // Arrange: general names only reject empty text and control characters
+                let name = "Valid.Name";
 
-                // Act & Assert
-                let _ = named_input::NamedInput::new(invalid_name);
+                // Act
+                let result = named_input::NamedInput::new(name, NameInputType::TaskName);
+
+                // Assert
+                assert_eq!(result.unwrap().inner(), "Valid.Name");
             }
 
             #[test]
             fn test_named_input_inner_returns_correct_value() {
                 // Arrange
-                let name = named_input::NamedInput::new("TestName");
+                let name =
+                    named_input::NamedInput::new("TestName", NameInputType::TaskName).unwrap();
 
                 // Act
                 let inner = name.inner();
@@ -128,7 +144,8 @@ mod tests_extras {
             #[test]
             fn test_named_input_display_impl() {
                 // Arrange
-                let name = named_input::NamedInput::new("DisplayTest");
+                let name =
+                    named_input::NamedInput::new("DisplayTest", NameInputType::TaskName).unwrap();
 
                 // Act
                 let display_str = format!("{}", name);
@@ -140,7 +157,8 @@ mod tests_extras {
             #[test]
             fn test_named_input_clone() {
                 // Arrange
-                let original = named_input::NamedInput::new("CloneTest");
+                let original =
+                    named_input::NamedInput::new("CloneTest", NameInputType::TaskName).unwrap();
 
                 // Act
                 let cloned = original.clone();
@@ -152,7 +170,8 @@ mod tests_extras {
             #[test]
             fn test_named_input_debug_impl() {
                 // Arrange
-                let name = named_input::NamedInput::new("DebugTest");
+                let name =
+                    named_input::NamedInput::new("DebugTest", NameInputType::TaskName).unwrap();
 
                 // Act
                 let debug_str = name.inner().to_string();
@@ -164,9 +183,12 @@ mod tests_extras {
             #[test]
             fn test_named_input_partial_eq() {
                 // Arrange
-                let name1 = named_input::NamedInput::new("EqualTest");
-                let name2 = named_input::NamedInput::new("EqualTest");
-                let name3 = named_input::NamedInput::new("Different");
+                let name1 =
+                    named_input::NamedInput::new("EqualTest", NameInputType::TaskName).unwrap();
+                let name2 =
+                    named_input::NamedInput::new("EqualTest", NameInputType::TaskName).unwrap();
+                let name3 =
+                    named_input::NamedInput::new("Different", NameInputType::TaskName).unwrap();
 
                 // Act & Assert
                 assert_eq!(name1.inner(), name2.inner());
@@ -176,8 +198,10 @@ mod tests_extras {
             #[test]
             fn test_named_input_hash_consistency() {
                 // Arrange
-                let name1 = named_input::NamedInput::new("HashTest");
-                let name2 = named_input::NamedInput::new("HashTest");
+                let name1 =
+                    named_input::NamedInput::new("HashTest", NameInputType::TaskName).unwrap();
+                let name2 =
+                    named_input::NamedInput::new("HashTest", NameInputType::TaskName).unwrap();
 
                 // Act
                 use std::collections::HashSet;
@@ -219,7 +243,7 @@ mod tests_extras {
                 let result = job.call_once();
 
                 // Assert
-                assert_eq!(result.result_type.inner(), "Success");
+                assert_eq!(result.result_type(), "Success");
                 assert_eq!(result.message, "Completed");
             }
 
@@ -248,7 +272,7 @@ mod tests_extras {
                 let result = job.call_once();
 
                 // Assert
-                assert_eq!(result.result_type.inner(), "FromBoxed");
+                assert_eq!(result.result_type(), "FromBoxed");
                 assert_eq!(result.message, "Done");
             }
 
@@ -271,13 +295,15 @@ mod tests_extras {
                 let packet_handle = thryve_utils::packets::packet_handle::PacketHandle::new(
                     task_tx, notif_tx, false,
                 );
-                let observer = Arc::new(thryve_utils::bases::observer::Observer::new(
-                    "TestObserver",
-                    "TestType",
-                    Arc::new(TestObsLogic),
-                    job,
-                    packet_handle,
-                ));
+                let observer = Arc::new(
+                    thryve_utils::bases::observer::Observer::new(
+                        "TestType",
+                        Arc::new(TestObsLogic),
+                        job,
+                        packet_handle,
+                    )
+                    .unwrap(),
+                );
                 observer.run_loop(observer.clone());
 
                 // Assert
@@ -305,13 +331,15 @@ mod tests_extras {
                     task_tx, notif_tx, false,
                 );
 
-                let observer = Arc::new(thryve_utils::bases::observer::Observer::new(
-                    "TestObserver",
-                    "TestType",
-                    Arc::new(TestObsLogic),
-                    job,
-                    packet_handle,
-                ));
+                let observer = Arc::new(
+                    thryve_utils::bases::observer::Observer::new(
+                        "TestType",
+                        Arc::new(TestObsLogic),
+                        job,
+                        packet_handle,
+                    )
+                    .unwrap(),
+                );
 
                 // Act - execute the obs_job
                 observer.run_loop(observer.clone());
@@ -467,8 +495,9 @@ mod tests_extras {
 
             #[test]
             fn test_get_workspace_root_returns_valid_path() {
-                // Act
-                let workspace_root = dir_paths::get_workspace_root();
+                // Act - the tests run inside the cargo workspace, so the lookup succeeds
+                let workspace_root = dir_paths::get_workspace_root()
+                    .expect("the tests run inside the cargo workspace");
 
                 // Assert - should be an absolute path
                 assert!(workspace_root.is_absolute());
@@ -482,20 +511,6 @@ mod tests_extras {
                     cargo_toml.exists(),
                     "Workspace root should contain Cargo.toml"
                 );
-            }
-        }
-
-        // Tests for stack module - extract_module_path is private, test via integration
-        mod stack_tests {
-
-            // Note: get_task_data requires a real backtrace and is hard to unit test
-            // We can test the public API works without crashing
-
-            #[test]
-            fn test_stack_module_compiles() {
-                // This test just verifies the stack module compiles
-                // Actual testing of get_task_data happens in integration tests
-                // with real backtraces
             }
         }
 
@@ -573,7 +588,7 @@ mod tests_extras {
 
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 assert!(
-                    stderr.contains("[PANIC]"),
+                    stderr.contains("[ PANIC ]"),
                     "stderr should contain the panic hook's message: {}",
                     stderr
                 );
@@ -590,7 +605,7 @@ mod tests_extras {
                 );
                 let contents =
                     std::fs::read_to_string(&error_log).expect("Error.log should be readable");
-                assert!(contents.contains("[PANIC]"));
+                assert!(contents.contains("[ PANIC ]"));
                 assert!(contents.contains("triggered from panic_hook subprocess test"));
 
                 let _ = std::fs::remove_dir_all(&log_dir);
@@ -629,9 +644,9 @@ mod tests_res {
         let result = TaskResult::new(result_type, message, log_file);
 
         // Assert
-        assert_eq!(result.result_type.inner(), "Success");
+        assert_eq!(result.result_type(), "Success");
         assert_eq!(result.message, "Task completed successfully");
-        assert_eq!(result.log_msg_to_file.inner(), "Main");
+        assert_eq!(result.log_msg_to_file(), "Main");
         assert!(result.next_task.is_none());
         assert!(result.observer.is_none());
         assert!(result.plugin.is_none());
@@ -668,14 +683,15 @@ mod tests_res {
             "FollowUpTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act
         let result = TaskResult::new("Chained", "Continuing to next task".to_string(), "Main")
             .chain(next_task);
 
         // Assert
-        assert_eq!(result.result_type.inner(), "Chained");
+        assert_eq!(result.result_type(), "Chained");
         assert_eq!(result.message, "Continuing to next task");
         assert!(result.next_task.is_some());
         assert!(result.observer.is_none());
@@ -683,7 +699,7 @@ mod tests_res {
 
         // Verify the task details
         if let Some(task) = result.next_task {
-            assert_eq!(task.task_name.inner(), "FollowUpTask");
+            assert_eq!(task.task_name(), "FollowUpTask");
             assert_eq!(task.base_priority, 1);
         }
     }
@@ -715,8 +731,8 @@ mod tests_res {
     #[test]
     fn test_result_chaining_pattern() {
         // Arrange & Act - Simulate a task chain
-        let task1_result =
-            TaskResult::new("Step1", "First step done".to_string(), "Main").chain(Task::new(
+        let task1_result = TaskResult::new("Step1", "First step done".to_string(), "Main").chain(
+            Task::new(
                 "Step2",
                 2,
                 TaskJob::new(|| {
@@ -727,10 +743,13 @@ mod tests_res {
                             TaskJob::new(|| {
                                 TaskResult::new("Final", "All done".to_string(), "Main")
                             }),
-                        ),
+                        )
+                        .unwrap(),
                     )
                 }),
-            ));
+            )
+            .unwrap(),
+        );
 
         // Assert first result has a task
         assert!(task1_result.next_task.is_some());
@@ -744,7 +763,7 @@ mod tests_res {
             if let Some(final_task) = task2_result.next_task {
                 let final_result = final_task.process().unwrap().1;
                 assert!(final_result.next_task.is_none());
-                assert_eq!(final_result.result_type.inner(), "Final");
+                assert_eq!(final_result.result_type(), "Final");
             }
         }
     }
@@ -772,17 +791,23 @@ mod tests_res {
     }
 
     #[test]
-    #[should_panic(expected = "NamedInput must be alphanumeric")]
-    fn test_result_invalid_result_type_panics() {
-        // Arrange & Act - This should panic due to invalid result type
-        let _ = TaskResult::new("Invalid-Type", "msg".to_string(), "Main");
+    fn test_result_keeps_any_result_type() {
+        // Arrange & Act: result types are plain text; the engine checks them when it
+        // handles the result, so creating one never fails
+        let result = TaskResult::new("Any-Type", "msg".to_string(), "Main");
+
+        // Assert
+        assert_eq!(result.result_type(), "Any-Type");
     }
 
     #[test]
-    #[should_panic(expected = "NamedInput must be alphanumeric")]
-    fn test_result_invalid_log_file_panics() {
-        // Arrange & Act - This should panic due to invalid log file name
-        let _ = TaskResult::new("Valid", "msg".to_string(), "Invalid/File");
+    fn test_result_keeps_any_log_file_name() {
+        // Arrange & Act: the logger decides when it writes, so an unregistered or
+        // badly formed name is kept as written
+        let result = TaskResult::new("Valid", "msg".to_string(), "Invalid/File");
+
+        // Assert
+        assert_eq!(result.log_msg_to_file(), "Invalid/File");
     }
 
     #[test]
@@ -831,7 +856,8 @@ mod tests_res {
             "NextTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
         let result =
             TaskResult::new("Chained", "Chained message".to_string(), "Main").chain(next_task);
 
@@ -850,9 +876,9 @@ mod tests_res {
         let result = TaskResult::fin();
 
         // Assert
-        assert_eq!(result.result_type.inner(), "Fin");
+        assert_eq!(result.result_type(), "Fin");
         assert_eq!(result.message, "finishing capture: starting exit now.");
-        assert_eq!(result.log_msg_to_file.inner(), "Main");
+        assert_eq!(result.log_msg_to_file(), "Main");
         assert!(result.next_task.is_none());
         assert!(result.observer.is_none());
         assert!(result.plugin.is_none());
@@ -900,7 +926,8 @@ mod tests_res {
             "ChainedTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - chain should set up callsite when thread-local fingerprint is set
         let result =
@@ -921,6 +948,23 @@ mod tests_res {
         thryve_utils::extras::thread_local::tl_set_current_task_fingerprint(String::new());
     }
 
+    // The call site is the line that calls `chain`, passed in by the compiler (`#[track_caller]`),
+    // so it's exact however the code was optimized or inlined.
+    #[test]
+    fn test_result_chain_records_the_exact_call_line() {
+        thryve_utils::extras::thread_local::tl_set_current_task_fingerprint("parent".to_string());
+        let next_task = Task::new("Next", 1, TaskJob::new(TaskResult::default)).unwrap();
+
+        let result = TaskResult::default().chain(next_task);
+        let chained_at = line!() - 1;
+
+        thryve_utils::extras::thread_local::tl_set_current_task_fingerprint(String::new());
+        let callsite = result.next_task.unwrap().get_callsite();
+        assert_eq!(callsite.line_number, chained_at);
+        assert_eq!(callsite.file_path, std::path::PathBuf::from(file!()));
+        assert_eq!(callsite.current_executing_task_fingerprint, "parent");
+    }
+
     #[test]
     fn test_result_chain_with_different_thread_local_fingerprints() {
         // Test with different fingerprint values
@@ -935,7 +979,8 @@ mod tests_res {
                 "ChainedTask",
                 1,
                 TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            );
+            )
+            .unwrap();
 
             // Act
             let result =
@@ -962,7 +1007,8 @@ mod tests_res {
             "ChainedTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - chain should not set up callsite when thread-local fingerprint is empty
         let result =
@@ -981,7 +1027,8 @@ mod tests_res {
             "UnicodeTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - chain with unicode message
         let result =
@@ -1000,7 +1047,8 @@ mod tests_res {
             "LongTask",
             1,
             TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        );
+        )
+        .unwrap();
 
         // Act - chain with long message
         let result = TaskResult::new("Long", long_message.clone(), "Main").chain(next_task);
@@ -1047,7 +1095,7 @@ mod tests_threadpool {
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
-        let pool = ThreadPool::new(2, queue, packet_handle, None);
+        let pool = ThreadPool::new(2, queue, packet_handle);
 
         // Assert
         assert_eq!(pool.num_workers(), 2);
@@ -1065,7 +1113,7 @@ mod tests_threadpool {
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
-        let pool = ThreadPool::new(0, queue, packet_handle, None);
+        let pool = ThreadPool::new(0, queue, packet_handle);
 
         // Assert
         assert_eq!(pool.num_workers(), 0);
@@ -1078,7 +1126,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let pool = ThreadPool::new(1, queue, packet_handle, None);
+        let pool = ThreadPool::new(1, queue, packet_handle);
         let notif = Log::log("test_message".to_string(), "Main");
 
         // Act
@@ -1089,7 +1137,7 @@ mod tests_threadpool {
         let popped = pool.main_queue.pop();
 
         // Assert - should have popped our notification
-        assert_eq!(popped.notif_type.inner(), "Log");
+        assert_eq!(popped.notif_type(), "Log");
     }
 
     #[test]
@@ -1101,7 +1149,7 @@ mod tests_threadpool {
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
-        let pool = ThreadPool::new(5, queue, packet_handle, None);
+        let pool = ThreadPool::new(5, queue, packet_handle);
 
         // Assert
         assert_eq!(pool.num_workers(), 5);
@@ -1114,7 +1162,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let pool = ThreadPool::new(1, queue, packet_handle, None);
+        let pool = ThreadPool::new(1, queue, packet_handle);
 
         // Act
         let flag1 = pool.pool_exit_flag();
@@ -1132,7 +1180,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle, None);
+        let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Assert initially not paused
         assert!(!pool.pool_pause_flag.load(Ordering::SeqCst));
@@ -1151,7 +1199,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle, None);
+        let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Pause first
         pool.pause();
@@ -1172,7 +1220,7 @@ mod tests_threadpool {
         let cfg = cfg::config::Config::default();
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = PQChild::new(&cfg, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle, None);
+        let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Assert initially not exiting
         assert!(!pool.pool_exit_flag.load(Ordering::SeqCst));
@@ -1191,7 +1239,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle, None);
+        let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Create a mock logger observer
         let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
@@ -1199,19 +1247,14 @@ mod tests_threadpool {
         let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let logger = Arc::new(Observer::new(
-            "logger",
-            "loggerType",
-            obs_core,
-            obs_job,
-            logger_packet_handle,
-        ));
+        let logger =
+            Arc::new(Observer::new("loggerType", obs_core, obs_job, logger_packet_handle).unwrap());
 
         // Assert initially not exiting
         assert!(!pool.pool_exit_flag.load(Ordering::SeqCst));
 
         // Act
-        pool.finalize_obs(logger);
+        pool.finalize_obs(Some(logger));
 
         // Assert
         assert!(pool.pool_exit_flag.load(Ordering::SeqCst));
@@ -1224,7 +1267,7 @@ mod tests_threadpool {
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
         let queue = QChild::new(1, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle, None);
+        let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Create a dummy thread handle
         let handle = std::thread::spawn(|| {});

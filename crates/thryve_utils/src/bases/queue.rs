@@ -44,7 +44,7 @@ use std::{
 };
 
 use crate::packets::packet_handle::PacketHandle;
-use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
+use crate::threads::thread_registry::WorkerRegistry;
 
 /// Base structure for all queue implementations in the Thryve system.
 ///
@@ -56,10 +56,13 @@ use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 ///
 /// - `Q`: The underlying queue type (e.g., `SkipMap`, `SegQueue`)
 /// - `P`: The packet type stored in the queue
+/// - `C`: The queue's configuration: [`TaskConfig`](crate::cfg::config::TaskConfig) for the task
+///   queue, `()` for the observer queue, which has none. Each queue has exactly what it uses, so
+///   nothing has to be unwrapped.
 ///
 /// # Fields
 ///
-/// - `task_config`: Optional configuration for task-related queue behavior
+/// - `task_config`: The queue's configuration (see `C`)
 /// - `main_queue`: The underlying queue storing items
 /// - `worker_registry`: Lock-free registry for parking and waking idle workers
 /// - `exit_flag`: Atomic flag indicating whether the queue should terminate
@@ -70,11 +73,12 @@ use crate::{cfg::config::TaskConfig, threads::thread_registry::WorkerRegistry};
 ///
 /// ```ignore
 /// // Queue implementations embed QueueBase to inherit common functionality
-/// pub type MyQueue<T> = QueueBase<SomeQueueType, T>;
+/// pub type MyQueue<T> = QueueBase<SomeQueueType, T, ()>;
 /// ```
-pub struct QueueBase<Q, P> {
-    /// Optional configuration for task-related queue behavior.
-    pub task_config: Option<Arc<TaskConfig>>,
+pub struct QueueBase<Q, P, C> {
+    /// The queue's configuration: the task settings for the task queue, `()` for the observer
+    /// queue.
+    pub task_config: Arc<C>,
     /// The underlying queue storing items.
     pub main_queue: Q,
     /// Lock-free registry idle workers park on and wakers scan to unpark one

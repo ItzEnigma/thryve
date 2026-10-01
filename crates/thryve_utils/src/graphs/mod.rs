@@ -7,5 +7,8 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! The task graph that graph mode records: where each task was created ([`callsite`]) and how tasks
+//! connect ([`graph`]).
+
 pub mod callsite;
 pub mod graph;
