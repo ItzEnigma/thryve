@@ -211,7 +211,7 @@ The engine loop itself and the built-in logger/topology observers are implementa
 
 Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
 
-A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `shutdown_grace_period`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `idle_wait`, `shutdown_grace_period`, `worker_count`, `aging_interval`, and the three pipe capacities and per-turn limits must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
 
@@ -223,7 +223,7 @@ can_stop = true
 can_pause = true
 
 [engine]
-sleep_tick_rate = 4
+idle_wait = 100
 shutdown_grace_period = 10
 
 [threads]
@@ -231,8 +231,11 @@ worker_count = 4
 
 [pipes]
 task_pipe_capacity = 1024
+tasks_processed_per_turn = 500
 notif_pipe_capacity = 1024
+notifs_processed_per_turn = 500
 res_pipe_capacity = 1024
+res_processed_per_turn = 500
 
 [tasks]
 max_priority = 4
@@ -252,12 +255,15 @@ log_tasks= false
 |---------|--------|------|---------|-------------|
 | `service` | `can_stop` | bool | true | Accept stop commands |
 | `service` | `can_pause` | bool | true | Accept pause/resume commands |
-| `engine` | `sleep_tick_rate` | u64 | 4 | Idle sleep duration (ms) |
+| `engine` | `idle_wait` | u64 | 100 | How long (ms) an idle engine waits for work before it checks its loop's flags (the service's Stop, Pause, Resume) again; anything that arrives wakes it at once |
 | `engine` | `shutdown_grace_period` | usize | 10 | Seconds the shutdown waits for running tasks; a task still running then is named in `Error.log` and left behind, and the plugins aren't cleaned up |
 | `threads` | `worker_count` | usize | 4 | Number of worker threads |
 | `pipes` | `task_pipe_capacity` | usize | 1024 | Task channel buffer size |
+| `pipes` | `tasks_processed_per_turn` | usize | 500 | Most tasks the engine takes per turn of its loop; the rest wait for the next turn |
 | `pipes` | `notif_pipe_capacity` | usize | 1024 | Notification channel buffer size |
+| `pipes` | `notifs_processed_per_turn` | usize | 500 | Most notifications the engine takes per turn |
 | `pipes` | `res_pipe_capacity` | usize | 1024 | Result channel buffer size |
+| `pipes` | `res_processed_per_turn` | usize | 500 | Most results the engine takes per turn |
 | `tasks` | `max_priority` | u8 | 4 | Maximum task priority (0-14) |
 | `tasks` | `aging_interval` | u64 | 3 | Seconds before priority boost |
 | `debugging` | `is_debugging` | bool | false | Enable debug mode |

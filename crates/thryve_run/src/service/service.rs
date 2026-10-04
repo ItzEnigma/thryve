@@ -50,13 +50,9 @@
 //! ```
 
 use crossbeam::channel::{bounded, unbounded};
-use std::{
-    sync::{
-        Arc, Mutex, PoisonError,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::Duration,
+use std::sync::{
+    Arc, Mutex, PoisonError,
+    atomic::{AtomicBool, Ordering},
 };
 use thryve_core::runtime::engine::Engine;
 use windows_services::{Command, Service};
@@ -377,12 +373,6 @@ pub fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc
         // Check the pause flag and pause or resume the engine accordingly.
         let engine_is_paused = eng.pause_flag;
         let is_pause_flag_loaded = pause_flag.load(Ordering::SeqCst);
-
-        // If the engine is already paused and the pause flag is still loaded, we just wait and continue the loop without calling run_once.
-        if engine_is_paused && is_pause_flag_loaded {
-            thread::sleep(Duration::from_millis(500));
-            continue;
-        }
 
         // If the pause flag is loaded and the engine is not paused, the engine gets paused.
         if is_pause_flag_loaded && !engine_is_paused {

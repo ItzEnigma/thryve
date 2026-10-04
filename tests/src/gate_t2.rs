@@ -83,7 +83,7 @@ use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::traits::queue::Queue;
 
 /// A fresh, empty folder for one test's files.
-fn fresh_dir(name: &str) -> PathBuf {
+pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join("thryve_gate_t2").join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -95,7 +95,7 @@ fn fresh_dir(name: &str) -> PathBuf {
 /// It has a real logger and the notification sorter, `workers` plugin workers, mailboxes (tasks,
 /// notifications and results) that each hold `capacity` items, and a grace period of
 /// `grace_period` seconds. Also returns a packet handle connected to it.
-fn started_engine(
+pub(crate) fn started_engine(
     dir: &Path,
     capacity: usize,
     workers: usize,
@@ -130,7 +130,7 @@ fn started_engine_with(
 /// `load` adds, with their threads running, but no sorter and no plugin workers yet. A startup
 /// that fails after this point (a plugin that doesn't load, say) finalizes such an engine. The
 /// context has a topology folder, `dir/topology`, for the topology handler.
-fn loaded_engine(
+pub(crate) fn loaded_engine(
     dir: &Path,
     capacity: usize,
     workers: usize,
@@ -186,7 +186,7 @@ fn loaded_engine(
 ///
 /// Returns how long the shutdown took, or `None` if it didn't finish in time; its thread is then
 /// left behind, so the test fails instead of hanging the run.
-fn finalize_within(engine: Engine, limit: Duration) -> Option<Duration> {
+pub(crate) fn finalize_within(engine: Engine, limit: Duration) -> Option<Duration> {
     finalize_within_as(engine, limit, false)
 }
 
@@ -226,7 +226,7 @@ fn run_until_shut_down(mut engine: Engine, limit: Duration) -> bool {
 /// Its logs go where a real run's do, next to the test executable. The startup installs Thryve's
 /// panic hook, which ends the process on any panic; the previous hook is put back as soon as the
 /// setup is done, so that a failing assertion still fails only its own test.
-fn run_real_engine(
+pub(crate) fn run_real_engine(
     ctx: Ctx,
     run: impl FnOnce(Engine) + Send + 'static,
     limit: Duration,
@@ -266,7 +266,7 @@ fn summary_line(tasks: usize, notifs: usize, results: usize, still_running: usiz
 }
 
 /// A task with nothing to do.
-fn idle_task(name: &str) -> Task {
+pub(crate) fn idle_task(name: &str) -> Task {
     Task::new(
         name,
         0,
@@ -316,7 +316,7 @@ impl PlgLogic for RecordingPlugin {
 }
 
 /// A plugin with nothing to clean up.
-struct QuietPlugin;
+pub(crate) struct QuietPlugin;
 
 impl PlgLogic for QuietPlugin {
     impl_as_any!(QuietPlugin);
@@ -755,10 +755,11 @@ mod grace_period {
         std::fs::write(
             &path,
             "[service]\ncan_stop = true\ncan_pause = true\n\n\
-             [engine]\nsleep_tick_rate = 4\nshutdown_grace_period = 0\n\n\
+             [engine]\nidle_wait = 100\nshutdown_grace_period = 0\n\n\
              [threads]\nworker_count = 4\n\n\
              [pipes]\ntask_pipe_capacity = 1024\nnotif_pipe_capacity = 1024\n\
-             res_pipe_capacity = 1024\n\n\
+             res_pipe_capacity = 1024\ntasks_processed_per_turn = 500\n\
+             notifs_processed_per_turn = 500\nres_processed_per_turn = 500\n\n\
              [tasks]\nmax_priority = 4\naging_interval = 3\n\n\
              [debugging]\nis_debugging = false\nwait_before_execution = 10\nvisual_graph = false\n\
              calculate_metrics = false\nlog_tasks = false\n",
@@ -980,7 +981,7 @@ mod lost_work {
     fn with_debugging_on_debug_log_lists_what_was_lost() {
         let dir = fresh_dir("lost_work_debug");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
-        engine.is_debug_enabled = true;
+        engine.config.debugging.is_debugging = true;
         engine
             .obs_manager
             .load_observer(observer(
@@ -1341,8 +1342,8 @@ mod graph_mode {
                 .unwrap();
         });
         // Graph mode, as startup sets it: debugging and `visual_graph` both on.
-        engine.is_debug_enabled = true;
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.visual_graph = true;
 
         // Loaded and queued the way startup does it.
         let (ran_tx, ran_rx) = bounded(1);

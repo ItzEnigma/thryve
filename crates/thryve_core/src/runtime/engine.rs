@@ -33,6 +33,7 @@ use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginMa
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
+use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
 use thryve_utils::cfg::metrics::Metrics;
 use thryve_utils::extras::named_input::NamedInput;
@@ -43,7 +44,7 @@ use thryve_utils::res::TaskResult;
 use thryve_utils::threads::threadpool::TaskSlot;
 use thryve_utils::traits::queue::Queue;
 
-use crossbeam::channel::{Receiver, bounded};
+use crossbeam::channel::{Receiver, Select, bounded};
 use std::collections::HashMap;
 use std::thread::JoinHandle;
 use std::time::Instant;
@@ -58,7 +59,8 @@ use std::{sync::Arc, thread, time::Duration};
 ///
 /// # Fields
 ///
-/// - `sleep_tick_rate`: Milliseconds to sleep when idle
+/// - `config`: The configuration the engine was created with
+/// - `metrics`: Size metrics, kept in debug mode with `calculate_metrics` on
 /// - `obs_manager`: Manages observers and notifications
 /// - `plugin_manager`: Manages plugins and tasks
 /// - `task_rx`: Receiver for incoming tasks
@@ -75,20 +77,12 @@ use std::{sync::Arc, thread, time::Duration};
 /// engine.run_once(); // Single iteration
 /// ```
 pub struct Engine {
-    /// Milliseconds to sleep when idle.
-    pub sleep_tick_rate: u64,
-    /// Seconds the shutdown waits for tasks that are still running (see
-    /// [`EngineConfig::shutdown_grace_period`](thryve_utils::cfg::config::EngineConfig::shutdown_grace_period)).
-    pub shutdown_grace_period: usize,
-    /// Determines if the Config debug-mode is enabled.
-    pub is_debug_enabled: bool,
-    /// Determines if metric calculation is enabled.
-    pub is_metric_calc_enabled: bool,
-    /// Determines if tasks are logged.
-    pub is_task_logging_enabled: bool,
-    /// Determines if graph visualization is enabled.
-    pub is_graph_vis_enabled: bool,
-    /// Keeps track of the metrics only if `is_debug_enabled` and `is_metric_calc_enabled` is true.
+    /// The configuration the engine was created with. The engine reads it as it runs: the idle
+    /// wait, the per-turn limits, the grace period and the debugging switches. Settings used only
+    /// at creation (the worker count, the mailbox capacities, the task queue's priorities) were
+    /// already applied, so changing them here has no effect.
+    pub config: Config,
+    /// Keeps track of the metrics, in debug mode with `calculate_metrics` on.
     pub metrics: Metrics,
     /// Manages observers and notifications.
     pub obs_manager: ObserverManager,
@@ -139,12 +133,7 @@ impl Engine {
         let (res_tx, res_rx) = bounded(ctx.config.pipes.res_pipe_capacity);
 
         let mut eng = Self {
-            sleep_tick_rate: ctx.config.engine.sleep_tick_rate,
-            shutdown_grace_period: ctx.config.engine.shutdown_grace_period,
-            is_debug_enabled: ctx.config.debugging.is_debugging,
-            is_metric_calc_enabled: ctx.config.debugging.calculate_metrics,
-            is_task_logging_enabled: ctx.config.debugging.log_tasks,
-            is_graph_vis_enabled: ctx.config.debugging.visual_graph,
+            config: ctx.config,
             metrics: ctx.meta_data.metrics.clone(),
             plugin_manager: PluginManager::new(ctx, res_tx),
             obs_manager: ObserverManager::new(ctx),
@@ -162,12 +151,46 @@ impl Engine {
 }
 
 impl Engine {
-    /// Runs a single iteration of the engine's main loop.
+    /// Waits until one of the mailboxes gets something, or the wait's limit runs out.
     ///
-    /// Checks for new tasks, notifications, and results, processing
-    /// each as they arrive. If the engine is paused or marked for
-    /// exit, it only processes notifications. When idle, the engine
-    /// sleeps for the configured duration to reduce CPU usage.
+    /// Running, it watches all four mailboxes for up to `idle_wait`: a send to any of them wakes
+    /// it at once, and something that arrived after the turn read that mailbox makes it return
+    /// right away. Paused, it sleeps 500 ms without watching the mailboxes, so a loop that calls
+    /// [`run_once`](Self::run_once) while paused doesn't spin; status lines and notifications then
+    /// wait up to 500 ms.
+    ///
+    /// It takes nothing; the next turn does the reading. Now and then it may return for nothing
+    /// (crossbeam allows that), and the next turn then finds nothing and waits again.
+    fn receive_timeout(&self) {
+        let mut receivers = Select::new();
+
+        if self.pause_flag {
+            let _ = receivers.ready_timeout(Duration::from_millis(500));
+            return;
+        }
+
+        receivers.recv(&*self.task_rx);
+        receivers.recv(&*self.notif_rx);
+        receivers.recv(&self.res_rx);
+        receivers.recv(&*self.status_rx);
+
+        let _ = receivers.ready_timeout(Duration::from_millis(self.config.engine.idle_wait));
+    }
+
+    /// Runs one turn of the engine's main loop.
+    ///
+    /// A turn reads the four mailboxes in order: status lines, tasks, notifications and results.
+    /// It takes at most a set number from each (500 status lines, and the `pipes.*_per_turn`
+    /// settings for the others), so a busy mailbox can't keep the others waiting. Status lines
+    /// and notifications go to the observers, tasks are queued for the workers, and results are
+    /// handled.
+    ///
+    /// If the turn found nothing, it waits until any mailbox gets something, or until
+    /// [`idle_wait`](thryve_utils::cfg::config::EngineConfig::idle_wait) runs out. So an idle
+    /// engine sleeps, and wakes the moment there's work.
+    ///
+    /// Paused, a turn first waits 500 ms, then reads only status lines and notifications. Once
+    /// the engine is finalized, a turn reads those two without waiting.
     ///
     /// # Example
     ///
@@ -177,6 +200,10 @@ impl Engine {
     /// }
     /// ```
     pub fn run_once(&mut self) {
+        if self.pause_flag {
+            self.receive_timeout();
+        }
+
         if self.exit_flag || self.pause_flag {
             self.check_status();
             self.check_notifs();
@@ -189,24 +216,30 @@ impl Engine {
         let received_results = self.check_results();
 
         if !received_status && !received_tasks && !received_notifs && !received_results {
-            thread::sleep(Duration::from_millis(self.sleep_tick_rate));
+            self.receive_timeout();
         }
     }
 
     /// Checks for and forwards Thryve's own status lines.
     ///
-    /// Receives every line waiting in the status channel and forwards it to the observer
-    /// manager, which routes it to the logger.
+    /// Takes up to 500 lines from the status channel, stopping early once it's empty, and
+    /// forwards each to the observer manager, which routes it to the logger. Lines past the 500
+    /// wait for the next turn.
     ///
     /// # Returns
     ///
     /// `true` if any status lines were received.
     pub fn check_status(&mut self) -> bool {
         let mut received_status = false;
+        let number_to_process_per_turn = 500;
 
-        while let Ok(status) = self.status_rx.try_recv() {
-            received_status = true;
-            self.obs_manager.forward_notif(status);
+        for _ in 0..number_to_process_per_turn {
+            if let Ok(status) = self.status_rx.try_recv() {
+                received_status = true;
+                self.obs_manager.forward_notif(status);
+            } else {
+                break;
+            }
         }
 
         received_status
@@ -214,8 +247,9 @@ impl Engine {
 
     /// Checks for and processes new tasks.
     ///
-    /// Receives all available tasks from the task receiver and
-    /// submits them to the plugin manager's thread pool.
+    /// Takes up to `pipes.tasks_processed_per_turn` tasks from the task channel, stopping early
+    /// once it's empty, and hands each to [`accept_task`](Self::accept_task). The rest wait for
+    /// the next turn.
     ///
     /// # Returns
     ///
@@ -223,10 +257,15 @@ impl Engine {
     pub fn check_tasks(&mut self) -> bool {
         let mut received_tasks = false;
 
-        while let Ok(task) = self.task_rx.try_recv() {
-            received_tasks = true;
-            self.accept_task(task);
+        for _ in 0..self.config.pipes.tasks_processed_per_turn {
+            if let Ok(task) = self.task_rx.try_recv() {
+                received_tasks = true;
+                self.accept_task(task);
+            } else {
+                break;
+            }
         }
+
         received_tasks
     }
 
@@ -241,12 +280,12 @@ impl Engine {
     ///
     /// * `task` - The task to start
     pub fn accept_task(&mut self, task: Task) {
-        if self.is_debug_enabled {
-            if self.is_metric_calc_enabled {
+        if self.config.debugging.is_debugging {
+            if self.config.debugging.calculate_metrics {
                 self.manage_metrics_tasks(&task);
             }
 
-            if self.is_graph_vis_enabled {
+            if self.config.debugging.visual_graph {
                 self.handle_graph_visualization(&task);
             }
         }
@@ -256,8 +295,9 @@ impl Engine {
 
     /// Checks for and processes new notifications.
     ///
-    /// Receives all available notifications from the notification
-    /// receiver and forwards them to the observer manager.
+    /// Takes up to `pipes.notifs_processed_per_turn` notifications from the notification
+    /// channel, stopping early once it's empty, and forwards each to the observer manager. The
+    /// rest wait for the next turn.
     ///
     /// # Returns
     ///
@@ -265,23 +305,29 @@ impl Engine {
     pub fn check_notifs(&mut self) -> bool {
         let mut received_notifs = false;
 
-        while let Ok(notif) = self.notif_rx.try_recv() {
-            received_notifs = true;
+        for _ in 0..self.config.pipes.notifs_processed_per_turn {
+            if let Ok(notif) = self.notif_rx.try_recv() {
+                received_notifs = true;
 
-            if self.is_debug_enabled && self.is_metric_calc_enabled {
-                self.manage_metrics_notifs(&notif);
+                if self.config.debugging.is_debugging && self.config.debugging.calculate_metrics {
+                    self.manage_metrics_notifs(&notif);
+                }
+
+                self.obs_manager.forward_notif(notif);
+            } else {
+                break;
             }
-
-            self.obs_manager.forward_notif(notif);
         }
+
         received_notifs
     }
 
     /// Checks for and processes new results.
     ///
-    /// Receives all available results from the result receiver
-    /// and handles them, which may include submitting follow-up
-    /// tasks and logging completion messages.
+    /// Takes up to `pipes.res_processed_per_turn` results from the result channel, stopping
+    /// early once it's empty, and handles each, which may queue a follow-up task or log a
+    /// message. The rest wait for the next turn. A `Fin` or `FinErr` finalizes the engine and
+    /// ends the turn.
     ///
     /// # Returns
     ///
@@ -289,18 +335,22 @@ impl Engine {
     pub fn check_results(&mut self) -> bool {
         let mut received_results = false;
 
-        while let Ok(task_result) = self.res_rx.try_recv() {
-            received_results = true;
+        for _ in 0..self.config.pipes.res_processed_per_turn {
+            if let Ok(task_result) = self.res_rx.try_recv() {
+                received_results = true;
 
-            if self.is_debug_enabled && self.is_metric_calc_enabled {
-                self.manage_metrics_results(&task_result.1);
-            }
+                if self.config.debugging.is_debugging && self.config.debugging.calculate_metrics {
+                    self.manage_metrics_results(&task_result.1);
+                }
 
-            self.handle_result(task_result);
+                self.handle_result(task_result);
 
-            if self.exit_flag {
-                break; // finalize() ran inside handle_result() above -- stop
-                // draining more results into a torn-down observer manager
+                if self.exit_flag {
+                    break; // finalize() ran inside handle_result() above -- stop
+                    // draining more results into a torn-down observer manager
+                }
+            } else {
+                break;
             }
         }
 
@@ -384,8 +434,8 @@ impl Engine {
     /// In order, it:
     ///
     /// 1. sets the exit flag, and the deadline: now plus the grace period
-    ///    ([`shutdown_grace_period`](Self::shutdown_grace_period)), which steps 3 and 4 share.
-    ///    Step 5 gets one more second;
+    ///    ([`shutdown_grace_period`](thryve_utils::cfg::config::EngineConfig::shutdown_grace_period)),
+    ///    which steps 3 and 4 share. Step 5 gets one more second;
     /// 2. stops the plugin workers: the tasks still queued are taken out and never run, and a
     ///    worker that's running a task finishes it;
     /// 3. waits for every worker to finish while it keeps emptying its mailboxes, because a
@@ -473,7 +523,7 @@ impl Engine {
         let mut fc = FinalizeCollection::new();
         // The plugin side's deadline. The observers get one more second, below.
         let mut grace_period_deadline =
-            Instant::now() + Duration::from_secs(self.shutdown_grace_period as u64);
+            Instant::now() + Duration::from_secs(self.config.engine.shutdown_grace_period as u64);
 
         // No new task starts from here on: the workers are told to stop, and the tasks still
         // queued are taken out. A worker that's running a task finishes it first.
@@ -510,7 +560,7 @@ impl Engine {
         // so the observers get one more second than the plugins, counted from now if the
         // deadline has already passed (a stuck task used it up).
         grace_period_deadline = if grace_period_deadline <= Instant::now() {
-            fc.status_reps.push(Log::err(format!("shutdown allotted time of '{}' seconds expired before the observers started cleanup; giving the observers 1 more second to shut down", self.shutdown_grace_period)));
+            fc.status_reps.push(Log::err(format!("shutdown allotted time of '{}' seconds expired before the observers started cleanup; giving the observers 1 more second to shut down", self.config.engine.shutdown_grace_period)));
 
             Instant::now() + Duration::from_secs(1)
         } else {
@@ -544,7 +594,7 @@ impl Engine {
         let notif = Log::log("Engine Finalized".to_string(), "Main");
         fc.status_reps.push(notif);
 
-        if self.is_debug_enabled && self.is_metric_calc_enabled {
+        if self.config.debugging.is_debugging && self.config.debugging.calculate_metrics {
             let metrics_readable = self.metrics.calculate_metrics();
 
             let notif = Log::log(metrics_readable, "Debug");
@@ -626,8 +676,6 @@ impl Engine {
             let notif = Log::log("Engine Paused".to_string(), "Main");
             self.obs_manager.forward_notif(notif);
         }
-
-        self.run_once();
     }
 
     /// Resumes the engine after a pause.
@@ -676,10 +724,10 @@ impl Engine {
             self.accept_task(next_task);
         }
 
-        if self.is_debug_enabled && self.is_task_logging_enabled {
+        if self.config.debugging.is_debugging && self.config.debugging.log_tasks {
             let notif = Log::log(format!("Finished Task ID: {}.", task_result.0), "Main");
 
-            if self.is_metric_calc_enabled {
+            if self.config.debugging.calculate_metrics {
                 self.manage_metrics_notifs(&notif);
             }
 
@@ -708,7 +756,7 @@ impl Engine {
         if !result_message.is_empty() {
             let notif = Log::log(result_message, log_file);
 
-            if self.is_debug_enabled && self.is_metric_calc_enabled {
+            if self.config.debugging.is_debugging && self.config.debugging.calculate_metrics {
                 self.manage_metrics_notifs(&notif);
             }
 
@@ -752,8 +800,9 @@ impl Engine {
     ///
     /// The engine is the only reader of its mailboxes, so a thread that's still running may be
     /// blocked on a full one, waiting for the engine. Each round reads what's waiting in all four
-    /// (see [`finalize_mailboxes`](Self::finalize_mailboxes)) and sleeps one tick if nothing came
-    /// in.
+    /// (see [`finalize_mailboxes`](Self::finalize_mailboxes)) and sleeps 10 ms if nothing came
+    /// in. That's a fixed tick, not `idle_wait`: a thread finishing doesn't arrive in a mailbox,
+    /// so the wait has to look again soon.
     ///
     /// Once every thread has finished, it joins them, which returns at once. If the deadline
     /// comes first, it joins the threads that have finished and leaves the others running on
@@ -790,8 +839,8 @@ impl Engine {
         let mut is_later_than_grace_period = false;
 
         // Each round: stop waiting once the deadline has passed; otherwise read what's waiting in
-        // the mailboxes, which unblocks a thread waiting on a full one, and sleep a tick only
-        // when nothing came in.
+        // the mailboxes, which unblocks a thread waiting on a full one, and sleep a 10 ms tick
+        // only when nothing came in.
         while handles.iter().any(|(handle, _)| !handle.is_finished()) {
             if grace_period_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 is_later_than_grace_period = true;
@@ -805,7 +854,7 @@ impl Engine {
                 &mut fc.status_reps,
                 logger.clone(),
             ) {
-                thread::sleep(Duration::from_millis(self.sleep_tick_rate));
+                thread::sleep(Duration::from_millis(10));
             }
         }
 
@@ -1048,7 +1097,7 @@ impl FinalizeCollection {
             self.status_reps.push(Log::err(s));
         }
 
-        if eng.is_debug_enabled {
+        if eng.config.debugging.is_debugging {
             self.status_reps.push(Log::log(
                 format!("  tasks: {count_tasks} not done"),
                 "Debug",
@@ -1059,7 +1108,7 @@ impl FinalizeCollection {
                     "Debug",
                 ));
 
-                if eng.is_task_logging_enabled {
+                if eng.config.debugging.log_tasks {
                     for task in tasks.drain(..) {
                         if let Some(callsite) = task.callsite {
                             self.status_reps

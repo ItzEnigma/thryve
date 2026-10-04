@@ -32,7 +32,7 @@
 //! can_pause = true
 //!
 //! [engine]
-//! sleep_tick_rate = 4
+//! idle_wait = 100
 //! shutdown_grace_period = 10
 //!
 //! [threads]
@@ -40,8 +40,11 @@
 //!
 //! [pipes]
 //! task_pipe_capacity = 1024
+//! tasks_processed_per_turn = 500
 //! notif_pipe_capacity = 1024
+//! notifs_processed_per_turn = 500
 //! res_pipe_capacity = 1024
+//! res_processed_per_turn = 500
 //!
 //! [tasks]
 //! max_priority = 4
@@ -164,8 +167,9 @@ impl Config {
     /// The file must set every key of every section. The checks reject values that would break
     /// the engine, and all failing values are reported together:
     ///
-    /// - `engine.sleep_tick_rate`, `engine.shutdown_grace_period`, `threads.worker_count`,
-    ///   `tasks.aging_interval` and the three `pipes` capacities must be at least 1;
+    /// - `engine.idle_wait`, `engine.shutdown_grace_period`, `threads.worker_count`,
+    ///   `tasks.aging_interval`, and the three `pipes` capacities and per-turn limits must be at
+    ///   least 1;
     /// - `tasks.max_priority` must be 14 or lower.
     ///
     /// # Arguments
@@ -200,29 +204,32 @@ impl Config {
 
         let mut violations = Vec::new();
 
-        let sleep_tick_rate_is = config.engine.sleep_tick_rate;
+        let idle_wait_is = config.engine.idle_wait;
         let shutdown_grace_period_is = config.engine.shutdown_grace_period;
         let worker_count_is = config.threads.worker_count;
         let task_pipe_cap_is = config.pipes.task_pipe_capacity;
+        let tasks_processed_per_turn_is = config.pipes.tasks_processed_per_turn;
         let notif_pipe_cap_is = config.pipes.notif_pipe_capacity;
+        let notifs_processed_per_turn_is = config.pipes.notifs_processed_per_turn;
         let res_pipe_cap_is = config.pipes.res_pipe_capacity;
+        let res_processed_per_turn_is = config.pipes.res_processed_per_turn;
         let max_priority_is = config.tasks.max_priority;
         let aging_interval_is = config.tasks.aging_interval;
 
-        let sleep_tick_rate_should_be: usize = 1;
+        let idle_wait_should_be: usize = 1;
         let shutdown_grace_period_should_be: usize = 1;
         let worker_count_should_be: usize = 1;
         let task_pipe_cap_should_be: usize = 1;
+        let tasks_processed_per_turn_should_be: usize = 1;
         let notif_pipe_cap_should_be: usize = 1;
+        let notifs_processed_per_turn_should_be: usize = 1;
         let res_pipe_cap_should_be: usize = 1;
+        let res_processed_per_turn_should_be: usize = 1;
         let max_priority_should_be: usize = 15;
         let aging_interval_should_be: usize = 1;
 
-        if sleep_tick_rate_is < sleep_tick_rate_should_be as u64 {
-            violations.push(RuleError::SleepTickRate(
-                sleep_tick_rate_is,
-                sleep_tick_rate_should_be,
-            ));
+        if idle_wait_is < idle_wait_should_be as u64 {
+            violations.push(RuleError::IdleWait(idle_wait_is, idle_wait_should_be));
         }
 
         if shutdown_grace_period_is < shutdown_grace_period_should_be {
@@ -245,6 +252,12 @@ impl Config {
                 task_pipe_cap_should_be,
             ));
         }
+        if tasks_processed_per_turn_is < tasks_processed_per_turn_should_be {
+            violations.push(RuleError::TasksProcessedPerTurn(
+                tasks_processed_per_turn_is,
+                tasks_processed_per_turn_should_be,
+            ));
+        }
 
         if notif_pipe_cap_is < notif_pipe_cap_should_be {
             violations.push(RuleError::NotifPipeCap(
@@ -253,10 +266,24 @@ impl Config {
             ));
         }
 
+        if notifs_processed_per_turn_is < notifs_processed_per_turn_should_be {
+            violations.push(RuleError::NotifsProcessedPerTurn(
+                notifs_processed_per_turn_is,
+                notifs_processed_per_turn_should_be,
+            ));
+        }
+
         if res_pipe_cap_is < res_pipe_cap_should_be {
             violations.push(RuleError::ResultPipeCap(
                 res_pipe_cap_is,
                 res_pipe_cap_should_be,
+            ));
+        }
+
+        if res_processed_per_turn_is < res_processed_per_turn_should_be {
+            violations.push(RuleError::ResultsProcessedPerTurn(
+                res_processed_per_turn_is,
+                res_processed_per_turn_should_be,
             ));
         }
 
@@ -323,33 +350,37 @@ impl Default for SerivceConfig {
 
 /// Engine execution parameters.
 ///
-/// Controls the engine's sleep behavior when idle, balancing responsiveness
-/// with CPU usage. When no tasks are available, the engine sleeps for
-/// the configured duration before checking again. Also sets how long the
-/// shutdown waits for tasks that are still running.
+/// Sets how long an idle engine waits before it looks at its loop's flags again, and how long
+/// the shutdown waits for tasks that are still running.
 ///
 /// # Fields
 ///
-/// - `sleep_tick_rate`: Milliseconds to sleep when idle
+/// - `idle_wait`: Milliseconds an idle engine waits for something to arrive
 /// - `shutdown_grace_period`: Seconds the shutdown waits for running tasks
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub struct EngineConfig {
-    /// Milliseconds to sleep when the engine has no tasks.
+    /// Milliseconds an idle engine waits for something to arrive.
     ///
-    /// This prevents the engine from consuming CPU while waiting for
-    /// new work. Lower values increase responsiveness but use more CPU.
+    /// When a turn finds nothing, the engine waits on its mailboxes, and anything that arrives
+    /// wakes it at once, so this doesn't delay any work. It only sets how often an idle engine
+    /// returns to its loop, which is when the loop sees flags set from outside, such as the
+    /// service's Stop, Pause and Resume. Lower values notice those sooner but wake an idle engine
+    /// more often.
     ///
-    /// Default: `4` milliseconds
-    pub sleep_tick_rate: u64,
+    /// Must be at least 1.
+    ///
+    /// Default: `100` milliseconds
+    pub idle_wait: u64,
 
     /// Seconds the shutdown waits for tasks that are still running.
     ///
     /// The engine keeps emptying its mailboxes while it waits, so a task that is only slow, or
     /// blocked on a full mailbox, still finishes. A thread still busy when the time runs out is
-    /// left running on its own, and `Error.log` names it and what it was running. Rust can't stop
-    /// a thread, so it ends with the process (in FFI, it keeps running in the host process). The
-    /// plugins aren't cleaned up then, because one of them may still be in use.
+    /// left running on its own: `Error.log` names it and what it was running, and the shutdown's
+    /// summary of lost work counts it as still running. Rust can't stop a thread, so it ends with
+    /// the process (in FFI, it keeps running in the host process). The plugins aren't cleaned up
+    /// then, because one of them may still be in use.
     ///
     /// One deadline covers the plugin workers and then the plugins' cleanups. The observers'
     /// cleanup gets one more second, even when a stuck task has used up the whole grace period,
@@ -366,11 +397,10 @@ pub struct EngineConfig {
 impl Default for EngineConfig {
     /// Provides default engine execution parameters.
     ///
-    /// Returns an `EngineConfig` with a 4ms idle sleep duration and a 10 s shutdown grace
-    /// period.
+    /// Returns an `EngineConfig` with a 100 ms idle wait and a 10 s shutdown grace period.
     fn default() -> Self {
         Self {
-            sleep_tick_rate: 4,
+            idle_wait: 100,
             shutdown_grace_period: 10,
         }
     }
@@ -408,14 +438,17 @@ impl Default for ThreadConfig {
 /// Channel capacity settings.
 ///
 /// Defines the buffer sizes for the communication channels between
-/// components. Larger capacities allow more items to queue but use
-/// more memory.
+/// components, and how much the engine takes from each one per turn of its loop. Larger
+/// capacities allow more items to queue but use more memory.
 ///
 /// # Fields
 ///
 /// - `task_pipe_capacity`: Buffer size for task channel
+/// - `tasks_processed_per_turn`: Most tasks the engine takes per turn
 /// - `notif_pipe_capacity`: Buffer size for notification channel
+/// - `notifs_processed_per_turn`: Most notifications the engine takes per turn
 /// - `res_pipe_capacity`: Buffer size for result channel
+/// - `res_processed_per_turn`: Most results the engine takes per turn
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub struct PipeConfig {
@@ -423,25 +456,51 @@ pub struct PipeConfig {
     ///
     /// Default: `1024`
     pub task_pipe_capacity: usize,
+    /// The most tasks the engine takes from the task channel in one turn of its loop.
+    ///
+    /// The rest wait for the next turn, so a steady stream of tasks can't keep the engine from
+    /// the other channels. Must be at least 1.
+    ///
+    /// Default: `500`
+    pub tasks_processed_per_turn: usize,
     /// Buffer size for the notification channel.
     ///
     /// Default: `1024`
     pub notif_pipe_capacity: usize,
+    /// The most notifications the engine takes from the notification channel in one turn of its
+    /// loop.
+    ///
+    /// The rest wait for the next turn, so a steady stream of notifications can't keep the
+    /// engine from the other channels. Must be at least 1.
+    ///
+    /// Default: `500`
+    pub notifs_processed_per_turn: usize,
     /// Buffer size for the result channel.
     ///
     /// Default: `1024`
     pub res_pipe_capacity: usize,
+    /// The most results the engine takes from the result channel in one turn of its loop.
+    ///
+    /// The rest wait for the next turn, so a steady stream of results can't keep the engine from
+    /// the other channels. Must be at least 1.
+    ///
+    /// Default: `500`
+    pub res_processed_per_turn: usize,
 }
 
 impl Default for PipeConfig {
     /// Provides default channel capacity settings.
     ///
-    /// Returns a `PipeConfig` with all channels set to 1024 items.
+    /// Returns a `PipeConfig` with all channels set to 1024 items, and the engine taking at most
+    /// 500 from each per turn.
     fn default() -> Self {
         Self {
             task_pipe_capacity: 1024,
+            tasks_processed_per_turn: 500,
             notif_pipe_capacity: 1024,
+            notifs_processed_per_turn: 500,
             res_pipe_capacity: 1024,
+            res_processed_per_turn: 500,
         }
     }
 }

@@ -104,7 +104,7 @@ mod tests_run_interactive {
     fn test_summon_requirements_preserves_all_config_values() {
         // Arrange
         let mut config = Config::default();
-        config.engine.sleep_tick_rate = 150;
+        config.engine.idle_wait = 150;
         config.service.can_stop = false;
         config.pipes.task_pipe_capacity = 50;
 
@@ -112,7 +112,7 @@ mod tests_run_interactive {
         let ctx = summon_requirements(config);
 
         // Assert
-        assert_eq!(ctx.config.engine.sleep_tick_rate, 150);
+        assert_eq!(ctx.config.engine.idle_wait, 150);
         assert!(!ctx.config.service.can_stop);
         assert_eq!(ctx.config.pipes.task_pipe_capacity, 50);
     }
@@ -287,7 +287,7 @@ mod tests_run_service {
     fn test_create_service_preserves_all_config_values() {
         // Arrange
         let mut config = Config::default();
-        config.engine.sleep_tick_rate = 150;
+        config.engine.idle_wait = 150;
         config.service.can_stop = true;
         config.service.can_pause = true;
         config.pipes.task_pipe_capacity = 50;
@@ -296,7 +296,7 @@ mod tests_run_service {
         let (_, ctx) = create_service(config);
 
         // Assert
-        assert_eq!(ctx.config.engine.sleep_tick_rate, 150);
+        assert_eq!(ctx.config.engine.idle_wait, 150);
         assert!(ctx.config.service.can_stop);
         assert!(ctx.config.service.can_pause);
         assert_eq!(ctx.config.pipes.task_pipe_capacity, 50);

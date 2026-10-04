@@ -725,11 +725,14 @@ mod tests_cfg {
         // Assert - verify all default values
         assert!(config.service.can_stop);
         assert!(config.service.can_pause);
-        assert_eq!(config.engine.sleep_tick_rate, 4);
+        assert_eq!(config.engine.idle_wait, 100);
         assert_eq!(config.threads.worker_count, 4);
         assert_eq!(config.pipes.task_pipe_capacity, 1024);
         assert_eq!(config.pipes.notif_pipe_capacity, 1024);
         assert_eq!(config.pipes.res_pipe_capacity, 1024);
+        assert_eq!(config.pipes.tasks_processed_per_turn, 500);
+        assert_eq!(config.pipes.notifs_processed_per_turn, 500);
+        assert_eq!(config.pipes.res_processed_per_turn, 500);
         assert_eq!(config.tasks.max_priority, 4);
         assert_eq!(config.tasks.aging_interval, 3);
         assert!(!config.debugging.is_debugging);
@@ -749,10 +752,7 @@ mod tests_cfg {
 
         // Assert
         assert_eq!(config1.service.can_stop, config2.service.can_stop);
-        assert_eq!(
-            config1.engine.sleep_tick_rate,
-            config2.engine.sleep_tick_rate
-        );
+        assert_eq!(config1.engine.idle_wait, config2.engine.idle_wait);
     }
 
     // Tests for SerivceConfig
@@ -789,19 +789,19 @@ mod tests_cfg {
         let config = EngineConfig::default();
 
         // Assert
-        assert_eq!(config.sleep_tick_rate, 4);
+        assert_eq!(config.idle_wait, 100);
     }
 
     #[test]
     fn test_engine_config_with_custom_value() {
         // Arrange & Act
         let config = EngineConfig {
-            sleep_tick_rate: 10,
+            idle_wait: 10,
             shutdown_grace_period: 5,
         };
 
         // Assert
-        assert_eq!(config.sleep_tick_rate, 10);
+        assert_eq!(config.idle_wait, 10);
         assert_eq!(config.shutdown_grace_period, 5);
     }
 
@@ -834,6 +834,9 @@ mod tests_cfg {
         assert_eq!(config.task_pipe_capacity, 1024);
         assert_eq!(config.notif_pipe_capacity, 1024);
         assert_eq!(config.res_pipe_capacity, 1024);
+        assert_eq!(config.tasks_processed_per_turn, 500);
+        assert_eq!(config.notifs_processed_per_turn, 500);
+        assert_eq!(config.res_processed_per_turn, 500);
     }
 
     #[test]
@@ -841,14 +844,20 @@ mod tests_cfg {
         // Arrange & Act
         let config = PipeConfig {
             task_pipe_capacity: 2048,
+            tasks_processed_per_turn: 100,
             notif_pipe_capacity: 512,
+            notifs_processed_per_turn: 50,
             res_pipe_capacity: 256,
+            res_processed_per_turn: 25,
         };
 
         // Assert
         assert_eq!(config.task_pipe_capacity, 2048);
+        assert_eq!(config.tasks_processed_per_turn, 100);
         assert_eq!(config.notif_pipe_capacity, 512);
+        assert_eq!(config.notifs_processed_per_turn, 50);
         assert_eq!(config.res_pipe_capacity, 256);
+        assert_eq!(config.res_processed_per_turn, 25);
     }
 
     // Tests for TaskConfig
@@ -946,7 +955,7 @@ mod tests_cfg {
 
         // Assert
         assert_eq!(config.threads.worker_count, 4);
-        assert_eq!(config.engine.sleep_tick_rate, 4);
+        assert_eq!(config.engine.idle_wait, 100);
     }
 
     // Tests for load_config_from_file
@@ -980,7 +989,7 @@ mod tests_cfg {
             can_pause = true
 
             [engine]
-            sleep_tick_rate = 10
+            idle_wait = 10
             shutdown_grace_period = 10
 
             [threads]
@@ -988,8 +997,11 @@ mod tests_cfg {
 
             [pipes]
             task_pipe_capacity = 1024
+            tasks_processed_per_turn = 200
             notif_pipe_capacity = 1024
+            notifs_processed_per_turn = 300
             res_pipe_capacity = 1024
+            res_processed_per_turn = 400
 
             [tasks]
             max_priority = 4
@@ -1018,7 +1030,10 @@ mod tests_cfg {
             Err(e) => panic!("a valid config file should load: {}", get_err(&e)),
         };
         assert_eq!(config.threads.worker_count, 8);
-        assert_eq!(config.engine.sleep_tick_rate, 10);
+        assert_eq!(config.engine.idle_wait, 10);
+        assert_eq!(config.pipes.tasks_processed_per_turn, 200);
+        assert_eq!(config.pipes.notifs_processed_per_turn, 300);
+        assert_eq!(config.pipes.res_processed_per_turn, 400);
     }
 
     #[test]

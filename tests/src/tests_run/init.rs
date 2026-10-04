@@ -111,13 +111,13 @@ mod tests_init {
         // Arrange
         let mut ctx = create_test_ctx();
         init_directories(&mut ctx).expect("init_directories failed");
-        ctx.config.engine.sleep_tick_rate = 100;
+        ctx.config.engine.idle_wait = 100;
 
         // Act
         let engine = Engine::new(&ctx);
 
         // Assert
-        assert_eq!(engine.sleep_tick_rate, 100);
+        assert_eq!(engine.config.engine.idle_wait, 100);
     }
 
     // Tests for init_directories with debug mode enabled

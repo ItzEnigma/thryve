@@ -54,7 +54,7 @@ mod tests_engine {
         // Assert - a new engine starts paused; the engine thread resumes it once it has it
         assert!(!engine.exit_flag);
         assert!(engine.pause_flag);
-        assert_eq!(engine.sleep_tick_rate, ctx.config.engine.sleep_tick_rate);
+        assert_eq!(engine.config.engine.idle_wait, ctx.config.engine.idle_wait);
     }
 
     #[test]
@@ -618,7 +618,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
@@ -648,7 +648,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
@@ -694,7 +694,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
@@ -742,7 +742,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
@@ -787,7 +787,7 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer (required for forward_notif)
         let obs_core = Arc::new(TestObsLogic);
@@ -861,8 +861,8 @@ mod tests_engine {
         let mut engine = Engine::new(&ctx);
 
         // Enable debug flags
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -885,8 +885,8 @@ mod tests_engine {
 
         // Act - we can't actually send to task_rx since it's owned by engine
         // but we can verify the flags are set
-        assert!(engine.is_debug_enabled);
-        assert!(engine.is_metric_calc_enabled);
+        assert!(engine.config.debugging.is_debugging);
+        assert!(engine.config.debugging.calculate_metrics);
     }
 
     // Tests for manage_metrics_tasks with full batch
@@ -895,8 +895,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -929,8 +929,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -958,8 +958,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -1063,8 +1063,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = false;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = false;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -1087,8 +1087,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_task_logging_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.log_tasks = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -1111,10 +1111,10 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
-        engine.is_task_logging_enabled = true;
-        engine.is_graph_vis_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
+        engine.config.debugging.log_tasks = true;
+        engine.config.debugging.visual_graph = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);
@@ -1140,16 +1140,16 @@ mod tests_engine {
 
     // Tests for Engine::new with different config values
     #[test]
-    fn test_engine_new_with_custom_sleep_tick_rate() {
+    fn test_engine_new_with_custom_idle_wait() {
         // Arrange
         let mut ctx = create_test_ctx();
-        ctx.config.engine.sleep_tick_rate = 100;
+        ctx.config.engine.idle_wait = 100;
 
         // Act
         let engine = Engine::new(&ctx);
 
         // Assert
-        assert_eq!(engine.sleep_tick_rate, 100);
+        assert_eq!(engine.config.engine.idle_wait, 100);
     }
 
     #[test]
@@ -1165,36 +1165,36 @@ mod tests_engine {
         let engine = Engine::new(&ctx);
 
         // Assert
-        assert!(engine.is_debug_enabled);
-        assert!(engine.is_metric_calc_enabled);
-        assert!(engine.is_task_logging_enabled);
-        assert!(engine.is_graph_vis_enabled);
+        assert!(engine.config.debugging.is_debugging);
+        assert!(engine.config.debugging.calculate_metrics);
+        assert!(engine.config.debugging.log_tasks);
+        assert!(engine.config.debugging.visual_graph);
     }
 
     #[test]
-    fn test_engine_new_with_zero_sleep_tick_rate() {
+    fn test_engine_new_with_zero_idle_wait() {
         // Arrange
         let mut ctx = create_test_ctx();
-        ctx.config.engine.sleep_tick_rate = 0;
+        ctx.config.engine.idle_wait = 0;
 
         // Act
         let engine = Engine::new(&ctx);
 
         // Assert
-        assert_eq!(engine.sleep_tick_rate, 0);
+        assert_eq!(engine.config.engine.idle_wait, 0);
     }
 
     #[test]
-    fn test_engine_new_with_large_sleep_tick_rate() {
+    fn test_engine_new_with_large_idle_wait() {
         // Arrange
         let mut ctx = create_test_ctx();
-        ctx.config.engine.sleep_tick_rate = 10000; // 10 seconds
+        ctx.config.engine.idle_wait = 10000; // 10 seconds
 
         // Act
         let engine = Engine::new(&ctx);
 
         // Assert
-        assert_eq!(engine.sleep_tick_rate, 10000);
+        assert_eq!(engine.config.engine.idle_wait, 10000);
     }
 
     // Tests for Engine finalize with metrics
@@ -1203,8 +1203,8 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        engine.is_debug_enabled = true;
-        engine.is_metric_calc_enabled = true;
+        engine.config.debugging.is_debugging = true;
+        engine.config.debugging.calculate_metrics = true;
 
         // Load a logging observer first
         let obs_core = Arc::new(TestObsLogic);

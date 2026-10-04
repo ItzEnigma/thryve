@@ -275,7 +275,8 @@ fn init_sequence(eng: &mut Engine, ctx: &mut Ctx) -> Result<(), ThryveError> {
     // goes through the engine's usual per-task step (metrics, graph node) and waits in the queue:
     // the engine is still paused, so it runs only once the engine starts.
     if len_plugin_tasks > 0 {
-        let is_graph_mode_on = eng.is_debug_enabled && eng.is_graph_vis_enabled;
+        let is_graph_mode_on =
+            eng.config.debugging.is_debugging && eng.config.debugging.visual_graph;
 
         for plugin in ctx.plugins() {
             println!("loaded plugin: {}", plugin.plg_type());

@@ -353,18 +353,24 @@ impl Display for ConfigViolations {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RuleError {
-    /// `engine.sleep_tick_rate` is below its minimum.
-    SleepTickRate(u64, usize),
-
+    /// `engine.idle_wait` is below its minimum.
+    IdleWait(u64, usize),
+    /// `engine.shutdown_grace_period` is below its minimum.
     ShutdownGracePeriod(usize, usize),
     /// `threads.worker_count` is below its minimum; with no workers, no task would ever run.
     WorkerCount(usize, usize),
     /// `pipes.task_pipe_capacity` is below its minimum.
     TaskPipeCap(usize, usize),
+    /// `pipes.tasks_processed_per_turn` is below its minimum.
+    TasksProcessedPerTurn(usize, usize),
     /// `pipes.notif_pipe_capacity` is below its minimum.
     NotifPipeCap(usize, usize),
+    /// `pipes.notifs_processed_per_turn` is below its minimum.
+    NotifsProcessedPerTurn(usize, usize),
     /// `pipes.res_pipe_capacity` is below its minimum.
     ResultPipeCap(usize, usize),
+    /// `pipes.res_processed_per_turn` is below its minimum.
+    ResultsProcessedPerTurn(usize, usize),
     /// `tasks.aging_interval` is below its minimum.
     AgingInterval(u64, usize),
     /// `tasks.max_priority` isn't below its limit.
@@ -374,9 +380,9 @@ pub enum RuleError {
 impl Display for RuleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SleepTickRate(is, should_be) => write!(
+            Self::IdleWait(is, should_be) => write!(
                 f,
-                "engine.sleep_tick_rate is {is:?}, must be at least {should_be:?}"
+                "engine.idle_wait is {is:?}, must be at least {should_be:?}"
             ),
             Self::ShutdownGracePeriod(is, should_be) => write!(
                 f,
@@ -390,13 +396,25 @@ impl Display for RuleError {
                 f,
                 "pipes.task_pipe_capacity is {is:?}, must be at least {should_be:?}"
             ),
+            Self::TasksProcessedPerTurn(is, should_be) => write!(
+                f,
+                "pipes.tasks_processed_per_turn is {is:?}, must be at least {should_be:?}"
+            ),
             Self::NotifPipeCap(is, should_be) => write!(
                 f,
                 "pipes.notif_pipe_capacity is {is:?}, must be at least {should_be:?}"
             ),
+            Self::NotifsProcessedPerTurn(is, should_be) => write!(
+                f,
+                "pipes.notifs_processed_per_turn is {is:?}, must be at least {should_be:?}"
+            ),
             Self::ResultPipeCap(is, should_be) => write!(
                 f,
                 "pipes.res_pipe_capacity is {is:?}, must be at least {should_be:?}"
+            ),
+            Self::ResultsProcessedPerTurn(is, should_be) => write!(
+                f,
+                "pipes.res_processed_per_turn is {is:?}, must be at least {should_be:?}"
             ),
             Self::AgingInterval(is, should_be) => write!(
                 f,

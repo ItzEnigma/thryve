@@ -388,9 +388,11 @@ mod config {
         std::fs::write(
             &path,
             "[service]\ncan_stop = true\ncan_pause = true\n\n\
-             [engine]\nsleep_tick_rate = 4\nshutdown_grace_period = 10\n\n\
+             [engine]\nidle_wait = 100\nshutdown_grace_period = 10\n\n\
              [threads]\nworker_count = 0\n\n\
-             [pipes]\ntask_pipe_capacity = 0\nnotif_pipe_capacity = 1024\nres_pipe_capacity = 1024\n\n\
+             [pipes]\ntask_pipe_capacity = 0\nnotif_pipe_capacity = 1024\nres_pipe_capacity = 1024\n\
+             tasks_processed_per_turn = 500\nnotifs_processed_per_turn = 500\n\
+             res_processed_per_turn = 500\n\n\
              [tasks]\nmax_priority = 15\naging_interval = 3\n\n\
              [debugging]\nis_debugging = false\nwait_before_execution = 10\nvisual_graph = false\n\
              calculate_metrics = false\nlog_tasks = false\n",

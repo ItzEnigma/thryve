@@ -38,3 +38,6 @@ pub mod gate_t1;
 
 #[cfg(test)]
 pub mod gate_t2;
+
+#[cfg(test)]
+pub mod gate_t3;
