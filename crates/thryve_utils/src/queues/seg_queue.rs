@@ -40,7 +40,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use crate::bases::observer::Observer;
 use crate::bases::{notif::Notif, queue::QueueBase};
 use crate::extras::thread_local;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
@@ -73,36 +72,27 @@ impl Queue<Notif> for QChild {
 
     /// Pops a notification from the queue.
     ///
-    /// Blocks until a notification is available or the queue is
-    /// finalized. Returns a special notification indicating exit
-    /// when the queue is being shut down.
+    /// Waits until a notification is available or the queue is finalized.
     ///
     /// # Returns
     ///
-    /// The next notification, or an exit notification on shutdown.
-    fn pop(&self) -> Notif {
-        loop {
-            // Check for shutdown.
-            if self.exit_flag.load(Ordering::SeqCst) {
-                break;
-            }
-            // Wait if paused.
-            else if self.pause_flag.load(Ordering::SeqCst) {
-                // Mutex lock failure indicates poisoned mutex - fatal error.
-                // Condvar wait failure also indicates poisoned mutex - fatal error.
-                let idx = thread_local::tl_get_worker_park_idx();
+    /// The next notification, or `None` once the queue is finalized, even if notifications are
+    /// still queued.
+    fn pop(&self) -> Option<Notif> {
+        let idx = thread_local::tl_get_worker_park_idx();
 
-                self.worker_registry.set_idle(idx);
-                thread::park();
-                self.worker_registry.clear_idle(idx);
+        loop {
+            if self.is_exit(idx) {
+                break;
             }
 
             // Try to pop a notification.
-            if let Some(notif) = self.main_queue.pop() {
+            let notif = self.main_queue.pop();
+
+            if notif.is_some() {
                 return notif;
             }
 
-            let idx = thread_local::tl_get_worker_park_idx();
             self.worker_registry.set_idle(idx);
 
             // 2. Medium Path: Spin backoff before committing to sleep
@@ -110,7 +100,8 @@ impl Queue<Notif> for QChild {
 
             while !backoff.is_completed() {
                 // Try to pop a notification.
-                if let Some(notif) = self.main_queue.pop() {
+                let notif = self.main_queue.pop();
+                if notif.is_some() {
                     self.worker_registry.clear_idle(idx);
                     return notif;
                 }
@@ -129,48 +120,72 @@ impl Queue<Notif> for QChild {
             }
         }
 
-        // Return exit notification on shutdown.
-        Log::log(String::new(), "Main")
+        None
     }
 
     /// Finalizes the queue for shutdown.
     ///
-    /// Sets the exit flag and wakes every waiting thread, so a blocked `pop` returns. Then it
-    /// sends an "Obs Queue Finalized" line to `logger`, if there is one.
+    /// Moves every notification still queued into `notifs`, oldest first, then sets the exit
+    /// flag and wakes every waiting thread, so a blocked `pop` returns `None`. The "Obs Queue
+    /// Finalized" line goes into `status_reps`.
+    ///
+    /// For the notification sorter's queue, the observer manager joins the sorter first: it
+    /// routes what's left, so nothing is moved here.
     ///
     /// # Arguments
     ///
-    /// * `logger` - The observer that receives the final line, or `None` to skip it (for
-    ///   example, when a half-built engine is finalized after a failed startup and has no
-    ///   logger)
-    fn finalize(&self, logger: Option<Arc<Observer>>) {
+    /// * `notifs` - Receives the notifications that were still queued
+    /// * `status_reps` - Receives the "Obs Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many notifications were still queued.
+    fn finalize(&self, notifs: &mut Vec<Notif>, status_reps: &mut Vec<Notif>) -> usize {
+        // The queue is emptied first, then the flag is set and every waiting thread woken: its
+        // `pop` returns `None`, so its loop ends.
+        let mut left_over = 0;
+        while !self.main_queue.is_empty() {
+            if let Some(entry) = self.main_queue.pop() {
+                notifs.push(entry);
+                left_over += 1;
+            }
+        }
+
         self.exit_flag.store(true, Ordering::SeqCst);
         self.worker_registry.notify_all();
 
-        if let Some(logger) = &logger {
-            let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
-            logger.obs_queue.push(notif);
-        }
+        let notif = Log::log("Obs Queue Finalized".to_string(), "Main");
+        status_reps.push(notif);
+
+        left_over
     }
 
     /// Pauses the queue.
     ///
-    /// Sets the pause flag, causing `pop()` to block until resumed.
-    fn pause(&self) {
+    /// Sets the pause flag, causing `pop()` to block until resumed. Except for the startup pause
+    /// (`is_start`), sends "Obs Queue Paused".
+    fn pause(&self, is_start: bool) {
         self.pause_flag.store(true, Ordering::SeqCst);
 
-        let notif = Log::log("Obs Queue Paused".to_string(), "Main");
-        self.packet_handle.send_status(notif)
+        if !is_start {
+            let notif = Log::log("Obs Queue Paused".to_string(), "Main");
+            self.packet_handle.send_status(notif)
+        }
     }
 
     /// Resumes the queue.
     ///
-    /// Clears the pause flag and notifies waiting threads.
-    fn resume(&self) {
+    /// Clears the pause flag and wakes the parked workers. Except when the startup pause ends
+    /// (`is_start`), sends "Obs Queue continuing".
+    fn resume(&self, is_start: bool) {
         self.pause_flag.store(false, Ordering::SeqCst);
 
-        let notif = Log::log("Obs Queue continuing".to_string(), "Main");
-        self.packet_handle.send_status(notif)
+        if !is_start {
+            let notif = Log::log("Obs Queue continuing".to_string(), "Main");
+            self.packet_handle.send_status(notif);
+        }
+
+        self.worker_registry.notify_all();
     }
 
     fn exit_flag(&self) -> Arc<AtomicBool> {

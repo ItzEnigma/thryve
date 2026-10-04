@@ -72,7 +72,7 @@ use crossbeam::channel::Sender;
 ///
 /// # let (task_tx, _task_rx) = bounded(1);
 /// # let (notif_tx, _notif_rx) = bounded(1);
-/// # let handle = PacketHandle::new(task_tx, notif_tx, false);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
 /// // Send a task to the engine
 /// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
 ///     TaskResult::new("", "".to_string(), "")
@@ -89,6 +89,9 @@ pub struct PacketHandle {
     task_tx: Sender<Task>,
     /// Sender for notifications.
     notif_tx: Sender<Notif>,
+    /// Sender for Thryve's own status lines. Its channel has no capacity limit, so a status line
+    /// never waits, even while the engine isn't reading.
+    status_tx: Sender<Notif>,
     /// Whether graph mode is on. Shared by every clone of this handle, so one failure turns
     /// graph mode off everywhere.
     is_graph_visualization_enabled: Arc<AtomicBool>,
@@ -97,13 +100,13 @@ pub struct PacketHandle {
 impl PacketHandle {
     /// Creates a new packet handle with the specified channel senders.
     ///
-    /// Initializes a new `PacketHandle` with the given task and
-    /// notification senders. These channels are created by the engine
+    /// Initializes a new `PacketHandle` with the given task, notification
+    /// and status senders. These channels are created by the engine
     /// during initialization and passed to modules.
     ///
     /// When graph visualization is enabled, the packet handle will
-    /// automatically capture call site information (file path, module
-    /// path, line number) for each task sent through [`send_task`](Self::send_task).
+    /// automatically capture call site information (file path and line
+    /// number) for each task sent through [`send_task`](Self::send_task).
     /// This information is used to build a topology graph showing task
     /// relationships and call hierarchies.
     ///
@@ -111,6 +114,8 @@ impl PacketHandle {
     ///
     /// * `task_tx` - Sender for tasks
     /// * `notif_tx` - Sender for notifications
+    /// * `status_tx` - Sender for Thryve's own status lines; its channel should be unbounded, so
+    ///   that [`send_status`](Self::send_status) never waits
     /// * `is_graph_vis_enabled` - Whether graph visualization is enabled.
     ///   When true, call site information is captured for each task, until graph mode fails
     ///   and turns off.
@@ -122,18 +127,25 @@ impl PacketHandle {
     /// # Example
     ///
     /// ```no_run
-    /// # use crossbeam::channel::bounded;
+    /// # use crossbeam::channel::{bounded, unbounded};
     /// use thryve_utils::packets::packet_handle::PacketHandle;
     ///
     /// # let (task_sender, _task_rx) = bounded(1);
     /// # let (notif_sender, _notif_rx) = bounded(1);
+    /// # let (status_sender, _status_rx) = unbounded();
     /// // Typically created by the engine during initialization
-    /// let handle = PacketHandle::new(task_sender, notif_sender, false);
+    /// let handle = PacketHandle::new(task_sender, notif_sender, status_sender, false);
     /// ```
-    pub fn new(task_tx: Sender<Task>, notif_tx: Sender<Notif>, is_graph_vis_enabled: bool) -> Self {
+    pub fn new(
+        task_tx: Sender<Task>,
+        notif_tx: Sender<Notif>,
+        status_tx: Sender<Notif>,
+        is_graph_vis_enabled: bool,
+    ) -> Self {
         Self {
             task_tx,
             notif_tx,
+            status_tx,
             is_graph_visualization_enabled: Arc::new(AtomicBool::new(is_graph_vis_enabled)),
         }
     }
@@ -182,7 +194,7 @@ impl PacketHandle {
     ///
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
     /// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
     ///     // Task logic here
     ///     TaskResult::new("", "".to_string(), "")
@@ -242,22 +254,21 @@ impl PacketHandle {
     ///
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let handle = PacketHandle::new(task_tx, notif_tx, false);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
     /// handle.send_notification(Log::log("Hello".to_string(), "Main"))?;
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     pub fn send_notification(&self, notif: Notif) -> Result<(), ThryveError> {
-        // A send fails only once the engine is gone (its receiving end was dropped). The error
-        // holds the notification, so dropping the error drops the notification.
-        self.notif_tx.send(notif).map_err(|e| {
-            drop(e);
-            EngineNotRunningError::Notif
-        })?;
-
-        Ok(())
+        self.send_notification_helper(notif, false)
     }
 
     /// Sends one of Thryve's own status lines, such as "ThreadPool Finalized", to the engine.
+    ///
+    /// Status lines have their own channel with no capacity limit, so this never waits, even
+    /// while the engine isn't reading (during startup, a pause or a shutdown) or is the sender
+    /// itself. That's safe because Thryve sends a fixed, small number of them; your plugins'
+    /// traffic stays on the bounded channels. The engine reads this channel like the others and
+    /// routes the lines to the logger.
     ///
     /// Unlike [`send_notification`](Self::send_notification), a failed send is dropped without an
     /// error, by design: the line has nowhere else to go, and a status line must never stop a
@@ -272,7 +283,27 @@ impl PacketHandle {
     /// * `notif` - The status line
     #[doc(hidden)]
     pub fn send_status(&self, notif: Notif) {
-        let _ = self.send_notification(notif);
+        let _ = self.send_notification_helper(notif, true);
+    }
+
+    fn send_notification_helper(&self, notif: Notif, is_status: bool) -> Result<(), ThryveError> {
+        if !is_status {
+            // A send fails only once the engine is gone (its receiving end was dropped). The error
+            // holds the notification, so dropping the error drops the notification.
+            self.notif_tx.send(notif).map_err(|e| {
+                drop(e);
+                EngineNotRunningError::Notif
+            })?;
+
+            return Ok(());
+        }
+
+        self.status_tx.send(notif).map_err(|e| {
+            drop(e);
+            EngineNotRunningError::Notif
+        })?;
+
+        Ok(())
     }
 
     /// Returns whether graph mode is on.

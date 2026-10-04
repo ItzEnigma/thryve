@@ -21,9 +21,10 @@ mod tests_init {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
-        Ctx::new(config, task_rx, notif_rx, packet_handle)
+        Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
     }
 
     #[test]
@@ -100,9 +101,9 @@ mod tests_init {
         // Act
         let engine = Engine::new(&ctx);
 
-        // Assert
+        // Assert - a new engine starts paused; the engine thread resumes it once it has it
         assert!(!engine.exit_flag);
-        assert!(!engine.pause_flag);
+        assert!(engine.pause_flag);
     }
 
     #[test]
@@ -231,9 +232,9 @@ mod tests_init {
         // Act
         let engine = Engine::new(&ctx);
 
-        // Assert
+        // Assert - a new engine starts paused; the engine thread resumes it once it has it
         assert!(!engine.exit_flag);
-        assert!(!engine.pause_flag);
+        assert!(engine.pause_flag);
     }
 
     // Tests for Engine::new with multiple custom log files

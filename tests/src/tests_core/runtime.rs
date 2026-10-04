@@ -37,9 +37,10 @@ mod tests_engine {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
-        Ctx::new(config, task_rx, notif_rx, packet_handle)
+        Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
     }
 
     #[test]
@@ -50,9 +51,9 @@ mod tests_engine {
         // Act
         let engine = Engine::new(&ctx);
 
-        // Assert
+        // Assert - a new engine starts paused; the engine thread resumes it once it has it
         assert!(!engine.exit_flag);
-        assert!(!engine.pause_flag);
+        assert!(engine.pause_flag);
         assert_eq!(engine.sleep_tick_rate, ctx.config.engine.sleep_tick_rate);
     }
 
@@ -99,11 +100,12 @@ mod tests_engine {
             .load_observer(observer)
             .expect("load_observer failed");
 
-        // Assert initially not paused
+        // A new engine starts paused, so resume it first
+        engine.resume(true);
         assert!(!engine.pause_flag);
 
         // Act
-        engine.pause();
+        engine.pause(false);
 
         // Assert
         assert!(engine.pause_flag);
@@ -124,13 +126,13 @@ mod tests_engine {
             .load_observer(observer)
             .expect("load_observer failed");
 
-        engine.pause();
+        engine.pause(false);
 
         // Assert paused
         assert!(engine.pause_flag);
 
         // Act
-        engine.resume();
+        engine.resume(false);
 
         // Assert
         assert!(!engine.pause_flag);
@@ -194,7 +196,7 @@ mod tests_engine {
         assert!(!engine.exit_flag);
 
         // Act
-        engine.finalize();
+        engine.finalize(false);
 
         // Assert
         assert!(engine.exit_flag);
@@ -319,9 +321,10 @@ mod tests_engine {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx, status_tx, false);
         let config = Config::default();
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
         let mut engine = Engine::new(&ctx);
 
         // Send a task
@@ -371,9 +374,10 @@ mod tests_engine {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone(), false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx.clone(), notif_tx.clone(), status_tx, false);
         let config = Config::default();
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
         let mut engine = Engine::new(&ctx);
 
         // Load a logging observer
@@ -396,10 +400,13 @@ mod tests_engine {
         let notif = Log::log("test".to_string(), "Main");
         notif_tx.send(notif).unwrap();
 
-        // Act - run once should process both without blocking
+        // Act - run once should process both without blocking (a new engine starts paused)
+        engine.resume(true);
         engine.run_once();
 
-        // Assert - engine should still be running
+        // Assert - both were taken off their channels, and the engine is still running
+        assert!(ctx.task_rx.is_empty());
+        assert!(ctx.notif_rx.is_empty());
         assert!(!engine.exit_flag);
         assert!(!engine.pause_flag);
     }
@@ -1209,7 +1216,7 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Act - finalize with metrics
-        engine.finalize();
+        engine.finalize(false);
 
         // Assert - exit flag should be set
         assert!(engine.exit_flag);
@@ -1218,6 +1225,8 @@ mod tests_engine {
 
 mod tests_observer_manager_init {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     use crossbeam::channel::bounded;
     use thryve_core::runtime::observer_manager::*;
@@ -1242,9 +1251,10 @@ mod tests_observer_manager_init {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
-        Ctx::new(config, task_rx, notif_rx, packet_handle)
+        Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
     }
 
     #[test]
@@ -1420,7 +1430,7 @@ mod tests_observer_manager_init {
         manager.load_observer(logger).expect("load_observer failed");
 
         // Act
-        let returned_logger = manager.finalize();
+        let returned_logger = manager.finalize(&mut Vec::new(), &mut Vec::new());
 
         // Assert
         let returned_logger = returned_logger.expect("finalize should return the Logging observer");
@@ -1450,10 +1460,160 @@ mod tests_observer_manager_init {
         assert_eq!(manager.observer_names().len(), 2);
 
         // Act
-        manager.finalize();
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
+        let observers = manager.finalize_get_observers();
+        for (handle, _) in manager.finalize_observers(&mut Vec::new(), far_deadline(), observers) {
+            handle.join().unwrap();
+        }
 
-        // Assert - after finalize, observers should be cleared
+        // Assert - after both steps, observers should be cleared
         assert_eq!(manager.observer_names().len(), 0);
+    }
+
+    /// A shutdown deadline that the test never reaches.
+    fn far_deadline() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
+
+    /// The text of a status line.
+    fn message(notif: &Notif) -> String {
+        notif
+            .notif_core
+            .as_any()
+            .downcast_ref::<Log>()
+            .unwrap()
+            .message
+            .clone()
+    }
+
+    #[test]
+    fn test_observer_manager_finalize_observers_cleans_up_on_a_thread_of_its_own() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+
+        let obs_core = Arc::new(TestObsLogic);
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let logger =
+            Observer::new("Logging", obs_core.clone(), obs_job, ctx.packet_handle()).unwrap();
+        manager.load_observer(logger).expect("load_observer failed");
+
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let topo =
+            Observer::new("TopologyHandler", obs_core, obs_job, ctx.packet_handle()).unwrap();
+        manager.load_observer(topo).expect("load_observer failed");
+
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
+        while ctx.status_rx.try_recv().is_ok() {}
+
+        // Act
+        let mut status_reps = Vec::new();
+        let observers = manager.finalize_get_observers();
+        let threads = manager.finalize_observers(&mut status_reps, far_deadline(), observers);
+
+        // Assert - the clean-up thread, which sends its lines through the status mailbox (the
+        // manager's own line last), and the observer's own thread, for the engine to wait for;
+        // the logger's thread stays in the pool
+        assert_eq!(
+            thread_names(&threads),
+            ["observer cleanup", "TopologyHandler"]
+        );
+        for (handle, _) in threads {
+            handle.join().unwrap();
+        }
+        assert!(status_reps.is_empty());
+        assert_eq!(thread_names(&manager.threadpool.workers), ["Logging"]);
+
+        let lines: Vec<String> = ctx
+            .status_rx
+            .try_iter()
+            .map(|line| message(&line))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "Obs Queue Finalized",
+                "observer TopologyHandler finalized successfully",
+                "Observer manager Finalized",
+            ]
+        );
+        assert_eq!(manager.observer_names().len(), 0);
+    }
+
+    #[test]
+    fn test_observer_manager_finalize_observers_with_only_the_logger_starts_no_thread() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+        let obs_core = Arc::new(TestObsLogic);
+        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
+        let logger = Observer::new("Logging", obs_core, obs_job, ctx.packet_handle()).unwrap();
+        manager.load_observer(logger).expect("load_observer failed");
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
+
+        // Act
+        let mut status_reps = Vec::new();
+        let observers = manager.finalize_get_observers();
+        let threads = manager.finalize_observers(&mut status_reps, far_deadline(), observers);
+
+        // Assert - nothing to wait for, and the manager's line is added right away
+        assert!(threads.is_empty());
+        let lines: Vec<String> = status_reps.iter().map(message).collect();
+        assert_eq!(lines, ["Observer manager Finalized"]);
+    }
+
+    /// An observer core whose `clean_up` records that it ran.
+    struct RecordingObsLogic {
+        cleaned_up: Arc<AtomicBool>,
+    }
+
+    impl ObsLogic for RecordingObsLogic {
+        thryve_utils::impl_as_any!(RecordingObsLogic);
+        fn clean_up(&self, _observer: Arc<Observer>) {
+            self.cleaned_up.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_observer_manager_finalize_observers_after_the_deadline_only_stops_the_observers() {
+        // Arrange - an observer whose thread runs until its queue is finalized
+        let ctx = create_test_ctx();
+        let mut manager = ObserverManager::new(&ctx);
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let obs_core = Arc::new(RecordingObsLogic {
+            cleaned_up: cleaned_up.clone(),
+        });
+        let obs_job = ObsJob::new(|obs: Arc<Observer>| while obs.obs_queue.pop().is_some() {});
+        let recorder = Observer::new("Recorder", obs_core, obs_job, ctx.packet_handle()).unwrap();
+        manager
+            .load_observer(recorder)
+            .expect("load_observer failed");
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
+
+        // Act - a deadline that has already passed
+        let observers = manager.finalize_get_observers();
+        let threads = manager.finalize_observers(&mut Vec::new(), Instant::now(), observers);
+
+        // Assert - both threads stop, since the observer's queue is still finalized, but its
+        // `clean_up` never ran
+        assert_eq!(thread_names(&threads), ["observer cleanup", "Recorder"]);
+        let limit = Instant::now() + Duration::from_secs(5);
+        while threads.iter().any(|(handle, _)| !handle.is_finished()) && Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            threads.iter().all(|(handle, _)| handle.is_finished()),
+            "a thread didn't stop"
+        );
+        assert!(!cleaned_up.load(Ordering::SeqCst));
+    }
+
+    /// The names of the given threads.
+    fn thread_names<T>(threads: &[(std::thread::JoinHandle<()>, T)]) -> Vec<String> {
+        threads
+            .iter()
+            .map(|(handle, _)| handle.thread().name().unwrap_or("").to_string())
+            .collect()
     }
 
     #[test]
@@ -1477,7 +1637,7 @@ mod tests_observer_manager_init {
         manager.load_observer(topo).expect("load_observer failed");
 
         // Act & Assert - finalize should not panic
-        manager.finalize();
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
     }
 
     #[test]
@@ -1824,6 +1984,8 @@ mod tests_observer_manager_init {
 
 mod tests_plugin_manager {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
     use crossbeam::channel::bounded;
     use thryve_core::runtime::plugin_manager::*;
@@ -1831,7 +1993,9 @@ mod tests_plugin_manager {
     use thryve_utils::bases::plugin::Plugin;
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::ctx::Ctx;
+    use thryve_utils::errors::{FinalizationError, ThryveError};
     use thryve_utils::extras::jobs::TaskJob;
+    use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::res::TaskResult;
@@ -1841,15 +2005,18 @@ mod tests_plugin_manager {
     struct TestPlgLogic;
     impl PlgLogic for TestPlgLogic {
         thryve_utils::impl_as_any!(TestPlgLogic);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
-        Ctx::new(config, task_rx, notif_rx, packet_handle)
+        Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
     }
 
     #[test]
@@ -1907,7 +2074,7 @@ mod tests_plugin_manager {
 
         // Act
         manager
-            .load_plugin(&ctx.config, plugin)
+            .load_plugin(&ctx.config, plugin, false)
             .expect("load_plugin failed");
 
         // Assert
@@ -1937,10 +2104,10 @@ mod tests_plugin_manager {
 
         // Act
         manager
-            .load_plugin(&ctx.config, plugin1)
+            .load_plugin(&ctx.config, plugin1, false)
             .expect("load_plugin failed");
         manager
-            .load_plugin(&ctx.config, plugin2)
+            .load_plugin(&ctx.config, plugin2, false)
             .expect("load_plugin failed");
 
         // Assert
@@ -1961,16 +2128,162 @@ mod tests_plugin_manager {
             TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
         let plugin = Plugin::new("testType", plg_core, ctx.packet_handle(), job).unwrap();
         manager
-            .load_plugin(&ctx.config, plugin)
+            .load_plugin(&ctx.config, plugin, false)
             .expect("load_plugin failed");
 
         // Assert plugin was loaded
         assert_eq!(manager.plugin_names().len(), 1);
 
         // Act
-        manager.finalize();
+        manager.finalize(&mut Vec::new(), &mut Vec::new());
 
-        // Assert - finalize should clean up plugins (though we can't directly verify this)
-        // The test passes if finalize doesn't panic
+        // Assert - finalize only stops the pool; `finalize_plugins` cleans up the plugins (tested
+        // below). The test passes if finalize doesn't panic
+    }
+
+    /// A plugin core whose `clean_up` records that it ran, and fails if told to.
+    struct RecordingPlgLogic {
+        plugin_type: &'static str,
+        cleaned_up: Arc<AtomicBool>,
+        fails: bool,
+    }
+
+    impl PlgLogic for RecordingPlgLogic {
+        thryve_utils::impl_as_any!(RecordingPlgLogic);
+        fn clean_up(&self) -> Result<(), ThryveError> {
+            self.cleaned_up.store(true, Ordering::SeqCst);
+
+            if self.fails {
+                return Err(FinalizationError::PluginCleanup {
+                    plugin_type: self.plugin_type.to_string(),
+                }
+                .into());
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Loads a plugin whose `clean_up` records that it ran. Returns the record.
+    fn load_recording_plugin(
+        manager: &mut PluginManager,
+        ctx: &Ctx,
+        plugin_type: &'static str,
+        fails: bool,
+    ) -> Arc<AtomicBool> {
+        let cleaned_up = Arc::new(AtomicBool::new(false));
+        let core = Arc::new(RecordingPlgLogic {
+            plugin_type,
+            cleaned_up: cleaned_up.clone(),
+            fails,
+        });
+        let job = TaskJob::new(|| TaskResult::new("", String::new(), ""));
+        let plugin = Plugin::new(plugin_type, core, ctx.packet_handle(), job).unwrap();
+        manager
+            .load_plugin(&ctx.config, plugin, false)
+            .expect("load_plugin failed");
+        cleaned_up
+    }
+
+    /// The text of each status line.
+    fn messages(notifs: &[Notif]) -> Vec<String> {
+        notifs
+            .iter()
+            .map(|notif| {
+                let log = notif.notif_core.as_any().downcast_ref::<Log>().unwrap();
+                log.message.clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_plugin_manager_finalize_plugins_cleans_up_on_a_thread_of_its_own() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
+        let mut manager = PluginManager::new(&ctx, res_tx);
+        let working = load_recording_plugin(&mut manager, &ctx, "Working", false);
+        let failing = load_recording_plugin(&mut manager, &ctx, "Failing", true);
+        let mut status_reps = Vec::new();
+
+        // Act
+        let plugins_cleanup = manager.finalize_plugins(
+            &mut status_reps,
+            Instant::now() + Duration::from_secs(10),
+            true,
+        );
+
+        // Assert - one thread, which cleans up every plugin and sends a failure as a status line
+        assert_eq!(plugins_cleanup.len(), 1);
+        for (handle, _) in plugins_cleanup {
+            assert_eq!(handle.thread().name(), Some("plugin cleanup"));
+            handle.join().unwrap();
+        }
+        assert!(working.load(Ordering::SeqCst));
+        assert!(failing.load(Ordering::SeqCst));
+        assert_eq!(messages(&status_reps), ["ThreadPool Finalized"]);
+
+        let sent: Vec<Notif> = ctx.status_rx.try_iter().collect();
+        let sent = messages(&sent);
+        assert!(
+            sent.iter()
+                .any(|line| line.contains("plugin Failing failed to clean up successfully")),
+            "{sent:?}"
+        );
+        assert!(manager.plugin_names().is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manager_finalize_plugins_after_a_worker_was_left_behind_cleans_up_nothing() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
+        let mut manager = PluginManager::new(&ctx, res_tx);
+        let cleaned_up = load_recording_plugin(&mut manager, &ctx, "Watched", false);
+        let mut status_reps = Vec::new();
+
+        // Act
+        let plugins_cleanup = manager.finalize_plugins(
+            &mut status_reps,
+            Instant::now() + Duration::from_secs(10),
+            false,
+        );
+
+        // Assert - its plugin may still be in use, so no thread starts, and a line says why
+        assert!(plugins_cleanup.is_empty());
+        assert!(!cleaned_up.load(Ordering::SeqCst));
+        let lines = messages(&status_reps);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("cannot cleanup plugins")),
+            "{lines:?}"
+        );
+        assert!(manager.plugin_names().is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manager_finalize_plugins_after_the_deadline_cleans_up_nothing() {
+        // Arrange
+        let ctx = create_test_ctx();
+        let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
+        let mut manager = PluginManager::new(&ctx, res_tx);
+        let cleaned_up = load_recording_plugin(&mut manager, &ctx, "Late", false);
+        let mut status_reps = Vec::new();
+
+        // Act - a deadline that has already passed when the cleanups would start
+        let plugins_cleanup = manager.finalize_plugins(&mut status_reps, Instant::now(), true);
+
+        // Assert
+        assert!(plugins_cleanup.is_empty());
+        assert!(!cleaned_up.load(Ordering::SeqCst));
+        let lines = messages(&status_reps);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("grace period ran out")),
+            "{lines:?}"
+        );
+        assert!(manager.plugin_names().is_empty());
     }
 }

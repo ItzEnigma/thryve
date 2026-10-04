@@ -31,7 +31,8 @@ mod tests_logger {
     fn create_test_ctx() -> Ctx {
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
 
         // Create minimal DirData and MetaData for testing
@@ -49,7 +50,7 @@ mod tests_logger {
         let datetime: DateTime<Local> = SystemTime::now().into();
         let meta_data = MetaData::new(datetime, dir_data);
 
-        let mut ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let mut ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
         ctx.meta_data = meta_data;
         ctx
     }

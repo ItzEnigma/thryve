@@ -49,7 +49,7 @@
 //! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
-use crossbeam::channel::bounded;
+use crossbeam::channel::{bounded, unbounded};
 use std::{
     sync::{
         Arc, Mutex, PoisonError,
@@ -143,6 +143,7 @@ impl<'a> Thryve<'a> {
         // Create the channels that will be used to send tasks and notifications to the engine.
         let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
         let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
+        let (status_tx, status_rx) = unbounded();
 
         // Initialize the service struct with the created channels and the service instance.
         let mut svc: Thryve<'a> = Thryve {
@@ -166,7 +167,8 @@ impl<'a> Thryve<'a> {
                 config,
                 task_rx,
                 notif_rx,
-                PacketHandle::new(task_tx, notif_tx, config.debugging.visual_graph),
+                status_rx,
+                PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph),
             );
 
             // Return the service instance and the context.
@@ -176,7 +178,8 @@ impl<'a> Thryve<'a> {
                 config,
                 task_rx,
                 notif_rx,
-                PacketHandle::new(task_tx, notif_tx, false),
+                status_rx,
+                PacketHandle::new(task_tx, notif_tx, status_tx, false),
             );
 
             // Return the service instance and the context.
@@ -364,7 +367,11 @@ impl<'a> Thryve<'a> {
 /// * `eng` - The engine, handed over by `Start`
 /// * `is_running` - Cleared by `Stop`
 /// * `pause_flag` - Set by `Pause`, cleared by `Resume`
-fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc<AtomicBool>) {
+///
+/// Public, but hidden from the docs, only so that the tests can run it: the service itself needs
+/// the Windows service manager.
+#[doc(hidden)]
+pub fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc<AtomicBool>) {
     // The engine will run in a loop until the is_running flag is set to false.
     while !eng.exit_flag && is_running.load(Ordering::SeqCst) {
         // Check the pause flag and pause or resume the engine accordingly.
@@ -379,11 +386,11 @@ fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc<Ato
 
         // If the pause flag is loaded and the engine is not paused, the engine gets paused.
         if is_pause_flag_loaded && !engine_is_paused {
-            eng.pause();
+            eng.pause(false);
         }
         // If the pause flag is not loaded and the engine is paused, the engine gets resumed.
         else if !is_pause_flag_loaded && engine_is_paused {
-            eng.resume();
+            eng.resume(false);
         }
 
         // Run the engine's main loop once. This will process any tasks or notifications that are in the channels.
@@ -391,7 +398,9 @@ fn engine_loop(mut eng: Engine, is_running: Arc<AtomicBool>, pause_flag: Arc<Ato
     }
 
     // Finalize the engine by performing any necessary cleanup operations before shutting down.
+    // Only `Stop` gets here (a `Fin` has already finalized the engine). Someone asked for this
+    // stop, so the summary of lost work, if any, goes to `Main.log`.
     if !eng.exit_flag {
-        eng.finalize();
+        eng.finalize(true);
     }
 }

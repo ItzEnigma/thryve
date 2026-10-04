@@ -124,4 +124,8 @@ pub trait Packet: Send + Sync + 'static {
     fn get_callsite(&self) -> TaskCallSite {
         TaskCallSite::default()
     }
+
+    fn get_task_name(&self) -> Option<String> {
+        None
+    }
 }

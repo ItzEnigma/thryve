@@ -40,11 +40,15 @@
 
 use std::{
     marker::PhantomData,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
 };
 
-use crate::packets::packet_handle::PacketHandle;
 use crate::threads::thread_registry::WorkerRegistry;
+use crate::{packets::packet_handle::PacketHandle, traits::packets::Packet};
 
 /// Base structure for all queue implementations in the Thryve system.
 ///
@@ -93,4 +97,37 @@ pub struct QueueBase<Q, P, C> {
     pub packet_handle: PacketHandle,
     /// Phantom data to maintain ownership of the packet type.
     pub _marker: PhantomData<P>,
+}
+
+impl<Q, P: Packet, C> QueueBase<Q, P, C> {
+    /// Returns whether the queue is shutting down, after waiting out a pause.
+    ///
+    /// While the queue is paused, the calling worker parks until the queue is resumed or shut
+    /// down. Both queues' `pop` call this first.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` - The calling worker's index in the queue's worker registry
+    pub fn is_exit(&self, idx: usize) -> bool {
+        while self.is_paused_and_running() {
+            self.worker_registry.set_idle(idx);
+
+            // Look again now that this worker is marked idle: a `resume` or `finalize` from
+            // before the mark shows up here, and one from after it finds the mark and wakes this
+            // worker. Either way, the worker can't sleep through it.
+            if self.is_paused_and_running() {
+                thread::park();
+            }
+
+            self.worker_registry.clear_idle(idx);
+        }
+
+        self.exit_flag.load(Ordering::SeqCst)
+    }
+
+    /// Whether the queue is paused and not shutting down. `finalize` sets the exit flag but leaves
+    /// the pause flag as it is, so a worker waiting out a pause must watch both.
+    fn is_paused_and_running(&self) -> bool {
+        self.pause_flag.load(Ordering::SeqCst) && !self.exit_flag.load(Ordering::SeqCst)
+    }
 }

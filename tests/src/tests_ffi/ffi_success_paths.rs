@@ -154,7 +154,9 @@ mod tests_ffi_plugin_create_success {
         )
     }
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_plugin_create_with_valid_args() {
@@ -459,7 +461,9 @@ mod tests_ffi_service_create_ctx_wiring {
         )
     }
 
-    extern "C" fn dummy_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_service_create_ctx_has_connected_packet_handle() {
@@ -721,17 +725,18 @@ mod tests_ffi_plugin_clean_up_success {
     // Track if cleanup was called
     static mut CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
         unsafe {
             CLEANUP_CALLED = true;
         }
+        thryve_ffi::ThryveStatus::Ok as i32
     }
 
     #[test]
     fn test_plugin_logic_adapter_clean_up_calls_callback() {
         // Arrange
         let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new(core_ptr, test_plugin_cleanup);
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
 
         // Reset the flag
         unsafe {
@@ -739,7 +744,10 @@ mod tests_ffi_plugin_clean_up_success {
         }
 
         // Act
-        adapter.clean_up();
+        assert!(
+            adapter.clean_up().is_ok(),
+            "a ThryveStatus_Ok callback should succeed"
+        );
 
         // Assert — cleanup callback should have been called
         unsafe {
@@ -790,7 +798,12 @@ mod tests_ffi_observer_clean_up_success {
                 "testType",
                 obs_core,
                 obs_job,
-                PacketHandle::new(bounded(10).0, bounded(10).0, false),
+                PacketHandle::new(
+                    bounded(10).0,
+                    bounded(10).0,
+                    crossbeam::channel::unbounded().0,
+                    false,
+                ),
             )
             .unwrap(),
         );
@@ -826,13 +839,15 @@ mod tests_ffi_plugin_logic_adapter_as_any {
     use thryve_ffi::PluginLogicAdapter;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
-    extern "C" fn dummy_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_plugin_logic_adapter_as_any_returns_self() {
         // Arrange
         let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new(core_ptr, dummy_cleanup);
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, dummy_cleanup);
 
         // Act
         let any_ref = adapter.as_any();

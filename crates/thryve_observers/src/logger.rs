@@ -111,6 +111,9 @@ impl ObsLogic for LoggerObserver {
     /// observer.clean_up();
     /// ```
     fn clean_up(&self, observer: Arc<Observer>) {
+        // At shutdown this runs on the engine's thread, after the logger's own thread has been
+        // joined, so it's the only writer: the lines still queued come out in order, the
+        // engine's "Engine Finalized" last.
         let notif = Log::log("Logger Obs Cleaning Up...".to_string(), "Main");
         self.handle_log(notif);
 
@@ -198,8 +201,9 @@ impl LoggerObserver {
     /// Main processing loop for the logger observer.
     ///
     /// Continuously monitors the observer's notification queue and processes
-    /// incoming log notifications. Exits gracefully when the observer's exit
-    /// flag is set during engine shutdown.
+    /// incoming log notifications. Stops when the observer's exit flag is set during engine
+    /// shutdown, or when its queue is finalized. Whatever is still queued then is written by
+    /// the logger's `clean_up`.
     ///
     /// # Arguments
     ///
@@ -207,37 +211,31 @@ impl LoggerObserver {
     ///
     /// # Lifecycle
     ///
-    /// 1. Checks if the exit flag is set; if so, logs exit message and breaks
-    /// 2. Pops the next notification from the queue
+    /// 1. Checks if the exit flag is set; if so, stops
+    /// 2. Pops the next notification from the queue; if the queue was finalized, stops
     /// 3. Calls `handle_log` to write the notification to the appropriate file
     /// 4. Repeats until shutdown
     pub fn log(&self, observer: Arc<Observer>) {
         loop {
             // Check if the exit flag is set to true, indicating that the engine
-            // is shutting down. If so, log a message and break the loop to exit
-            // the thread gracefully.
+            // is shutting down. If so, stop: the logger's `clean_up` writes what's left.
             if observer.exit_flag.load(Ordering::SeqCst) {
-                let notif = Log::log("Logger Obs Thread Exited...".to_string(), "Main");
-                observer.obs_queue.push(notif);
-                return;
+                break;
             }
 
             // Pop a notification from the observer's queue and handle it by
             // calling the `handle_log` method.
-            let notif = observer.obs_queue.pop();
+            let notif_opt = observer.obs_queue.pop();
 
-            // pop() can wake here because the queue was finalized while this
-            // thread was blocked inside it, in which case it returns a
-            // sentinel value rather than a real notification -- recheck
-            // before handing it to handle_log (which expects a real Log).
-            if observer.exit_flag.load(Ordering::SeqCst) {
-                let notif = Log::log("Logger Obs Thread Exited...".to_string(), "Main");
-                observer.obs_queue.push(notif);
-                return;
+            if let Some(notif) = notif_opt {
+                self.handle_log(notif);
+            } else {
+                break;
             }
-
-            self.handle_log(notif);
         }
+
+        let notif = Log::log("Logger Obs Thread Exited...".to_string(), "Main");
+        self.handle_log(notif);
     }
 
     /// Processes a notification and writes it to the appropriate log file.

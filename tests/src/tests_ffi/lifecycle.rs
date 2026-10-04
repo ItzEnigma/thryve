@@ -109,7 +109,9 @@ mod tests_ctx_lifecycle {
             )
         }
 
-        extern "C" fn test_cleanup(_core_ptr: *const u8) {}
+        extern "C" fn test_cleanup(_core_ptr: *const u8) -> i32 {
+            thryve_ffi::ThryveStatus::Ok as i32
+        }
 
         let plugin = unsafe {
             thryve_plugin_create(
@@ -183,7 +185,9 @@ mod tests_plugin_lifecycle {
         )
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_plugin_create_free_lifecycle() {
@@ -383,7 +387,9 @@ mod tests_full_interactive_lifecycle {
         )
     }
 
-    extern "C" fn test_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn test_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_full_interactive_setup() {

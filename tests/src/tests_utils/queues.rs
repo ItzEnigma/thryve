@@ -8,35 +8,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 mod tests_seg_queue {
-    use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
-    use thryve_utils::bases::observer::Observer;
-    use thryve_utils::extras::jobs::ObsJob;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::queues::seg_queue::*;
-    use thryve_utils::traits::observer_logic::ObsLogic;
     use thryve_utils::traits::queue::Queue;
-
-    // Test implementation of ObsLogic
-    struct TestObsLogic;
-    impl ObsLogic for TestObsLogic {
-        thryve_utils::impl_as_any!(TestObsLogic);
-        fn clean_up(&self, _observer: Arc<Observer>) {
-            // No-op for testing
-        }
-    }
 
     #[test]
     fn test_seg_queue_new_creates_queue() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
 
         // Act
         let queue = QChild::new(1, packet_handle);
@@ -52,7 +40,8 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
         let notif = Log::log("test message".to_string(), "Main");
 
@@ -60,7 +49,7 @@ mod tests_seg_queue {
         queue.push(notif);
 
         // Act - pop notification
-        let popped = queue.pop();
+        let popped = queue.pop().expect("the pushed notification");
 
         // Attempt to downcast the notification's core logic to a `Log` type
         // to access its specific fields and functionality.
@@ -76,7 +65,8 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
         let mut count = 5;
 
@@ -113,14 +103,15 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
 
         // Assert initially not paused
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.pause();
+        queue.pause(false);
 
         // Assert
         assert!(queue.pause_flag.load(Ordering::SeqCst));
@@ -131,15 +122,16 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
 
         // Pause first
-        queue.pause();
+        queue.pause(false);
         assert!(queue.pause_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.resume();
+        queue.resume(false);
 
         // Assert
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
@@ -150,34 +142,57 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
-
-        // Create a mock logger observer
-        let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
-        let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
-        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
-        let obs_core = Arc::new(TestObsLogic);
-        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let logger =
-            Arc::new(Observer::new("loggertype", obs_core, obs_job, logger_packet_handle).unwrap());
 
         // Assert initially not exiting
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.finalize(Some(logger));
+        queue.finalize(&mut Vec::new(), &mut Vec::new());
 
         // Assert
         assert!(queue.exit_flag.load(Ordering::SeqCst));
     }
 
     #[test]
-    fn test_seg_queue_pop_returns_exit_notification_when_exit_flag_set() {
+    fn test_seg_queue_finalize_hands_back_what_is_left() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
+        let queue = QChild::new(1, packet_handle);
+        queue.push(Log::log("first".to_string(), "Main"));
+        queue.push(Log::log("second".to_string(), "Main"));
+
+        // Act
+        let mut notifs = Vec::new();
+        let mut status_reps = Vec::new();
+        let left_over = queue.finalize(&mut notifs, &mut status_reps);
+
+        // Assert - both are handed back in order and counted, plus one status line
+        assert_eq!(left_over, 2);
+        let messages: Vec<String> = notifs
+            .iter()
+            .map(|notif| {
+                let log = notif.notif_core.as_any().downcast_ref::<Log>().unwrap();
+                log.message.clone()
+            })
+            .collect();
+        assert_eq!(messages, ["first", "second"]);
+        assert_eq!(status_reps.len(), 1);
+        assert!(queue.main_queue.is_empty());
+    }
+
+    #[test]
+    fn test_seg_queue_pop_returns_nothing_when_exit_flag_set() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
 
         // Set exit flag
@@ -186,13 +201,27 @@ mod tests_seg_queue {
         // Act
         let notif = queue.pop();
 
-        // Attempt to downcast the notification's core logic to a `Log` type
-        // to access its specific fields and functionality.
-        let notif_as_any = notif.notif_core.as_any();
-        let notif_casted = notif_as_any.downcast_ref::<Log>();
+        // Assert - nothing, rather than a made-up notification
+        assert!(notif.is_none());
+    }
 
-        // Assert
-        assert_eq!(notif_casted.unwrap().message, "");
+    #[test]
+    fn test_seg_queue_pop_returns_nothing_at_exit_even_with_items_left() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
+        let queue = QChild::new(1, packet_handle);
+        queue.push(Log::log("left over".to_string(), "Main"));
+
+        // Act
+        queue.exit_flag.store(true, Ordering::SeqCst);
+        let notif = queue.pop();
+
+        // Assert - pop stops at the exit; what's left stays for the caller's exit routine
+        assert!(notif.is_none());
+        assert_eq!(queue.main_queue.len(), 1);
     }
 
     #[test]
@@ -200,7 +229,8 @@ mod tests_seg_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle);
         let notif = Log::log("test".to_string(), "Main");
 
@@ -208,7 +238,7 @@ mod tests_seg_queue {
         queue.push(notif);
 
         // pop to verify notification was queued
-        let popped = queue.pop();
+        let popped = queue.pop().expect("the pushed notification");
 
         // Attempt to downcast the notification's core logic to a `Log` type
         // to access its specific fields and functionality.
@@ -240,7 +270,8 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
 
         // Act
@@ -261,7 +292,8 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
         let task = Task::new(
@@ -275,18 +307,19 @@ mod tests_priority_queue {
         queue.push(task);
 
         // Act - pop task
-        let popped = queue.pop();
+        let popped = queue.pop().expect("the pushed task");
 
         // Assert
         assert_eq!(popped.task_name(), "testTask");
     }
 
     #[test]
-    fn test_priority_queue_pop_returns_fin_task_when_exit_flag_set() {
+    fn test_priority_queue_pop_returns_nothing_when_exit_flag_set() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
 
@@ -296,8 +329,35 @@ mod tests_priority_queue {
         // Act
         let task = queue.pop();
 
-        // Assert
-        assert_eq!(task.task_name(), "Fin");
+        // Assert - nothing, rather than a made-up Fin task
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn test_priority_queue_finalize_hands_back_what_is_left() {
+        // Arrange
+        let (task_tx, _task_rx) = bounded::<Task>(10);
+        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
+        let config = Config::default();
+        let queue = PQChild::new(&config, packet_handle);
+        for name in ["first", "second"] {
+            let job = TaskJob::new(|| TaskResult::new("OK", String::new(), "Main"));
+            queue.push(Task::new(name, 5, job).unwrap());
+        }
+
+        // Act
+        let mut tasks = Vec::new();
+        let mut status_reps = Vec::new();
+        let left_over = queue.finalize(&mut tasks, &mut status_reps);
+
+        // Assert - both are handed back and counted, plus one status line, and pop now stops
+        assert_eq!(left_over, 2);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(status_reps.len(), 1);
+        assert!(queue.exit_flag.load(Ordering::SeqCst));
+        assert!(queue.pop().is_none());
     }
 
     #[test]
@@ -305,7 +365,8 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
 
@@ -313,7 +374,7 @@ mod tests_priority_queue {
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.pause();
+        queue.pause(false);
 
         // Assert
         assert!(queue.pause_flag.load(Ordering::SeqCst));
@@ -324,16 +385,17 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
 
         // Pause first
-        queue.pause();
+        queue.pause(false);
         assert!(queue.pause_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.resume();
+        queue.resume(false);
 
         // Assert
         assert!(!queue.pause_flag.load(Ordering::SeqCst));
@@ -344,7 +406,8 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
 
@@ -352,7 +415,7 @@ mod tests_priority_queue {
         assert!(!queue.exit_flag.load(Ordering::SeqCst));
 
         // Act
-        queue.finalize(None);
+        queue.finalize(&mut Vec::new(), &mut Vec::new());
 
         // Assert
         assert!(queue.exit_flag.load(Ordering::SeqCst));
@@ -363,7 +426,8 @@ mod tests_priority_queue {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
 
@@ -386,8 +450,8 @@ mod tests_priority_queue {
         queue.push(task_high);
 
         // Act - pop should return higher priority first
-        let first = queue.pop();
-        let second = queue.pop();
+        let first = queue.pop().expect("the pushed task");
+        let second = queue.pop().expect("the pushed task");
 
         // Assert
         assert_eq!(first.task_name(), "highPriority");

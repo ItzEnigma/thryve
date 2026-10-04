@@ -16,7 +16,7 @@
 //! # Architecture
 //!
 //! The topology graph uses [`petgraph`](https://docs.rs/petgraph)'s
-//! [`StableGraph`](petgraph::stable_graph::StableGraph) to represent
+//! [`StableGraph`] to represent
 //! the task call hierarchy:
 //!
 //! - **Nodes** ([`TopologyNode`]): Represent individual call sites where
@@ -102,7 +102,7 @@ pub struct TopologyNode {
 /// The task topology graph.
 ///
 /// `TaskTopology` maintains a graph of task call relationships.
-/// It uses a [`StableGraph`](petgraph::stable_graph::StableGraph) to
+/// It uses a [`StableGraph`] to
 /// represent the topology, with nodes representing call sites and
 /// edges representing task creation relationships.
 ///

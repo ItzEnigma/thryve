@@ -577,7 +577,9 @@ mod tests_ctx {
     struct TestPlgLogic;
     impl thryve_utils::traits::plugin_logic::PlgLogic for TestPlgLogic {
         thryve_utils::impl_as_any!(TestPlgLogic);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -585,11 +587,12 @@ mod tests_ctx {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
 
         // Act
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
 
         // Assert
         assert!(ctx.observers.is_empty());
@@ -602,8 +605,15 @@ mod tests_ctx {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+        let mut ctx = Ctx::new(
+            Config::default(),
+            task_rx,
+            notif_rx,
+            status_rx,
+            packet_handle,
+        );
 
         // Add a dummy observer
         ctx.observers.push(
@@ -629,8 +639,15 @@ mod tests_ctx {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+        let mut ctx = Ctx::new(
+            Config::default(),
+            task_rx,
+            notif_rx,
+            status_rx,
+            packet_handle,
+        );
 
         // Add a dummy plugin
         ctx.plugins.push(
@@ -658,8 +675,15 @@ mod tests_ctx {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+        let ctx = Ctx::new(
+            Config::default(),
+            task_rx,
+            notif_rx,
+            status_rx,
+            packet_handle,
+        );
 
         // Act
         let handle1 = ctx.packet_handle();
@@ -676,11 +700,12 @@ mod tests_ctx {
         // Arrange
         let (task_tx, task_rx) = bounded::<Task>(10);
         let (notif_tx, notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let (status_tx, status_rx) = crossbeam::channel::unbounded();
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
         let config = Config::default();
 
         // Act
-        let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+        let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
 
         // Assert
         assert_eq!(ctx.config.service.can_stop, config.service.can_stop);
@@ -772,10 +797,12 @@ mod tests_cfg {
         // Arrange & Act
         let config = EngineConfig {
             sleep_tick_rate: 10,
+            shutdown_grace_period: 5,
         };
 
         // Assert
         assert_eq!(config.sleep_tick_rate, 10);
+        assert_eq!(config.shutdown_grace_period, 5);
     }
 
     // Tests for ThreadConfig
@@ -954,6 +981,7 @@ mod tests_cfg {
 
             [engine]
             sleep_tick_rate = 10
+            shutdown_grace_period = 10
 
             [threads]
             worker_count = 8

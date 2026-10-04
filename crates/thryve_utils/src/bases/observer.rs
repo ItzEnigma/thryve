@@ -33,6 +33,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::bases::notif::Notif;
 use crate::errors::{NameInputType, NamingError};
 use crate::extras::{jobs::ObsJob, named_input::NamedInput};
 use crate::packets::packet_handle::PacketHandle;
@@ -58,9 +59,38 @@ use crate::traits::queue::Queue;
 ///
 /// # Example
 ///
+/// An observer's core logic implements [`ObsLogic`]; [`Observer::new`] adds its type and the
+/// loop its thread runs.
+///
 /// ```no_run
-/// // Observers are typically created by implementing ObsLogic and
-/// // passing the core logic to Observer::new along with a run function
+/// use std::sync::Arc;
+/// use thryve_utils::bases::observer::Observer;
+/// use thryve_utils::extras::jobs::ObsJob;
+/// use thryve_utils::impl_as_any;
+/// use thryve_utils::packets::packet_handle::PacketHandle;
+/// use thryve_utils::traits::observer_logic::ObsLogic;
+/// use thryve_utils::traits::queue::Queue;
+///
+/// // A core with nothing to clean up.
+/// struct Metrics;
+///
+/// impl ObsLogic for Metrics {
+///     impl_as_any!(Metrics);
+///
+///     fn clean_up(&self, _observer: Arc<Observer>) {}
+/// }
+///
+/// # let (task_tx, _) = crossbeam::channel::bounded(1);
+/// # let (notif_tx, _) = crossbeam::channel::bounded(1);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
+/// // The loop takes each notification sent to "Metrics", until the shutdown finalizes the queue.
+/// let job = ObsJob::new(|observer: Arc<Observer>| {
+///     while let Some(_notif) = observer.obs_queue.pop() {
+///         // Handle the notification here.
+///     }
+/// });
+/// let observer = Observer::new("Metrics", Arc::new(Metrics), job, handle)?;
+/// # Ok::<(), thryve_utils::errors::NamingError>(())
 /// ```
 pub struct Observer {
     /// Type classifier for routing notifications to the correct observer.
@@ -122,22 +152,60 @@ impl Observer {
 
     /// Gracefully shuts down the observer.
     ///
-    /// Sets the exit flag to signal the observer's main loop to terminate,
-    /// invokes the core logic's cleanup method, and finalizes the notification
-    /// queue to ensure all pending notifications are processed.
+    /// Sets the exit flag to signal the observer's main loop to terminate, then invokes the
+    /// core logic's cleanup method, which decides what happens to the notifications still in
+    /// the queue. Then it finalizes the queue, which wakes the observer's thread so it stops,
+    /// and hands back whatever the cleanup left in the queue.
     ///
-    /// This method should be called during engine shutdown to ensure proper
-    /// resource cleanup and orderly termination of the observer.
+    /// This method should be called during engine shutdown, after the notification sorter has
+    /// stopped, so that nothing new reaches the queue.
     ///
     /// # Arguments
     ///
-    /// * `logger` - The logger, which receives the queue's "Obs Queue Finalized" line, or `None`
-    ///   to skip the line (a half-built engine after a failed startup may have no logger). For
-    ///   the logger's own clean-up, pass the logger itself.
-    pub fn clean_up(self: &Arc<Self>, logger: Option<Arc<Observer>>) {
+    /// * `notifs` - Receives the notifications the cleanup left in the queue
+    /// * `status_reps` - Receives the queue's "Obs Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many notifications the cleanup left in the queue.
+    pub fn clean_up(
+        self: &Arc<Self>,
+        notifs: &mut Vec<Notif>,
+        status_reps: &mut Vec<Notif>,
+    ) -> usize {
+        // A loop that checks the flag between notifications (the built-in observers' loops do)
+        // stops after the one it's on.
         self.exit_flag.store(true, Ordering::SeqCst);
-        self.obs_queue.finalize(logger);
+        // The observer's own cleanup: it decides what happens to what's still queued.
         self.obs_core.clean_up(self.clone());
+        // Wakes the thread if it's waiting in `pop`, which then returns `None`, so the loop ends
+        // even if nothing new arrives.
+        self.obs_queue.finalize(notifs, status_reps)
+    }
+
+    /// Stops the observer without running its cleanup, for a shutdown that's out of time.
+    ///
+    /// Like [`clean_up`](Self::clean_up), but the core logic's cleanup is skipped: it sets the
+    /// exit flag, then finalizes the queue, which wakes the observer's thread so it stops, and
+    /// hands back what was still queued. The observer manager calls it for an observer whose
+    /// turn comes after the shutdown's deadline.
+    ///
+    /// # Arguments
+    ///
+    /// * `notifs` - Receives the notifications still in the queue
+    /// * `status_reps` - Receives the queue's "Obs Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many notifications were still in the queue.
+    pub fn clean_up_after_grace_period(
+        self: &Arc<Self>,
+        notifs: &mut Vec<Notif>,
+        status_reps: &mut Vec<Notif>,
+    ) -> usize {
+        // As in `clean_up`, without the observer's own cleanup in between.
+        self.exit_flag.store(true, Ordering::SeqCst);
+        self.obs_queue.finalize(notifs, status_reps)
     }
 
     /// Extracts and returns the initialization function.

@@ -27,9 +27,11 @@
 // Plugin Implementation
 // ============================================================================
 
-// Plugin cleanup function — called when the plugin is being freed
-void my_plugin_cleanup(const void* core_ptr) {
+// Plugin cleanup function — called once when the engine shuts down.
+// Returns ThryveStatus_Ok if it worked; any other value is logged to Error.log.
+int my_plugin_cleanup(const void* core_ptr) {
     printf("Plugin cleanup called\n");
+    return ThryveStatus_Ok;
 }
 
 // Plugin entry point — called when the plugin's task is executed
@@ -50,7 +52,7 @@ ThryveTaskResult my_plugin_entry_point(void) {
 // Observer Implementation
 // ============================================================================
 
-// Observer cleanup function — called when the observer is being freed
+// Observer cleanup function — called once when the engine shuts down.
 void my_observer_cleanup(const void* core_ptr) {
     printf("Observer cleanup called\n");
 }

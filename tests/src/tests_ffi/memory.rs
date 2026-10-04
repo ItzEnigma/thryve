@@ -20,17 +20,18 @@ mod tests_plugin_logic_adapter {
     // Track if cleanup was called
     static mut CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
         unsafe {
             CLEANUP_CALLED = true;
         }
+        thryve_ffi::ThryveStatus::Ok as i32
     }
 
     #[test]
     fn test_plugin_logic_adapter_clean_up_calls_callback() {
         // Arrange
         let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new(core_ptr, test_plugin_cleanup);
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
 
         // Reset the flag
         unsafe {
@@ -38,7 +39,10 @@ mod tests_plugin_logic_adapter {
         }
 
         // Act
-        adapter.clean_up();
+        assert!(
+            adapter.clean_up().is_ok(),
+            "a ThryveStatus_Ok callback should succeed"
+        );
 
         // Assert — cleanup callback should have been called
         unsafe {
@@ -55,7 +59,7 @@ mod tests_plugin_logic_adapter {
     fn test_plugin_logic_adapter_as_any_returns_self() {
         // Arrange
         let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new(core_ptr, test_plugin_cleanup);
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
 
         // Act
         let any_ref = adapter.as_any();
@@ -222,13 +226,16 @@ mod tests_adapter_core_ptr_validation {
     use thryve_utils::traits::observer_logic::ObsLogic;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
     extern "C" fn dummy_obs_cleanup(_core_ptr: *const u8) {}
 
     #[test]
     fn test_plugin_adapter_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
-        let adapter = PluginLogicAdapter::new(std::ptr::null_mut(), dummy_plugin_cleanup);
+        let adapter =
+            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), dummy_plugin_cleanup);
 
         // Assert — adapter should exist with null core_ptr
         assert!(
@@ -270,12 +277,16 @@ mod tests_adapter_core_ptr_validation {
     #[test]
     fn test_plugin_adapter_clean_up_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
-        let adapter = PluginLogicAdapter::new(std::ptr::null_mut(), dummy_plugin_cleanup);
+        let adapter =
+            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), dummy_plugin_cleanup);
 
         // Act — clean_up should not panic with null core_ptr
         // The callback is still called with the null pointer
         // Note: This will call the cleanup with null, which is safe in this case
-        adapter.clean_up();
+        assert!(
+            adapter.clean_up().is_ok(),
+            "a ThryveStatus_Ok callback should succeed"
+        );
     }
 
     #[test]
@@ -470,7 +481,9 @@ mod tests_ffi_ctx_add_plugin_ownership {
         )
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_ctx_add_plugin_takes_ownership() {

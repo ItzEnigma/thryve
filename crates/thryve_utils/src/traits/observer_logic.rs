@@ -11,7 +11,7 @@
 //!
 //! This module defines the traits that specify the interface for observer
 //! core logic implementations. Any struct implementing these traits can
-//! serve as the core of an [`Observer`](crate::bases::observer::Observer),
+//! serve as the core of an [`Observer`],
 //! enabling polymorphic handling of different observer types.
 //!
 //! # Traits
@@ -55,7 +55,7 @@ pub trait ObsB: Send + Sync {}
 ///
 /// This trait specifies the interface for observer core logic.
 /// Any struct implementing `ObsLogic` can serve as the core of
-/// an [`Observer`](crate::bases::observer::Observer), enabling
+/// an [`Observer`], enabling
 /// polymorphic handling of different observer types.
 ///
 /// # Trait Bounds

@@ -293,7 +293,10 @@ mod tests_extras {
                 let (notif_tx, _) =
                     crossbeam::channel::unbounded::<thryve_utils::bases::notif::Notif>();
                 let packet_handle = thryve_utils::packets::packet_handle::PacketHandle::new(
-                    task_tx, notif_tx, false,
+                    task_tx,
+                    notif_tx,
+                    crossbeam::channel::unbounded().0,
+                    false,
                 );
                 let observer = Arc::new(
                     thryve_utils::bases::observer::Observer::new(
@@ -328,7 +331,10 @@ mod tests_extras {
                 let (notif_tx, _) =
                     crossbeam::channel::unbounded::<thryve_utils::bases::notif::Notif>();
                 let packet_handle = thryve_utils::packets::packet_handle::PacketHandle::new(
-                    task_tx, notif_tx, false,
+                    task_tx,
+                    notif_tx,
+                    crossbeam::channel::unbounded().0,
+                    false,
                 );
 
                 let observer = Arc::new(
@@ -713,7 +719,11 @@ mod tests_res {
         let display_str = format!("{}", result);
 
         // Assert
-        assert_eq!(display_str, "Message: Display message");
+        assert_eq!(
+            display_str,
+            "result type: Test, message: Display message, next task: None, observer: None, \
+             plugin: None"
+        );
     }
 
     #[test]
@@ -725,7 +735,32 @@ mod tests_res {
         let display_str = format!("{}", result);
 
         // Assert
-        assert_eq!(display_str, "Message: ");
+        assert_eq!(
+            display_str,
+            "result type: Test, message: , next task: None, observer: None, plugin: None"
+        );
+    }
+
+    #[test]
+    fn test_result_display_names_the_next_task() {
+        // Arrange
+        let next_task = Task::new(
+            "FollowUp",
+            1,
+            TaskJob::new(|| TaskResult::new("Done", String::new(), "Main")),
+        )
+        .unwrap();
+        let result = TaskResult::new("Step", "chained".to_string(), "Main").chain(next_task);
+
+        // Act
+        let display_str = format!("{}", result);
+
+        // Assert
+        assert_eq!(
+            display_str,
+            "result type: Step, message: chained, next task: FollowUp, observer: None, \
+             plugin: None"
+        );
     }
 
     #[test]
@@ -1060,38 +1095,25 @@ mod tests_res {
 }
 
 mod tests_threadpool {
-    use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
-    use thryve_utils::bases::observer::Observer;
     use thryve_utils::cfg;
-    use thryve_utils::extras::jobs::ObsJob;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::queues::priority_queue::PQChild;
     use thryve_utils::queues::seg_queue::QChild;
     use thryve_utils::threads::threadpool::*;
-    use thryve_utils::traits::observer_logic::ObsLogic;
-    use thryve_utils::traits::queue::Queue;
-
-    // Test implementation of ObsLogic
-    struct TestObsLogic;
-    impl ObsLogic for TestObsLogic {
-        thryve_utils::impl_as_any!(TestObsLogic);
-        fn clean_up(&self, _observer: Arc<Observer>) {
-            // No-op for testing
-        }
-    }
 
     #[test]
     fn test_thread_pool_new_creates_pool() {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
@@ -1109,7 +1131,8 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
@@ -1124,7 +1147,8 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle);
         let notif = Log::log("test_message".to_string(), "Main");
@@ -1132,9 +1156,12 @@ mod tests_threadpool {
         // Act
         pool.submit_task(notif);
 
-        // Set exit flag and try to pop
-        pool.main_queue.exit_flag.store(true, Ordering::SeqCst);
-        let popped = pool.main_queue.pop();
+        // Look in the queue without waiting, so the test can't hang if nothing was queued.
+        let popped = pool
+            .main_queue
+            .main_queue
+            .pop()
+            .expect("submit_task should have queued the notification");
 
         // Assert - should have popped our notification
         assert_eq!(popped.notif_type(), "Log");
@@ -1145,7 +1172,8 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
 
         // Act
@@ -1160,7 +1188,8 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
         let pool = ThreadPool::new(1, queue, packet_handle);
 
@@ -1178,7 +1207,8 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle);
 
@@ -1186,7 +1216,7 @@ mod tests_threadpool {
         assert!(!pool.pool_pause_flag.load(Ordering::SeqCst));
 
         // Act
-        pool.pause();
+        pool.pause(false);
 
         // Assert
         assert!(pool.pool_pause_flag.load(Ordering::SeqCst));
@@ -1197,16 +1227,17 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle);
 
         // Pause first
-        pool.pause();
+        pool.pause(false);
         assert!(pool.pool_pause_flag.load(Ordering::SeqCst));
 
         // Act
-        pool.resume();
+        pool.resume(false);
 
         // Assert
         assert!(!pool.pool_pause_flag.load(Ordering::SeqCst));
@@ -1218,7 +1249,8 @@ mod tests_threadpool {
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
         let cfg = cfg::config::Config::default();
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = PQChild::new(&cfg, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle);
 
@@ -1226,7 +1258,7 @@ mod tests_threadpool {
         assert!(!pool.pool_exit_flag.load(Ordering::SeqCst));
 
         // Act
-        pool.finalize_plg();
+        pool.finalize_plg(&mut Vec::new(), &mut Vec::new());
 
         // Assert
         assert!(pool.pool_exit_flag.load(Ordering::SeqCst));
@@ -1237,48 +1269,28 @@ mod tests_threadpool {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = QChild::new(1, packet_handle.clone());
         let mut pool = ThreadPool::new(1, queue, packet_handle);
-
-        // Create a mock logger observer
-        let (logger_task_tx, _logger_task_rx) = bounded::<Task>(10);
-        let (logger_notif_tx, _logger_notif_rx) = bounded::<Notif>(10);
-        let logger_packet_handle = PacketHandle::new(logger_task_tx, logger_notif_tx, false);
-        let obs_core = Arc::new(TestObsLogic);
-        let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
-        let logger =
-            Arc::new(Observer::new("loggerType", obs_core, obs_job, logger_packet_handle).unwrap());
+        pool.submit_task(Log::log("left over".to_string(), "Main"));
 
         // Assert initially not exiting
         assert!(!pool.pool_exit_flag.load(Ordering::SeqCst));
 
         // Act
-        pool.finalize_obs(Some(logger));
+        let mut notifs = Vec::new();
+        let mut status_reps = Vec::new();
+        let left_over = pool.finalize_obs(&mut notifs, &mut status_reps);
 
-        // Assert
+        // Assert - the flag is set, and what was still queued is handed back and counted
         assert!(pool.pool_exit_flag.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn test_thread_pool_add_worker() {
-        // Arrange
-        let (task_tx, _task_rx) = bounded::<Task>(10);
-        let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-        let queue = QChild::new(1, packet_handle.clone());
-        let mut pool = ThreadPool::new(1, queue, packet_handle);
-
-        // Create a dummy thread handle
-        let handle = std::thread::spawn(|| {});
-
-        // Assert initially empty
-        assert!(pool.workers.is_empty());
-
-        // Act
-        pool.add_worker(handle);
-
-        // Assert
-        assert_eq!(pool.workers.len(), 1);
+        assert_eq!(left_over, 1);
+        assert_eq!(notifs.len(), 1);
+        assert_eq!(
+            status_reps.len(),
+            1,
+            "the queue's \"Obs Queue Finalized\" line"
+        );
     }
 }

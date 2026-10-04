@@ -24,7 +24,7 @@
 //!
 //! Implementors must provide:
 //! - The `as_any` method for downcasting to concrete types
-//! - All methods from the [`Packet`](crate::traits::packets::Packet) trait
+//! - All methods from the [`Packet`] trait
 
 use crate::traits::packets::Packet;
 
@@ -38,7 +38,7 @@ use crate::traits::packets::Packet;
 /// # Trait Bounds
 ///
 /// - `Packet`: All notification logic must also implement the
-///   [`Packet`](crate::traits::packets::Packet) trait
+///   [`Packet`] trait
 ///
 /// # Example
 ///

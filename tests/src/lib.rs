@@ -35,3 +35,6 @@ pub mod integration;
 
 #[cfg(test)]
 pub mod gate_t1;
+
+#[cfg(test)]
+pub mod gate_t2;

@@ -26,21 +26,39 @@
 //! # Usage
 //!
 //! Two main thread pools exist in the engine:
-//! 1. Plugin thread pool: Processes tasks using [`PQChild`](crate::queues::priority_queue::PQChild)
-//! 2. Observer thread pool: Processes notifications using [`QChild`](crate::queues::seg_queue::QChild)
+//! 1. Plugin thread pool: Processes tasks using [`PQChild`]
+//! 2. Observer thread pool: Processes notifications using [`QChild`]
 
+use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::Sender;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
+use crate::bases::notif::Notif;
 use crate::bases::observer::Observer;
 use crate::errors::StartupError;
 use crate::extras::thread_local::{self, tl_set_current_task_fingerprint};
+use crate::packets::task::Task;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
+use crate::queues::priority_queue::PQChild;
+use crate::queues::seg_queue::QChild;
 use crate::res::TaskResult;
 use crate::traits::{packets::Packet, queue::Queue};
+
+/// A thread's slot for the name of what it's working on, empty when it's idle.
+///
+/// A plugin worker swaps a task's name in before it runs the task and takes it back out after;
+/// the plugins' clean-up thread does the same with each plugin's type. When the shutdown's grace
+/// period runs out, the engine takes the name out of every thread that hasn't finished, so the
+/// log can say what it was stuck on.
+///
+/// It's lock-free: whoever takes the name out owns it, so no one ever reads a name that someone
+/// else could be freeing. `Option<Box<String>>` is one pointer wide, which `AtomicCell` moves with
+/// a single atomic instruction. A wider value, such as `Option<Box<str>>`, would make it fall back
+/// to an internal lock.
+pub type TaskSlot = Arc<AtomicCell<Option<Box<String>>>>;
 
 /// Thread pool for processing tasks and notifications.
 ///
@@ -51,8 +69,8 @@ use crate::traits::{packets::Packet, queue::Queue};
 ///
 /// # Type Parameters
 ///
-/// - `Q`: The queue type (e.g., [`PQChild`](crate::queues::priority_queue::PQChild) or [`QChild`](crate::queues::seg_queue::QChild))
-/// - `P`: The packet type (e.g., [`Task`](crate::packets::task::Task) or [`Notif`](crate::bases::notif::Notif))
+/// - `Q`: The queue type (e.g., [`PQChild`] or [`QChild`])
+/// - `P`: The packet type (e.g., [`Task`] or [`Notif`])
 ///
 /// # Fields
 ///
@@ -77,16 +95,17 @@ use crate::traits::{packets::Packet, queue::Queue};
 pub struct ThreadPool<Q, P> {
     /// Number of worker threads to spawn.
     pub num_workers: usize,
-    /// Collection of worker thread handles for lifecycle management.
-    pub workers: Vec<JoinHandle<()>>,
+    /// The worker threads, each with the slot naming the task it's running (see [`TaskSlot`]).
+    pub workers: Vec<(JoinHandle<()>, TaskSlot)>,
+
     /// Flag for graceful shutdown.
     pub pool_exit_flag: Arc<AtomicBool>,
     /// Flag for pause/resume.
     pub pool_pause_flag: Arc<AtomicBool>,
     /// The queue being processed.
     pub main_queue: Arc<Q>,
-    /// Handle for sending notifications.
-    packet_handle: PacketHandle,
+    /// Handle for sending tasks and notifications.
+    pub packet_handle: PacketHandle,
     /// Phantom data for the packet type.
     _marker: PhantomData<P>,
 }
@@ -156,8 +175,8 @@ where
     ///
     /// Spawns worker threads that continuously pop tasks from the
     /// main queue and process them. Each task's result is sent
-    /// back through the result channel. Threads exit when the
-    /// pool exit flag is set.
+    /// back through the result channel. A worker stops once the pool exit flag is set, after
+    /// finishing the task it's running, and sends a "Plugin Thread Exiting..." status line.
     ///
     /// # Arguments
     ///
@@ -184,6 +203,8 @@ where
             let exit_flag = Arc::clone(&self.pool_exit_flag);
             let tx = self.packet_handle.clone();
             let res_tx = res_tx.clone();
+            let task_slot = Arc::new(AtomicCell::new(None));
+            let task_slot_clone = task_slot.clone();
 
             let thread_name = format!("plugin-worker-{}", i);
             let handle = thread::Builder::new()
@@ -191,44 +212,53 @@ where
                 .spawn(move || {
                     thread_local::tl_set_worker_park_idx(i);
                     loop {
+                        // The pool's exit flag is the queue's own; the shutdown sets it.
                         if exit_flag.load(Ordering::SeqCst) {
-                            let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                            tx.send_status(notif);
                             break;
                         }
 
-                        let obj = queue.pop();
+                        // Waits for a task. `None` once the queue is finalized, even with tasks
+                        // still in it: the engine takes those back, and they never run.
+                        let obj_opt = queue.pop();
 
-                        // pop() can wake here because the queue was finalized
-                        // while this thread was blocked inside it, in which
-                        // case it returns a sentinel value rather than a real
-                        // task -- recheck before treating it as real work.
-                        if exit_flag.load(Ordering::SeqCst) {
-                            let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                            tx.send_status(notif);
-                            break;
-                        }
+                        if let Some(obj) = obj_opt {
+                            tl_set_current_task_fingerprint(
+                                obj.get_callsite().this_callsite_fingerprint,
+                            );
 
-                        tl_set_current_task_fingerprint(
-                            obj.get_callsite().this_callsite_fingerprint,
-                        );
-
-                        if let Some(res_container) = obj.process() {
-                            // Non-fatal: if result send fails, log it and continue
-                            if let Err(e) = res_tx.send(res_container) {
-                                let notif =
-                                    Log::log(format!("Failed to send result: {}", e), "Error");
-                                tx.send_status(notif);
+                            // The slot holds the task's name while it runs, so if the shutdown
+                            // gives up waiting for this worker, `Error.log` can name the task.
+                            if let Some(task_name) = obj.get_task_name() {
+                                task_slot_clone.swap(Some(Box::new(task_name)));
                             }
+
+                            if let Some(res_container) = obj.process() {
+                                let _ = task_slot_clone.take();
+                                // Waits while the result mailbox is full. At shutdown the engine
+                                // keeps reading it until this worker has finished.
+                                // Non-fatal: if result send fails, log it and continue
+                                if let Err(e) = res_tx.send(res_container) {
+                                    let notif =
+                                        Log::log(format!("Failed to send result: {}", e), "Error");
+                                    tx.send_status(notif);
+                                }
+                            }
+                        } else {
+                            break;
                         }
                     }
+
+                    // The engine reads the status mailbox until the worker has finished, and once
+                    // more after joining it, so this line isn't lost.
+                    let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
+                    tx.send_status(notif);
                 })
                 .map_err(|e| StartupError::ThreadInit {
                     thread_name,
                     source: e,
                 })?;
 
-            self.workers.push(handle);
+            self.workers.push((handle, task_slot));
         }
 
         Ok(())
@@ -269,7 +299,7 @@ where
                 source: e,
             })?;
 
-        self.workers.push(handle);
+        self.workers.push((handle, Arc::new(AtomicCell::new(None))));
 
         Ok(())
     }
@@ -290,25 +320,6 @@ where
         self.num_workers
     }
 
-    /// Adds a worker thread handle to the internal collection.
-    ///
-    /// Stores the provided `JoinHandle` in the workers vector for
-    /// later lifecycle management (e.g., joining during shutdown).
-    ///
-    /// # Arguments
-    ///
-    /// * `thread_handle` - The join handle of the spawned thread
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let handle = std::thread::spawn(|| { /* work */ });
-    /// pool.add_worker(handle);
-    /// ```
-    pub fn add_worker(&mut self, thread_handle: JoinHandle<()>) {
-        self.workers.push(thread_handle);
-    }
-
     /// Returns a clone of the pool exit flag.
     ///
     /// # Returns
@@ -327,79 +338,26 @@ where
         self.pool_exit_flag.clone()
     }
 
-    /// Finalizes the plugin thread pool.
-    ///
-    /// Sets the exit flag, finalizes the main queue (which wakes any parked worker), joins every
-    /// worker thread, and sends a notification indicating completion. This should be called
-    /// during engine shutdown. A pool whose workers were never started has nothing to join.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// pool.finalize_plg();
-    /// // Worker threads will exit gracefully
-    /// ```
-    pub fn finalize_plg(&mut self) {
-        self.pool_exit_flag.store(true, Ordering::SeqCst);
-        self.main_queue.finalize(None);
-
-        // A worker that panicked was already reported by the panic hook. Its join error is
-        // dropped, so that the other workers are still joined and the shutdown goes on.
-        for handle in self.workers.drain(..) {
-            let _ = handle.join();
-        }
-
-        let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
-        self.packet_handle.send_status(notif)
-    }
-
-    /// Finalizes the observer thread pool.
-    ///
-    /// Sets the exit flag (which tells the notification sorter to stop), finalizes the main
-    /// queue (which wakes the sorter), and sends a notification to the logger. This should be
-    /// called during engine shutdown.
-    ///
-    /// It doesn't join any thread. The observers are told to stop only later, by their
-    /// `clean_up`, so a join here would wait forever. The observer manager joins the sorter
-    /// right after this call, and the engine joins the observer threads at the very end.
-    ///
-    /// # Arguments
-    ///
-    /// * `logger` - The logger observer for the final notifications, or `None` if it was never
-    ///   loaded; the status lines are skipped then
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// pool.finalize_obs(Some(logger.clone()));
-    /// // The sorter will exit gracefully
-    /// ```
-    pub fn finalize_obs(&mut self, logger: Option<Arc<Observer>>) {
-        self.pool_exit_flag.store(true, Ordering::SeqCst);
-        self.main_queue.finalize(logger.clone());
-
-        if let Some(logger) = &logger {
-            let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
-            logger.obs_queue.push(notif);
-        }
-    }
-
     /// Pauses the thread pool.
     ///
     /// Sets the pause flag and pauses the main queue, causing
     /// worker threads to block until resumed.
     ///
+    /// # Arguments
+    ///
+    /// * `is_start` - `true` only for the engine's startup pause, which the queue doesn't log
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// pool.pause();
+    /// pool.pause(false);
     /// // Worker threads block
-    /// pool.resume();
+    /// pool.resume(false);
     /// // Worker threads continue
     /// ```
-    pub fn pause(&mut self) {
+    pub fn pause(&mut self, is_start: bool) {
         self.pool_pause_flag.store(true, Ordering::SeqCst);
-        self.main_queue.pause()
+        self.main_queue.pause(is_start)
     }
 
     /// Resumes the thread pool.
@@ -407,14 +365,103 @@ where
     /// Clears the pause flag and resumes the main queue,
     /// unblocking worker threads.
     ///
+    /// # Arguments
+    ///
+    /// * `is_start` - `true` only when the engine ends its startup pause, which the queue doesn't
+    ///   log
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// pool.resume();
+    /// pool.resume(false);
     /// // Worker threads continue
     /// ```
-    pub fn resume(&mut self) {
+    pub fn resume(&mut self, is_start: bool) {
         self.pool_pause_flag.store(false, Ordering::SeqCst);
-        self.main_queue.resume()
+        self.main_queue.resume(is_start)
+    }
+
+    /// Joins every worker thread and adds the pool's "ThreadPool Finalized" line.
+    ///
+    /// A join waits for its thread to finish, so call this once the workers have stopped. The
+    /// engine waits for its plugin workers itself, emptying its mailboxes meanwhile (a worker can
+    /// be blocked on a full one): it takes their handles out of `workers` first, so for it this
+    /// only adds the line. A pool whose workers never started has nothing to join either.
+    ///
+    /// # Arguments
+    ///
+    /// * `status_reps` - Receives the "ThreadPool Finalized" line
+    pub fn stop_workers(&mut self, status_reps: &mut Vec<Notif>) {
+        // A worker that panicked was already reported by the panic hook. Its join error is
+        // dropped, so that the other workers are still joined and the shutdown goes on.
+        for (handle, _) in self.workers.drain(..) {
+            let _ = handle.join();
+        }
+
+        let notif = Log::log("ThreadPool Finalized".to_string(), "Main");
+
+        status_reps.push(notif);
+    }
+}
+
+impl ThreadPool<PQChild<Task>, Task> {
+    /// Stops the plugin thread pool.
+    ///
+    /// Sets the exit flag and finalizes the task queue, which wakes every parked worker and hands
+    /// back the tasks that were still queued; those never run. A worker that's running a task
+    /// finishes it, then stops. Nothing is joined here: the engine waits for the workers while it
+    /// empties its mailboxes, then joins them.
+    ///
+    /// # Arguments
+    ///
+    /// * `tasks` - Receives the tasks that were still queued
+    /// * `status_reps` - Receives the queue's "Task Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many tasks were still queued.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut tasks = Vec::new();
+    /// let mut status_reps = Vec::new();
+    /// let never_ran = pool.finalize_plg(&mut tasks, &mut status_reps);
+    /// ```
+    pub fn finalize_plg(&mut self, tasks: &mut Vec<Task>, status_reps: &mut Vec<Notif>) -> usize {
+        // The pool's exit flag is the queue's own: a worker checks it before taking a task, and
+        // finalizing the queue wakes the waiting workers so they see it.
+        self.pool_exit_flag.store(true, Ordering::SeqCst);
+        self.main_queue.finalize(tasks, status_reps)
+    }
+}
+
+impl ThreadPool<QChild, Notif> {
+    /// Finalizes the observer thread pool's queue, the one the notification sorter reads.
+    ///
+    /// Call it after the sorter has stopped. The observer manager sets the pool's exit flag,
+    /// wakes the sorter and joins it, and the sorter routes everything it still holds before it
+    /// stops. So the queue is normally empty here, and anything this hands back was never
+    /// routed.
+    ///
+    /// It doesn't join the observer threads: the observers are told to stop later, by their
+    /// cleanup. The engine waits for their threads after that, and joins the logger's last.
+    ///
+    /// # Arguments
+    ///
+    /// * `notifs` - Receives any notifications still queued
+    /// * `status_reps` - Receives the queue's "Obs Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many notifications were still queued.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let never_routed = pool.finalize_obs(&mut notifs, &mut status_reps);
+    /// ```
+    pub fn finalize_obs(&mut self, notifs: &mut Vec<Notif>, status_reps: &mut Vec<Notif>) -> usize {
+        self.main_queue.finalize(notifs, status_reps)
     }
 }

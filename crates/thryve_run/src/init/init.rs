@@ -59,9 +59,11 @@ use thryve_utils::{
 /// Starting the engine takes three steps:
 ///
 /// 1. [`prepare`](Self::prepare) spawns the engine thread, which waits for its engine. Then it
-///    creates the engine and sets everything up on the caller's thread.
-/// 2. [`complete_and_run`](Self::complete_and_run) hands the engine to that thread, which starts
-///    the mode's loop.
+///    creates the engine and sets everything up on the caller's thread. The engine starts
+///    paused, so the worker threads already run but no plugin task does.
+/// 2. [`complete_and_run`](Self::complete_and_run) hands the engine to that thread, which waits
+///    out the debug wait (when there is one), resumes the engine, and starts the mode's loop.
+///    Only then do the plugins' init tasks run.
 /// 3. `abort`, instead of step 2, stops a prepared engine that will never start. It's
 ///    crate-internal: `prepare` calls it when a step fails, and the Windows service when it can't
 ///    connect to the service manager.
@@ -142,7 +144,7 @@ impl EngineInitialization {
         let handle = builder
             .name(String::from("Engine Thread"))
             .spawn(move || {
-                if let Ok(eng) = rx.recv() {
+                if let Ok(mut eng) = rx.recv() {
                     // Handle any debugging wait time if specified in the configuration.
                     if ctx.config.debugging.is_debugging {
                         thread::sleep(Duration::from_secs(
@@ -150,6 +152,7 @@ impl EngineInitialization {
                         ));
                     }
 
+                    eng.resume(true);
                     func(eng)
                 }
             })
@@ -222,7 +225,8 @@ impl EngineInitialization {
         self.ctx.e_log(error);
 
         drop(self.eng_thread_tx);
-        self.eng.finalize();
+        // Not the service's Stop, so the summary of lost work, if any, goes to `Error.log`.
+        self.eng.finalize(false);
         let _ = self.eng_thread_handle.join();
     }
 }
@@ -267,11 +271,18 @@ fn init_sequence(eng: &mut Engine, ctx: &mut Ctx) -> Result<(), ThryveError> {
         }
     }
 
-    // Load the plugins into the engine if there are any specified in the context.
+    // Load the plugins into the engine if there are any specified in the context. Each init task
+    // goes through the engine's usual per-task step (metrics, graph node) and waits in the queue:
+    // the engine is still paused, so it runs only once the engine starts.
     if len_plugin_tasks > 0 {
+        let is_graph_mode_on = eng.is_debug_enabled && eng.is_graph_vis_enabled;
+
         for plugin in ctx.plugins() {
             println!("loaded plugin: {}", plugin.plg_type());
-            eng.plugin_manager.load_plugin(&ctx.config, plugin)?;
+            let task_init =
+                eng.plugin_manager
+                    .load_plugin(&ctx.config, plugin, is_graph_mode_on)?;
+            eng.accept_task(task_init);
         }
     }
 
@@ -283,7 +294,7 @@ fn init_sequence(eng: &mut Engine, ctx: &mut Ctx) -> Result<(), ThryveError> {
 
 /// Initializes the logger observer with the specified log file names.
 ///
-/// Creates a [`LoggerObserver`](thryve_observers::logger::LoggerObserver) instance
+/// Creates a [`LoggerObserver`] instance
 /// with the given log file names and loads it into the engine's observer
 /// manager. This enables logging functionality throughout the system.
 ///
@@ -326,7 +337,7 @@ pub fn init_logger(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveError> {
 
 /// Initializes the topology handler observer used by graph mode.
 ///
-/// Creates a [`TopologyHandlerObserver`](thryve_observers::topology_handler::TopologyHandlerObserver)
+/// Creates a [`TopologyHandlerObserver`]
 /// and loads it into the engine's observer manager. The startup sequence
 /// ([`EngineInitialization::prepare`]) calls this only when both `is_debugging` and
 /// `visual_graph` are enabled, after [`init_directories`] has created the topology directory.

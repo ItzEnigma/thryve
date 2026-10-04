@@ -33,6 +33,7 @@
 //!
 //! [engine]
 //! sleep_tick_rate = 4
+//! shutdown_grace_period = 10
 //!
 //! [threads]
 //! worker_count = 4
@@ -163,8 +164,8 @@ impl Config {
     /// The file must set every key of every section. The checks reject values that would break
     /// the engine, and all failing values are reported together:
     ///
-    /// - `engine.sleep_tick_rate`, `threads.worker_count`, `tasks.aging_interval` and the three
-    ///   `pipes` capacities must be at least 1;
+    /// - `engine.sleep_tick_rate`, `engine.shutdown_grace_period`, `threads.worker_count`,
+    ///   `tasks.aging_interval` and the three `pipes` capacities must be at least 1;
     /// - `tasks.max_priority` must be 14 or lower.
     ///
     /// # Arguments
@@ -200,6 +201,7 @@ impl Config {
         let mut violations = Vec::new();
 
         let sleep_tick_rate_is = config.engine.sleep_tick_rate;
+        let shutdown_grace_period_is = config.engine.shutdown_grace_period;
         let worker_count_is = config.threads.worker_count;
         let task_pipe_cap_is = config.pipes.task_pipe_capacity;
         let notif_pipe_cap_is = config.pipes.notif_pipe_capacity;
@@ -208,6 +210,7 @@ impl Config {
         let aging_interval_is = config.tasks.aging_interval;
 
         let sleep_tick_rate_should_be: usize = 1;
+        let shutdown_grace_period_should_be: usize = 1;
         let worker_count_should_be: usize = 1;
         let task_pipe_cap_should_be: usize = 1;
         let notif_pipe_cap_should_be: usize = 1;
@@ -219,6 +222,13 @@ impl Config {
             violations.push(RuleError::SleepTickRate(
                 sleep_tick_rate_is,
                 sleep_tick_rate_should_be,
+            ));
+        }
+
+        if shutdown_grace_period_is < shutdown_grace_period_should_be {
+            violations.push(RuleError::ShutdownGracePeriod(
+                shutdown_grace_period_is,
+                shutdown_grace_period_should_be,
             ));
         }
 
@@ -315,11 +325,13 @@ impl Default for SerivceConfig {
 ///
 /// Controls the engine's sleep behavior when idle, balancing responsiveness
 /// with CPU usage. When no tasks are available, the engine sleeps for
-/// the configured duration before checking again.
+/// the configured duration before checking again. Also sets how long the
+/// shutdown waits for tasks that are still running.
 ///
 /// # Fields
 ///
 /// - `sleep_tick_rate`: Milliseconds to sleep when idle
+/// - `shutdown_grace_period`: Seconds the shutdown waits for running tasks
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub struct EngineConfig {
@@ -330,14 +342,37 @@ pub struct EngineConfig {
     ///
     /// Default: `4` milliseconds
     pub sleep_tick_rate: u64,
+
+    /// Seconds the shutdown waits for tasks that are still running.
+    ///
+    /// The engine keeps emptying its mailboxes while it waits, so a task that is only slow, or
+    /// blocked on a full mailbox, still finishes. A thread still busy when the time runs out is
+    /// left running on its own, and `Error.log` names it and what it was running. Rust can't stop
+    /// a thread, so it ends with the process (in FFI, it keeps running in the host process). The
+    /// plugins aren't cleaned up then, because one of them may still be in use.
+    ///
+    /// One deadline covers the plugin workers and then the plugins' cleanups. The observers'
+    /// cleanup gets one more second, even when a stuck task has used up the whole grace period,
+    /// because only an observer's cleanup stops its thread. So the whole shutdown can take the
+    /// grace period plus about one second: keep it at least that much below how long the
+    /// service manager waits for a service to stop.
+    ///
+    /// Must be at least 1: idle workers need a moment to stop.
+    ///
+    /// Default: `10` seconds
+    pub shutdown_grace_period: usize,
 }
 
 impl Default for EngineConfig {
     /// Provides default engine execution parameters.
     ///
-    /// Returns an `EngineConfig` with a 4ms idle sleep duration.
+    /// Returns an `EngineConfig` with a 4ms idle sleep duration and a 10 s shutdown grace
+    /// period.
     fn default() -> Self {
-        Self { sleep_tick_rate: 4 }
+        Self {
+            sleep_tick_rate: 4,
+            shutdown_grace_period: 10,
+        }
     }
 }
 

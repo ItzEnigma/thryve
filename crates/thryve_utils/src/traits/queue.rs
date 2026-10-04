@@ -28,7 +28,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::bases::observer::Observer;
+use crate::bases::notif::Notif;
 
 /// Trait for queue implementations.
 ///
@@ -62,7 +62,7 @@ use crate::bases::observer::Observer;
 ///
 /// # let (task_tx, _task_rx) = bounded(1);
 /// # let (notif_tx, _notif_rx) = bounded(1);
-/// # let handle = PacketHandle::new(task_tx, notif_tx, false);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
 /// // Using a segmented queue
 /// let sq = QChild::new(1, handle);
 /// # let my_notification = Log::log("hello".to_string(), "Main");
@@ -91,7 +91,7 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
     /// # let my_item = Log::log("hello".to_string(), "Main");
     /// queue.push(my_item);
     /// ```
@@ -99,14 +99,14 @@ pub trait Queue<T>: Send + Sync + 'static {
 
     /// Removes and returns the next item from the queue.
     ///
-    /// Retrieves the next item according to the queue's ordering
-    /// semantics. This method may block if the queue is empty and
-    /// not finalized.
+    /// Retrieves the next item according to the queue's ordering semantics. While the queue is
+    /// empty or paused, it waits: it never returns just because the queue is empty for a moment.
     ///
     /// # Returns
     ///
-    /// The next item from the queue, or a special sentinel value
-    /// when the queue is being finalized.
+    /// `Some(item)`, or `None` once the queue is finalized (its exit flag is set). `None` comes
+    /// back as soon as the flag is set, even if items are still queued: what happens to them is
+    /// the caller's choice. For example, the notification sorter routes them before it stops.
     ///
     /// # Example
     ///
@@ -118,20 +118,31 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
-    /// let item = queue.pop();
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
+    /// while let Some(item) = queue.pop() {
+    ///     // Handle the item
+    /// #   let _ = item;
+    /// }
+    /// // The queue was finalized
     /// ```
-    fn pop(&self) -> T;
+    fn pop(&self) -> Option<T>;
 
     /// Finalizes the queue for shutdown.
     ///
-    /// Prepares the queue for termination, performing any necessary
-    /// cleanup. After this call, `pop()` will return sentinel values
-    /// to signal consumers to exit.
+    /// Sets the exit flag and wakes every thread waiting in [`pop`](Self::pop), which then
+    /// returns `None`. Every item still queued is moved into `packets`, in the order `pop` would
+    /// have returned them, and the queue's final status line goes into `status_reps`, for the
+    /// logger to write at the end of the shutdown.
     ///
     /// # Arguments
     ///
-    /// * `logger` - Optional logger observer for draining notifications
+    /// * `packets` - Receives the items that were still queued
+    /// * `status_reps` - Receives the queue's final status line ("Task Queue Finalized" or "Obs
+    ///   Queue Finalized")
+    ///
+    /// # Returns
+    ///
+    /// How many items were still queued.
     ///
     /// # Example
     ///
@@ -143,17 +154,23 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
-    /// # let logger: Option<std::sync::Arc<thryve_utils::bases::observer::Observer>> = None;
-    /// queue.finalize(logger);
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
+    /// let mut left_over = Vec::new();
+    /// let mut status_reps = Vec::new();
+    /// let count = queue.finalize(&mut left_over, &mut status_reps);
     /// ```
-    fn finalize(&self, logger: Option<Arc<Observer>>);
+    fn finalize(&self, packets: &mut Vec<T>, status_reps: &mut Vec<Notif>) -> usize;
 
     /// Pauses the queue.
     ///
     /// Causes `pop()` to block until `resume()` is called. This is
     /// used for controlled shutdown and debugging.
     ///
+    /// # Arguments
+    ///
+    /// * `is_start` - `true` only for the engine's startup pause, which isn't logged; any other
+    ///   pause sends a status line
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -164,17 +181,22 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
-    /// queue.pause();
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
+    /// queue.pause(false);
     /// // pop() will block here
-    /// queue.resume();
+    /// queue.resume(false);
     /// ```
-    fn pause(&self);
+    fn pause(&self, is_start: bool);
 
     /// Resumes the queue.
     ///
     /// Unblocks any threads waiting in `pop()` due to a pause.
     ///
+    /// # Arguments
+    ///
+    /// * `is_start` - `true` only when the engine ends its startup pause, which isn't logged; any
+    ///   other resume sends a status line
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -185,20 +207,17 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
-    /// queue.resume();
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
+    /// queue.resume(false);
     /// // pop() will now continue
     /// ```
-    fn resume(&self);
+    fn resume(&self, is_start: bool);
 
     /// Returns the queue's own shutdown flag.
     ///
-    /// This is the same flag `pop()` checks internally before blocking and
-    /// after waking. Consumers (thread pools) should adopt this flag as
-    /// their own shutdown signal rather than allocating a separate one --
-    /// otherwise a worker can pass its own pre-`pop()` shutdown check just
-    /// before the queue's flag flips, block inside `pop()`, and then treat
-    /// the sentinel value `pop()` returns on shutdown as real work.
+    /// This is the flag [`pop`](Self::pop) checks before it looks for an item and after it
+    /// wakes. Thread pools adopt it as their own shutdown signal rather than allocating a
+    /// separate one, so a single store stops both the pool's loop and every `pop`.
     ///
     /// # Example
     ///
@@ -210,7 +229,7 @@ pub trait Queue<T>: Send + Sync + 'static {
     /// #
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
-    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, false));
+    /// # let queue = QChild::new(1, PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false));
     /// let shared_flag = queue.exit_flag();
     /// ```
     fn exit_flag(&self) -> Arc<AtomicBool>;

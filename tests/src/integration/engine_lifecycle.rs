@@ -37,7 +37,9 @@ mod tests_run_interactive {
     struct TestPlgLogic;
     impl PlgLogic for TestPlgLogic {
         thryve_utils::impl_as_any!(TestPlgLogic);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     #[test]

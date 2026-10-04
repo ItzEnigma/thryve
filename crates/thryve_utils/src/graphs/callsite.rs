@@ -37,6 +37,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 
@@ -79,6 +80,19 @@ pub struct TaskCallSite {
     pub this_callsite_fingerprint: String,
     /// The fingerprint of the parent task that created this task.
     pub current_executing_task_fingerprint: String,
+}
+
+impl Display for TaskCallSite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "callsite name: {}, file: {}, line: {}, task fingerprint: {}",
+            self.callsite_name,
+            self.file_path.display(),
+            self.line_number,
+            self.this_callsite_fingerprint,
+        )
+    }
 }
 
 impl TaskCallSite {

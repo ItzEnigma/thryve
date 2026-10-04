@@ -25,6 +25,8 @@
 //! modifying core code. New plugin types can be added by implementing
 //! these traits, following the open/closed principle.
 
+use crate::errors::ThryveError;
+
 /// Marker trait for plugin objects.
 ///
 /// This trait indicates that a struct is a plugin object and can be
@@ -34,33 +36,39 @@
 /// # Example
 ///
 /// ```no_run
+/// use thryve_utils::errors::ThryveError;
 /// use thryve_utils::traits::plugin_logic::PluginB;
 ///
 /// pub struct MyPlugin;
 ///
 /// impl PluginB for MyPlugin {
-///     fn clean_up(&self) {
+///     fn clean_up(&self) -> Result<(), ThryveError> {
 ///         // Cleanup logic here
+///         Ok(())
 ///     }
 /// }
 /// ```
 pub trait PluginB {
     /// Gracefully shuts down the plugin.
     ///
-    /// This method is called during plugin shutdown to perform
-    /// any necessary cleanup. Implementors should release resources,
-    /// flush buffers, and perform any other termination tasks.
+    /// Called once when the engine shuts down, after every task has stopped. Implementors should
+    /// release resources, flush buffers, and perform any other termination tasks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cleanup failed. See [`PlgLogic::clean_up`].
     ///
     /// # Example
     ///
     /// ```ignore
-    /// fn clean_up(&self) {
+    /// fn clean_up(&self) -> Result<(), ThryveError> {
     ///     // Release resources
     ///     // Flush buffers
     ///     // Close connections
+    ///     Ok(())
     /// }
     /// ```
-    fn clean_up(&self);
+    fn clean_up(&self) -> Result<(), ThryveError>;
 }
 
 /// Core logic trait for plugin behavior.
@@ -78,13 +86,15 @@ pub trait PluginB {
 /// # Example
 ///
 /// ```no_run
+/// use thryve_utils::errors::ThryveError;
 /// use thryve_utils::traits::plugin_logic::PlgLogic;
 ///
 /// pub struct MyPluginLogic;
 ///
 /// impl PlgLogic for MyPluginLogic {
-///     fn clean_up(&self) {
+///     fn clean_up(&self) -> Result<(), ThryveError> {
 ///         // Cleanup logic here
+///         Ok(())
 ///     }
 ///
 ///     fn as_any(&self) -> &dyn std::any::Any {
@@ -95,27 +105,48 @@ pub trait PluginB {
 pub trait PlgLogic: Send + Sync {
     /// Gracefully shuts down the plugin.
     ///
-    /// This method is called during plugin shutdown to perform
-    /// any necessary cleanup. Implementors should release resources,
-    /// flush buffers, and perform any other termination tasks.
+    /// Called once when the engine shuts down, after every task has stopped. Implementors should
+    /// release resources, flush buffers, and perform any other termination tasks.
+    ///
+    /// The plugins are cleaned up one after another on a thread of their own, while the engine
+    /// keeps reading its mailboxes, so a `clean_up` may still send notifications.
+    ///
+    /// # Errors
+    ///
+    /// Return an error if the cleanup failed, usually
+    /// [`FinalizationError::PluginCleanup`](crate::errors::FinalizationError::PluginCleanup) naming
+    /// the plugin's type. Thryve writes it to `Error.log` and goes on with the other plugins and
+    /// the shutdown.
+    ///
+    /// Return an error rather than panic: Thryve's panic hook ends the whole process, so a panic
+    /// here skips every plugin still waiting for its `clean_up`.
     ///
     /// # Example
     ///
     /// ```no_run
     /// # use std::any::Any;
+    /// # use thryve_utils::errors::{FinalizationError, ThryveError};
     /// # use thryve_utils::traits::plugin_logic::PlgLogic;
     /// #
     /// # struct MyPluginLogic;
+    /// # impl MyPluginLogic {
+    /// #     fn flush_cache(&self) -> bool { true }
+    /// # }
     /// # impl PlgLogic for MyPluginLogic {
     /// #     fn as_any(&self) -> &dyn Any { self }
-    /// fn clean_up(&self) {
-    ///     // Release resources
-    ///     // Flush buffers
-    ///     // Close connections
+    /// fn clean_up(&self) -> Result<(), ThryveError> {
+    ///     if !self.flush_cache() {
+    ///         return Err(FinalizationError::PluginCleanup {
+    ///             plugin_type: "ImgCompression".to_string(),
+    ///         }
+    ///         .into());
+    ///     }
+    ///
+    ///     Ok(())
     /// }
-    /// #     }
+    /// # }
     /// ```
-    fn clean_up(&self);
+    fn clean_up(&self) -> Result<(), ThryveError>;
 
     /// Returns a reference to `self` as `dyn Any`.
     ///
@@ -137,7 +168,7 @@ pub trait PlgLogic: Send + Sync {
     /// #
     /// # struct MyPluginLogic;
     /// # impl PlgLogic for MyPluginLogic {
-    /// #     fn clean_up(&self) {}
+    /// #     fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> { Ok(()) }
     /// #     fn as_any(&self) -> &dyn Any { self }
     /// # }
     /// #

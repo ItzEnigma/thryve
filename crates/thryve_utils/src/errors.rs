@@ -67,6 +67,9 @@ pub enum ThryveError {
     /// [`EngineNotRunningError`] says which of the two it was.
     #[error("engine is not running")]
     EngineNotRunning(#[from] EngineNotRunningError),
+
+    #[error("An Error Occured while finalizing")]
+    Finalization(#[from] FinalizationError),
 }
 
 /// Why starting Thryve failed.
@@ -280,6 +283,14 @@ pub enum EngineNotRunningError {
     Notif,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum FinalizationError {
+    /// A task was sent and dropped.
+    #[error("plugin {} failed to clean up successfully", plugin_type)]
+    PluginCleanup { plugin_type: String },
+}
+
 /// What a name is for: a task name, a plugin type, and so on.
 ///
 /// Errors carry it so their message can say which name failed. It prints in plain words, for
@@ -344,6 +355,8 @@ impl Display for ConfigViolations {
 pub enum RuleError {
     /// `engine.sleep_tick_rate` is below its minimum.
     SleepTickRate(u64, usize),
+
+    ShutdownGracePeriod(usize, usize),
     /// `threads.worker_count` is below its minimum; with no workers, no task would ever run.
     WorkerCount(usize, usize),
     /// `pipes.task_pipe_capacity` is below its minimum.
@@ -364,6 +377,10 @@ impl Display for RuleError {
             Self::SleepTickRate(is, should_be) => write!(
                 f,
                 "engine.sleep_tick_rate is {is:?}, must be at least {should_be:?}"
+            ),
+            Self::ShutdownGracePeriod(is, should_be) => write!(
+                f,
+                "engine.shutdown_grace_period is {is:?}, must be at least {should_be:?}"
             ),
             Self::WorkerCount(is, should_be) => write!(
                 f,

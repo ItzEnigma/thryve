@@ -46,7 +46,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::bases::observer::Observer;
+use crate::bases::notif::Notif;
 use crate::bases::queue::QueueBase;
 use crate::cfg::config::{Config, TaskConfig};
 use crate::extras::thread_local;
@@ -135,27 +135,19 @@ impl Queue<Task> for PQChild<Task> {
 
     /// Removes and returns the highest priority task.
     ///
-    /// Blocks until a task is available or the queue is finalized.
+    /// Waits until a task is available or the queue is finalized.
     /// Implements aging-based priority boosting to prevent starvation
     /// of lower-priority tasks.
     ///
     /// # Returns
     ///
-    /// The highest priority task, or a special "Fin" task when
-    /// the queue is being finalized.
-    fn pop(&self) -> Task {
-        loop {
-            // Check for shutdown.
-            if self.exit_flag.load(Ordering::SeqCst) {
-                break;
-            }
-            // Wait if paused.
-            else if self.pause_flag.load(Ordering::SeqCst) {
-                let idx = thread_local::tl_get_worker_park_idx();
+    /// The highest priority task, or `None` once the queue is finalized.
+    fn pop(&self) -> Option<Task> {
+        let idx = thread_local::tl_get_worker_park_idx();
 
-                self.worker_registry.set_idle(idx);
-                thread::park();
-                self.worker_registry.clear_idle(idx);
+        loop {
+            if self.is_exit(idx) {
+                break;
             }
 
             // Try to pop a task.
@@ -164,11 +156,10 @@ impl Queue<Task> for PQChild<Task> {
 
                 // Atomically extract the task.
                 if let Some(moved_task) = wrapper.take() {
-                    return moved_task.task;
+                    return Some(moved_task.task);
                 }
             }
 
-            let idx = thread_local::tl_get_worker_park_idx();
             self.worker_registry.set_idle(idx);
 
             // 2. Medium Path: Spin backoff before committing to sleep
@@ -182,7 +173,7 @@ impl Queue<Task> for PQChild<Task> {
                     // Atomically extract the task.
                     if let Some(moved_task) = wrapper.take() {
                         self.worker_registry.clear_idle(idx);
-                        return moved_task.task;
+                        return Some(moved_task.task);
                     }
                 }
                 // snooze(), not spin(): only snooze() advances Backoff past
@@ -199,45 +190,73 @@ impl Queue<Task> for PQChild<Task> {
             }
         }
 
-        // Return special "Fin" task on shutdown.
-        Task::new_fin()
+        None
     }
 
     /// Finalizes the queue for shutdown.
     ///
-    /// Clears all pending tasks, sets the exit flag, and notifies
-    /// all waiting threads to wake up and terminate.
+    /// Sets the exit flag and wakes every waiting worker, so a blocked `pop` returns `None`.
+    /// Then it moves every task still queued into `tasks`, highest priority first; those tasks
+    /// never run. The "Task Queue Finalized" line goes into `status_reps`.
     ///
     /// # Arguments
     ///
-    /// * `_` - Logger (unused for task queue)
-    fn finalize(&self, _: Option<Arc<Observer>>) {
-        self.main_queue.clear();
+    /// * `tasks` - Receives the tasks that were still queued
+    /// * `status_reps` - Receives the "Task Queue Finalized" line
+    ///
+    /// # Returns
+    ///
+    /// How many tasks were still queued.
+    fn finalize(&self, tasks: &mut Vec<Task>, status_reps: &mut Vec<Notif>) -> usize {
+        // The flag first, so the workers stop taking tasks (one already past its check may still
+        // take one) while the queue is emptied below.
         self.exit_flag.store(true, Ordering::SeqCst);
         self.worker_registry.notify_all();
 
+        let mut left_over = 0;
+        while !self.main_queue.is_empty() {
+            if let Some(entry) = self.main_queue.pop_front() {
+                let mut wrapper = entry.value().take();
+
+                if let Some(enq_task) = wrapper.take() {
+                    tasks.push(enq_task.task);
+                    left_over += 1;
+                }
+            }
+        }
+
         let notif = Log::log("Task Queue Finalized".to_string(), "Main");
-        self.packet_handle.send_status(notif)
+        status_reps.push(notif);
+
+        left_over
     }
 
     /// Pauses the queue.
     ///
-    /// Sets the pause flag, causing `pop()` to block until resumed.
-    fn pause(&self) {
+    /// Sets the pause flag, causing `pop()` to block until resumed. Except for the startup pause
+    /// (`is_start`), sends "Task Queue Paused".
+    fn pause(&self, is_start: bool) {
         self.pause_flag.store(true, Ordering::SeqCst);
 
-        let notif = Log::log("Task Queue Paused".to_string(), "Main");
-        self.packet_handle.send_status(notif)
+        if !is_start {
+            let notif = Log::log("Task Queue Paused".to_string(), "Main");
+            self.packet_handle.send_status(notif)
+        }
     }
 
     /// Resumes the queue.
     ///
-    /// Clears the pause flag and notifies waiting threads.
-    fn resume(&self) {
+    /// Clears the pause flag and wakes the parked workers. Except when the startup pause ends
+    /// (`is_start`), sends "Task Queue continuing".
+    fn resume(&self, is_start: bool) {
         self.pause_flag.store(false, Ordering::SeqCst);
 
-        let notif = Log::log("Task Queue continuing".to_string(), "Main");
-        self.packet_handle.send_status(notif)
+        if !is_start {
+            let notif = Log::log("Task Queue continuing".to_string(), "Main");
+            self.packet_handle.send_status(notif);
+        }
+
+        self.worker_registry.notify_all();
     }
 
     fn exit_flag(&self) -> Arc<AtomicBool> {

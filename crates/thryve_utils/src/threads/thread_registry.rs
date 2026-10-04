@@ -83,7 +83,7 @@ impl WorkerRegistry {
     pub fn set_idle(&self, idx: usize) {
         self.threads[idx].get_or_init(thread::current);
         let (w, bit) = Self::locate(idx);
-        self.words[w].fetch_or(bit, Ordering::Release);
+        self.words[w].fetch_or(bit, Ordering::AcqRel);
     }
 
     /// Marks worker `idx` no longer idle. Idempotent: clearing an

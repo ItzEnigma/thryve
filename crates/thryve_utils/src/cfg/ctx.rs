@@ -24,7 +24,7 @@
 //!
 //! # Contents
 //!
-//! - Configuration from [`Config`](crate::cfg::config::Config)
+//! - Configuration from [`Config`]
 //! - Receivers for tasks and notifications
 //! - Packet handle for engine communication
 //! - Collections for observers and plugins during initialization
@@ -78,6 +78,8 @@ pub struct Ctx {
     pub task_rx: Arc<Receiver<Task>>,
     /// Receiver for incoming notifications.
     pub notif_rx: Arc<Receiver<Notif>>,
+    /// Receiver for Thryve's own status lines, from an unbounded channel.
+    pub status_rx: Arc<Receiver<Notif>>,
     /// Handle for sending to the engine (private).
     packet_handle: PacketHandle,
     /// Collection of observers during initialization.
@@ -103,6 +105,8 @@ impl Ctx {
     /// * `config` - Application configuration
     /// * `task_rx` - Receiver for incoming tasks
     /// * `notif_rx` - Receiver for incoming notifications
+    /// * `status_rx` - Receiver for Thryve's own status lines; it must belong to the same channel
+    ///   as the status sender in `packet_handle`, or the status lines never reach the logger
     /// * `packet_handle` - Handle for sending to the engine
     ///
     /// # Returns
@@ -112,12 +116,14 @@ impl Ctx {
         config: Config,
         task_rx: Receiver<Task>,
         notif_rx: Receiver<Notif>,
+        status_rx: Receiver<Notif>,
         packet_handle: PacketHandle,
     ) -> Self {
         Self {
             config,
             task_rx: Arc::new(task_rx),
             notif_rx: Arc::new(notif_rx),
+            status_rx: Arc::new(status_rx),
             packet_handle,
             observers: vec![],
             plugins: vec![],
@@ -147,8 +153,9 @@ impl Ctx {
     /// # let config = Config::default();
     /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
     /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
-    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+    /// # let (status_tx, status_rx) = crossbeam::channel::unbounded();
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
     /// // During engine initialization
     /// for observer in ctx.observers() {
     ///     // load the observer into the engine's observer manager
@@ -179,8 +186,9 @@ impl Ctx {
     /// # let config = Config::default();
     /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
     /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
-    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+    /// # let (status_tx, status_rx) = crossbeam::channel::unbounded();
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+    /// # let mut ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
     /// // During engine initialization
     /// for plugin in ctx.plugins() {
     ///     // load the plugin into the engine's plugin manager
@@ -214,8 +222,9 @@ impl Ctx {
     /// # let config = Config::default();
     /// # let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
     /// # let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
-    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
-    /// # let ctx = Ctx::new(config, task_rx, notif_rx, packet_handle);
+    /// # let (status_tx, status_rx) = crossbeam::channel::unbounded();
+    /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+    /// # let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
     /// # let my_task = Task::new("Example", 0, TaskJob::new(|| TaskResult::new("", "".to_string(), ""))).expect("valid task name");
     /// let handle = ctx.packet_handle();
     /// handle.send_task(my_task)?;

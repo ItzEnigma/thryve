@@ -24,8 +24,9 @@ mod tests_plugin {
     struct TestPlgLogic;
     impl PlgLogic for TestPlgLogic {
         thryve_utils::impl_as_any!(TestPlgLogic);
-        fn clean_up(&self) {
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
             // No-op for testing
+            Ok(())
         }
     }
 
@@ -34,7 +35,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -50,7 +52,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -66,7 +69,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -82,7 +86,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -113,14 +118,15 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
         let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
-        // Act & Assert - clean_up should not panic
-        plugin.clean_up();
+        // Act & Assert - the test plugin's clean_up succeeds
+        assert!(plugin.clean_up().is_ok());
     }
 
     #[test]
@@ -128,7 +134,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -145,7 +152,8 @@ mod tests_plugin {
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -161,7 +169,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -179,7 +188,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -192,7 +202,8 @@ mod tests_plugin {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
         let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
 
@@ -228,7 +239,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {
             // No-op test function
@@ -247,7 +259,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -263,7 +276,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -279,7 +293,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -295,7 +310,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -306,7 +322,7 @@ mod tests_observer {
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
 
         // Act
-        observer.clean_up(None);
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
 
         // Assert
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -317,7 +333,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -334,7 +351,8 @@ mod tests_observer {
         let long_type = "t".repeat(100);
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -350,7 +368,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -368,7 +387,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -381,7 +401,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -394,7 +415,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -402,7 +424,7 @@ mod tests_observer {
             Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Act
-        observer.clean_up(None);
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
 
         // Assert - exit flag should be set
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -413,7 +435,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -433,7 +456,8 @@ mod tests_observer {
 
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {
             executed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -455,7 +479,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -471,7 +496,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -482,7 +508,7 @@ mod tests_observer {
         assert!(!observer.exit_flag.load(Ordering::Relaxed));
 
         // Act
-        observer.clean_up(None);
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
 
         // Assert now true
         assert!(observer.exit_flag.load(Ordering::Relaxed));
@@ -493,7 +519,8 @@ mod tests_observer {
         // Arrange
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let obs_core = Arc::new(TestObsLogic);
         let obs_job = ObsJob::new(move |_obs: Arc<Observer>| {});
 
@@ -501,9 +528,9 @@ mod tests_observer {
             Arc::new(Observer::new("TestType", obs_core, obs_job, packet_handle).unwrap());
 
         // Act - call clean_up multiple times
-        observer.clean_up(None);
-        observer.clean_up(None);
-        observer.clean_up(None);
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
+        observer.clean_up(&mut Vec::new(), &mut Vec::new());
 
         // Assert - should not panic, exit flag should be true
         assert!(observer.exit_flag.load(Ordering::Relaxed));

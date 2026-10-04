@@ -429,7 +429,9 @@ mod tests_plugin_errors {
         )
     }
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_plugin_create_with_null_type_returns_null() {
@@ -879,7 +881,9 @@ mod tests_task_create_null_job {
         )
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        thryve_ffi::ThryveStatus::Ok as i32
+    }
 
     #[test]
     fn test_plugin_create_with_null_core_ptr_and_null_entry_returns_null() {
@@ -913,5 +917,56 @@ mod tests_task_create_null_job {
         thryve_packet_handle_free(pkt);
         thryve_ctx_free(ctx);
         thryve_config_free(config);
+    }
+}
+
+mod tests_plugin_clean_up_failure {
+    use thryve_ffi::{PluginLogicAdapter, ThryveStatus};
+    use thryve_utils::errors::{FinalizationError, ThryveError};
+    use thryve_utils::traits::plugin_logic::PlgLogic;
+
+    extern "C" fn failing_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        ThryveStatus::OperationFail as i32
+    }
+
+    // Not a ThryveStatus value at all: Thryve reads the return value as a plain int, so this is
+    // still safe to read, and it counts as a failure too.
+    extern "C" fn unknown_status_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+        42
+    }
+
+    #[test]
+    fn test_plugin_adapter_clean_up_failure_names_the_plugin() {
+        // Arrange
+        let adapter =
+            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), failing_plugin_cleanup);
+
+        // Act
+        let err = adapter
+            .clean_up()
+            .expect_err("a callback that doesn't return ThryveStatus_Ok should fail");
+
+        // Assert - the error is a finalization error that names the plugin
+        assert!(
+            matches!(
+                &err,
+                ThryveError::Finalization(FinalizationError::PluginCleanup { plugin_type })
+                    if plugin_type == "TestType"
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_plugin_adapter_clean_up_any_value_but_ok_is_a_failure() {
+        // Arrange
+        let adapter = PluginLogicAdapter::new(
+            "TestType",
+            std::ptr::null_mut(),
+            unknown_status_plugin_cleanup,
+        );
+
+        // Act + Assert
+        assert!(adapter.clean_up().is_err());
     }
 }

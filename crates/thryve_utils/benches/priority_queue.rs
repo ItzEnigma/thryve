@@ -49,7 +49,8 @@ fn make_queue(
 ) {
     let (task_tx, task_rx) = crossbeam::channel::bounded(1);
     let (notif_tx, notif_rx) = crossbeam::channel::bounded(1);
-    let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+    let packet_handle =
+        PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
     let mut config = Config::default();
     config.threads.worker_count = worker_count;
     (PQChild::new(&config, packet_handle), task_rx, notif_rx)
@@ -119,7 +120,7 @@ fn run_scenario(pushers: usize, poppers: usize, total_tasks: usize) {
                 }
                 thread::sleep(Duration::from_millis(5));
             }
-            queue.finalize(None);
+            queue.finalize(&mut Vec::new(), &mut Vec::new());
         });
     });
 }

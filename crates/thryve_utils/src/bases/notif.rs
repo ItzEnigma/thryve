@@ -27,11 +27,14 @@
 //! Any struct implementing the [`NotifLogic`] trait can serve as the core
 //! of a notification, enabling flexible and extensible notification handling
 //! throughout the system.
+use chrono::{DateTime, Local};
+
 use crate::errors::{NameInputType, NamingError};
 use crate::extras::named_input::NamedInput;
 use crate::graphs::callsite::TaskCallSite;
 use crate::traits::notif_logic::NotifLogic;
 use crate::traits::packets::Packet;
+use std::fmt::Display;
 use std::time::SystemTime;
 
 /// Core notification structure for the Thryve notification system.
@@ -58,9 +61,24 @@ use std::time::SystemTime;
 ///
 /// # Example
 ///
+/// A notification's core logic implements [`NotifLogic`]; [`Notif::new`] adds its type and the
+/// observer it's for.
+///
 /// ```no_run
-/// // Notifications are typically created by implementing NotifLogic and
-/// // passing the core logic to Notif::new along with type and receiver identifiers
+/// use thryve_utils::bases::notif::Notif;
+/// use thryve_utils::impl_as_any;
+/// use thryve_utils::traits::notif_logic::NotifLogic;
+///
+/// // A core with nothing more to carry.
+/// struct Measurement;
+///
+/// impl NotifLogic for Measurement {
+///     impl_as_any!(Measurement);
+/// }
+///
+/// // A "Measurement", for the observer of type "Metrics".
+/// let notif = Notif::new("Measurement", "Metrics", Box::new(Measurement))?;
+/// # Ok::<(), thryve_utils::errors::NamingError>(())
 /// ```
 pub struct Notif {
     /// Type identifier for categorizing the notification.
@@ -77,6 +95,19 @@ pub struct Notif {
     pub notif_core: Box<dyn NotifLogic>,
     /// Time when the notification was created.
     pub timestamp: SystemTime,
+}
+
+impl Display for Notif {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let datetime: DateTime<Local> = self.timestamp.into();
+        write!(
+            f,
+            "notification type: {}, notification receiver: {}, creation time: {}",
+            self.notif_type,
+            self.notif_receiver,
+            datetime.format("%Y-%m-%d %H:%M:%S"),
+        )
+    }
 }
 
 impl Packet for Notif {

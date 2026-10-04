@@ -96,7 +96,21 @@ pub struct TaskResult {
 
 impl Display for TaskResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Message: {}", self.message)
+        write!(
+            f,
+            "result type: {}, message: {}, next task: {}, observer: {}, plugin: {}",
+            self.result_type,
+            self.message,
+            self.next_task
+                .as_ref()
+                .map_or("None", |task| task.task_name()),
+            self.observer
+                .as_ref()
+                .map_or("None", |observer| observer.obs_type()),
+            self.plugin
+                .as_ref()
+                .map_or("None", |plugin| plugin.plg_type()),
+        )
     }
 }
 

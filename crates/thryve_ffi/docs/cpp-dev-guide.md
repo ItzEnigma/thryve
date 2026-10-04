@@ -224,10 +224,13 @@ A plugin is a unit of work that runs when the Thryve engine processes it.
 ### Step 1: Define your plugin callbacks
 
 ```cpp
-// Plugin cleanup function — called when the plugin is being freed
-extern "C" void my_plugin_cleanup(const void* core_ptr) {
+// Plugin cleanup function — called once when the engine shuts down
+extern "C" int my_plugin_cleanup(const void* core_ptr) {
     std::cout << "Cleaning up plugin data..." << std::endl;
-    // Free your plugin's core data here
+    // Free your plugin's core data here.
+    // Return ThryveStatus_Ok if it worked; any other value (for example
+    // ThryveStatus_OperationFail) is logged to Error.log as a failed cleanup.
+    return ThryveStatus_Ok;
 }
 
 // Plugin entry point — called when the plugin's task is executed
@@ -317,7 +320,7 @@ An observer is a unit that runs continuously in the engine's main loop.
 ### Step 1: Define your observer callbacks
 
 ```cpp
-// Observer cleanup function — called when the observer is being freed
+// Observer cleanup function — called once when the engine shuts down
 extern "C" void my_observer_cleanup(const void* core_ptr) {
     std::cout << "Cleaning up observer data..." << std::endl;
 }
@@ -446,8 +449,9 @@ if (handle) {
 #include <iostream>
 
 // Plugin callbacks
-extern "C" void plugin_cleanup(const void* core_ptr) {
+extern "C" int plugin_cleanup(const void* core_ptr) {
     std::cout << "Plugin cleanup" << std::endl;
+    return ThryveStatus_Ok;
 }
 
 extern "C" ThryveTaskResult plugin_entry(void) {
@@ -656,8 +660,9 @@ This stops the service (if running) and removes it from the SCM.
 #include <iostream>
 
 // Plugin callbacks
-extern "C" void plugin_cleanup(const void* core_ptr) {
+extern "C" int plugin_cleanup(const void* core_ptr) {
     std::cout << "Plugin cleanup" << std::endl;
+    return ThryveStatus_Ok;
 }
 
 extern "C" ThryveTaskResult plugin_entry(void) {

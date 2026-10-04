@@ -150,11 +150,6 @@ pub mod named_input {
         pub fn new_def_task() -> Self {
             NamedInput(String::from("DefTask"))
         }
-
-        /// `Fin`: the name of the sentinel task the task queue returns once it's finalized.
-        pub fn new_fin() -> Self {
-            NamedInput(String::from("Fin"))
-        }
     }
 
     /// Lets maps keyed by `NamedInput` be searched with plain text. Sound because `Hash` and `Eq`
@@ -324,7 +319,7 @@ pub mod jobs {
     /// A task execution closure wrapper.
     ///
     /// A `TaskJob` is a wrapper around a closure that takes no arguments and returns
-    /// a [`TaskResult`](crate::res::TaskResult). Tasks are executed by worker
+    /// a [`TaskResult`]. Tasks are executed by worker
     /// threads, and the result indicates success or failure along with
     /// optional follow-up actions.
     ///
@@ -381,13 +376,6 @@ pub mod jobs {
             }
         }
 
-        /// A job that returns [`TaskResult::fin`], which tells the engine to shut down.
-        pub fn new_fin() -> Self {
-            TaskJob {
-                inner: Box::new(TaskResult::fin),
-            }
-        }
-
         /// Calls the task job and returns the result.
         ///
         /// This consumes the `TaskJob` and executes the inner closure.
@@ -395,7 +383,7 @@ pub mod jobs {
         ///
         /// # Returns
         ///
-        /// The [`TaskResult`](crate::res::TaskResult) returned by the closure.
+        /// The [`TaskResult`] returned by the closure.
         ///
         /// # Example
         ///

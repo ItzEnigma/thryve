@@ -20,7 +20,7 @@
 //! 2. The task is sent to the engine via [`PacketHandle`](crate::packets::packet_handle::PacketHandle)
 //! 3. The engine queues the task in a priority queue
 //! 4. A worker thread pops and executes the task
-//! 5. The task returns a [`TaskResult`](crate::res::TaskResult) indicating completion
+//! 5. The task returns a [`TaskResult`] indicating completion
 //!
 //! # Unique Identification
 //!
@@ -100,6 +100,10 @@ pub struct Task {
 }
 
 impl Packet for Task {
+    fn get_task_name(&self) -> Option<String> {
+        Some(self.task_name.inner().to_string())
+    }
+
     /// Executes the task and returns the result.
     ///
     /// This method implements the [`Packet`] trait for tasks, providing
@@ -109,8 +113,8 @@ impl Packet for Task {
     ///
     /// # Returns
     ///
-    /// A tuple of `(task_id, result)` on success, or `None` if execution
-    /// fails (which should not happen under normal circumstances).
+    /// Always `Some((task_id, result))`. The `Option` comes from the [`Packet`] trait, whose
+    /// default (for notifications) returns `None`.
     fn process(self) -> Option<(u64, TaskResult)> {
         let id = self.id;
         Some((id, self.job.call_once()))
@@ -229,19 +233,6 @@ impl Task {
             task_name: NamedInput::new_def_task(),
             base_priority: 0,
             job: TaskJob::default(),
-        }
-    }
-
-    /// Creates the `Fin` sentinel that the task queue returns once it's been finalized.
-    ///
-    /// Workers check the exit flag after taking a task and stop, so the sentinel isn't meant to run.
-    pub fn new_fin() -> Self {
-        Task {
-            id: next_id(),
-            callsite: None,
-            task_name: NamedInput::new_fin(),
-            base_priority: 0,
-            job: TaskJob::new_fin(),
         }
     }
 

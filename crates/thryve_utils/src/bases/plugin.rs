@@ -32,7 +32,7 @@
 
 use std::sync::Arc;
 
-use crate::errors::{NameInputType, NamingError};
+use crate::errors::{NameInputType, NamingError, ThryveError};
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
 use crate::packets::packet_handle::PacketHandle;
 use crate::traits::plugin_logic::{PlgLogic, PluginB};
@@ -53,9 +53,36 @@ use crate::traits::plugin_logic::{PlgLogic, PluginB};
 ///
 /// # Example
 ///
+/// A plugin's core logic implements [`PlgLogic`]; [`Plugin::new`] adds its type and the
+/// initialization function its init task runs once the engine starts.
+///
 /// ```no_run
-/// // Plugins are typically created by implementing PlgLogic and
-/// // passing the core logic to Plugin::new along with an initialization function
+/// use std::sync::Arc;
+/// use thryve_utils::bases::plugin::Plugin;
+/// use thryve_utils::errors::ThryveError;
+/// use thryve_utils::extras::jobs::TaskJob;
+/// use thryve_utils::impl_as_any;
+/// use thryve_utils::packets::packet_handle::PacketHandle;
+/// use thryve_utils::res::TaskResult;
+/// use thryve_utils::traits::plugin_logic::PlgLogic;
+///
+/// // A core with nothing to clean up.
+/// struct Hasher;
+///
+/// impl PlgLogic for Hasher {
+///     impl_as_any!(Hasher);
+///
+///     fn clean_up(&self) -> Result<(), ThryveError> {
+///         Ok(())
+///     }
+/// }
+///
+/// # let (task_tx, _) = crossbeam::channel::bounded(1);
+/// # let (notif_tx, _) = crossbeam::channel::bounded(1);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
+/// let init = TaskJob::new(|| TaskResult::new("Ready", "hasher loaded".to_string(), "Main"));
+/// let plugin = Plugin::new("Hasher", Arc::new(Hasher), handle, init)?;
+/// # Ok::<(), thryve_utils::errors::NamingError>(())
 /// ```
 pub struct Plugin {
     /// Type classifier for the plugin.
@@ -73,9 +100,16 @@ impl PluginB for Plugin {
     ///
     /// Delegates cleanup to the plugin's core logic, allowing each plugin
     /// to perform its own resource deallocation and finalization.
-    fn clean_up(&self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the core logic's error if its cleanup failed. See
+    /// [`PlgLogic::clean_up`].
+    fn clean_up(&self) -> Result<(), ThryveError> {
         let x = Arc::clone(&self.plg_core);
-        x.clean_up();
+        x.clean_up()?;
+
+        Ok(())
     }
 }
 

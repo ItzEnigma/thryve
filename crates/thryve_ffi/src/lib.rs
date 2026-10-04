@@ -19,9 +19,11 @@
 //! - Functions use `extern "C"` calling convention for cross-language compatibility
 //! - Error handling uses nullable pointers and status codes
 //! - Callbacks follow a specific ownership model — see the [Callback Types](#callback-types) section
-//! - Every wrapper's body runs through [`ffi_guard`], so a panic anywhere in the
+//! - Every wrapper's body runs through `ffi_guard`, so a panic anywhere in the
 //!   call chain becomes a null/error return instead of unwinding across the FFI
-//!   boundary into the foreign caller (which is undefined behavior)
+//!   boundary into the foreign caller (which is undefined behavior). Once an
+//!   engine has started, though, Thryve's panic hook logs a panic and ends the
+//!   process before the guard sees it
 //!
 //! # Typical Usage Sequence (Interactive Mode)
 //!
@@ -66,8 +68,9 @@
 //!   - `has_chain`: A boolean indicating whether a chained task should be executed next
 //!   - `chain_task`: A pointer to the chained task (only valid if `has_chain` is true and pointer is not null)
 //! - **`ThryvePluginEntryPoint`**: Alias for `ThryveTaskJob` — used when creating plugins.
-//! - **`ThryvePluginCleanUp`**: A function pointer that takes a `*const u8` (the plugin's core pointer).
-//!   Called when the plugin is being cleaned up.
+//! - **`ThryvePluginCleanUp`**: A function pointer that takes a `*const u8` (the plugin's core pointer)
+//!   and returns an `int`: `ThryveStatus_Ok` (0) if the cleanup worked, any other value if it failed.
+//!   Called once when the engine shuts down. A failure is logged to `Error.log`.
 //!
 //! ## Observer Callbacks
 //!
@@ -138,7 +141,9 @@
 //! - **`ThryveObsJob`**: Runs on a **separate thread spawned by the observer's main loop**.
 //!   The Rust side clones the `Arc<Observer>`, converts to raw pointer, and calls the callback.
 //!   The callback must be thread-safe — it cannot assume the calling thread.
-//! - **`ThryvePluginCleanUp` / `ThryveObserverCleanUp`**: Runs on the thread that frees the object.
+//! - **`ThryvePluginCleanUp`**: Runs on Thryve's plugin clean-up thread during shutdown, after every
+//!   task has stopped. The plugins are cleaned up one after another on that thread.
+//! - **`ThryveObserverCleanUp`**: Runs on the thread that frees the object.
 //! - **`ThryveNotifLogic`**: Runs on the thread that processes the notification.
 //!
 //! **Critical for `ThryveObsJob`**: Because this callback runs on a separate thread, the FFI
@@ -172,7 +177,7 @@
 //!    language can continue to use it after passing to plugin/observer creation.
 
 use std::ffi::CStr;
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_int};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -182,7 +187,7 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
-use thryve_utils::errors::{StartupError, ThryveError};
+use thryve_utils::errors::{FinalizationError, StartupError, ThryveError};
 use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::packets::packet_handle::PacketHandle;
@@ -267,7 +272,8 @@ pub type ThryveNotif = *mut NotifHandle;
 /// caller is undefined behavior (e.g. a malformed config file can trigger an
 /// internal `assert!`/`unwrap()` several calls deep) — every wrapper in this
 /// file routes its body through here so a caught panic becomes `on_panic`
-/// instead of crossing into C.
+/// instead of crossing into C. Once an engine has started, Thryve's panic hook
+/// ends the process first (it calls `exit(1)`), so nothing reaches this catch.
 fn ffi_guard<T>(on_panic: T, f: impl FnOnce() -> T) -> T {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(on_panic)
 }
@@ -568,11 +574,18 @@ pub extern "C" fn thryve_task_result_new_with_chain(
 /// should return a `ThryveTaskResult` with `has_chain` set to `false` if no chained task follows.
 pub type ThryveTaskJob = extern "C" fn() -> ThryveTaskResult;
 
-/// FFI-safe function pointer for plugin cleanup — takes a pointer to the plugin's core data.
+/// FFI-safe function pointer for plugin cleanup — takes a pointer to the plugin's core data and
+/// reports whether the cleanup worked.
 ///
-/// Called when the plugin is being freed. The `core_ptr` is the same pointer that was passed
-/// to `thryve_plugin_create` as `plg_core_ptr`.
-pub type ThryvePluginCleanUp = extern "C" fn(*const u8);
+/// Called once when the engine shuts down, on Thryve's plugin clean-up thread, after every task
+/// has stopped. The `core_ptr` is the same pointer that was passed to `thryve_plugin_create` as
+/// `plg_core_ptr`.
+///
+/// Return `ThryveStatus_Ok` (0) if the cleanup worked. Any other value means it failed: Thryve
+/// logs that the plugin failed to clean up to `Error.log`, then goes on with the other plugins
+/// and the shutdown. The return type is a plain `int` rather than `ThryveStatus`, so that any
+/// value the callback returns is safe for Thryve to read.
+pub type ThryvePluginCleanUp = extern "C" fn(*const u8) -> c_int;
 
 /// FFI-safe function pointer for plugin entry point — returns a task result.
 ///
@@ -1438,8 +1451,9 @@ pub extern "C" fn thryve_service_free(service: ThryveService) {
 ///   This pointer is passed back to `clean_up` and is available to the plugin's logic.
 /// * `tx` - The opaque pointer to the PacketHandle instance. This is **cloned** inside the plugin,
 ///   so the PacketHandle remains valid after this call and can be used elsewhere.
-/// * `clean_up` - Function pointer called when the plugin is cleaned up.
-///   The `plg_core_ptr` is passed as an argument.
+/// * `clean_up` - Function pointer called once when the engine shuts down, with `plg_core_ptr`
+///   as its argument. It returns `ThryveStatus_Ok` if the cleanup worked, and any other value if
+///   it failed; a failure is logged to `Error.log`. See [`ThryvePluginCleanUp`].
 /// * `entry_point` - Function pointer that returns the task execution result.
 ///   **Takes ownership** — do not free this pointer after calling.
 ///
@@ -1487,8 +1501,12 @@ pub extern "C" fn thryve_service_free(service: ThryveService) {
 ///
 /// ```c
 /// // In C, you would define your plugin logic functions:
-/// void my_plugin_clean_up(const void* core_ptr) {
+/// int my_plugin_clean_up(const void* core_ptr) {
 ///     // Cleanup logic here
+///     if (!flush_my_cache(core_ptr)) {
+///         return ThryveStatus_OperationFail;  // logged to Error.log
+///     }
+///     return ThryveStatus_Ok;
 /// }
 ///
 /// ThryveTaskResult my_plugin_entry_point(void) {
@@ -1534,7 +1552,8 @@ pub unsafe extern "C" fn thryve_plugin_create(
         });
 
         // Create the PlgLogic adapter - PluginLogicAdapter already implements PlgLogic
-        let adapter: Arc<dyn PlgLogic> = Arc::new(PluginLogicAdapter::new(plg_core_ptr, clean_up));
+        let adapter: Arc<dyn PlgLogic> =
+            Arc::new(PluginLogicAdapter::new(plg_type, plg_core_ptr, clean_up));
 
         let Ok(plugin) = Plugin::new(plg_type, adapter, packet_handle, task_job) else {
             return std::ptr::null_mut();
@@ -1874,6 +1893,8 @@ pub extern "C" fn thryve_ctx_send_notification(ctx: ThryveCtx, notif: ThryveNoti
 
 /// Adapter for PlgLogic trait to support FFI callbacks.
 pub struct PluginLogicAdapter {
+    /// The plugin's type, which a failed cleanup names in its error.
+    pub plg_type: String,
     /// The foreign plugin's own data, passed back to `clean_up`.
     pub core_ptr: *mut u8,
     /// The foreign cleanup callback, called with `core_ptr`.
@@ -1881,9 +1902,13 @@ pub struct PluginLogicAdapter {
 }
 
 impl PluginLogicAdapter {
-    /// Wraps a foreign plugin's data pointer and cleanup callback.
-    pub fn new(core_ptr: *mut u8, clean_up: ThryvePluginCleanUp) -> Self {
-        Self { core_ptr, clean_up }
+    /// Wraps a foreign plugin's type, data pointer and cleanup callback.
+    pub fn new(plg_type: &str, core_ptr: *mut u8, clean_up: ThryvePluginCleanUp) -> Self {
+        Self {
+            plg_type: plg_type.to_string(),
+            core_ptr,
+            clean_up,
+        }
     }
 }
 
@@ -1891,9 +1916,24 @@ unsafe impl Send for PluginLogicAdapter {}
 unsafe impl Sync for PluginLogicAdapter {}
 
 impl PlgLogic for PluginLogicAdapter {
-    fn clean_up(&self) {
+    /// Calls the foreign cleanup callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FinalizationError::PluginCleanup`], naming the plugin's type, if the callback
+    /// returns anything other than `ThryveStatus_Ok`.
+    fn clean_up(&self) -> Result<(), ThryveError> {
         // Function pointers are always valid if defined, no null check needed
-        (self.clean_up)(self.core_ptr);
+        let status = (self.clean_up)(self.core_ptr);
+
+        if status != ThryveStatus::Ok as c_int {
+            return Err(FinalizationError::PluginCleanup {
+                plugin_type: self.plg_type.clone(),
+            }
+            .into());
+        }
+
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

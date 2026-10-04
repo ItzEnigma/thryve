@@ -82,7 +82,7 @@ typedef struct {
 
 typedef ThryveTaskResult (*ThryveTaskJob)(void);
 
-typedef void (*ThryvePluginCleanUp)(const void*);
+typedef int (*ThryvePluginCleanUp)(const void*);
 
 typedef ThryveTaskResult (*ThryvePluginEntryPoint)(void);
 

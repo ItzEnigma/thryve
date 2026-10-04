@@ -102,6 +102,7 @@ let logger = LoggerObserver::new(&ctx);
 Plugins extend functionality without modifying the core:
 
 ```rust
+use thryve_utils::errors::ThryveError;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::impl_as_any;
 
@@ -109,8 +110,9 @@ use thryve_utils::impl_as_any;
 struct MyPlugin;
 
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {
+    fn clean_up(&self) -> Result<(), ThryveError> {
         // Cleanup logic
+        Ok(())
     }
 
     impl_as_any!(MyPlugin);
@@ -168,7 +170,7 @@ Service initialization and execution.
 
 Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
 
-A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `shutdown_grace_period`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
 
@@ -181,6 +183,7 @@ can_pause = true
 
 [engine]
 sleep_tick_rate = 4
+shutdown_grace_period = 10
 
 [threads]
 worker_count = 4
@@ -209,6 +212,7 @@ log_tasks= false
 | `service` | `can_stop` | bool | true | Accept stop commands |
 | `service` | `can_pause` | bool | true | Accept pause/resume commands |
 | `engine` | `sleep_tick_rate` | u64 | 4 | Idle sleep duration (ms) |
+| `engine` | `shutdown_grace_period` | usize | 10 | Seconds the shutdown waits for running tasks; a task still running then is named in `Error.log` and left behind, and the plugins aren't cleaned up |
 | `threads` | `worker_count` | usize | 4 | Number of worker threads |
 | `pipes` | `task_pipe_capacity` | usize | 1024 | Task channel buffer size |
 | `pipes` | `notif_pipe_capacity` | usize | 1024 | Notification channel buffer size |
@@ -250,6 +254,7 @@ The idiomatic pattern is to give your plugin's logic type its own `new` that bui
 ```rust
 use std::sync::Arc;
 use thryve_utils::bases::plugin::Plugin;
+use thryve_utils::errors::ThryveError;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::impl_as_any;
@@ -277,8 +282,9 @@ impl MyPlugin {
 }
 
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {
+    fn clean_up(&self) -> Result<(), ThryveError> {
         println!("Cleaning up plugin");
+        Ok(())
     }
 
     impl_as_any!(MyPlugin);
@@ -310,13 +316,11 @@ impl MyObserver {
                     return;
                 }
 
-                // `pop` blocks until a notification arrives or the queue is
-                // finalized, in which case it wakes with a sentinel value —
-                // recheck before treating it as real work.
-                let _notif = observer.obs_queue.pop();
-                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                // `pop` waits for the next notification. It returns `None` once the
+                // queue is finalized at shutdown.
+                let Some(_notif) = observer.obs_queue.pop() else {
                     return;
-                }
+                };
 
                 // Handle the notification.
             }
@@ -348,7 +352,7 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
-use thryve_utils::errors::get_err;
+use thryve_utils::errors::{ThryveError, get_err};
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::res::TaskResult;
@@ -368,7 +372,9 @@ impl MyPlugin {
     }
 }
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {}
+    fn clean_up(&self) -> Result<(), ThryveError> {
+        Ok(())
+    }
     impl_as_any!(MyPlugin);
 }
 
@@ -382,13 +388,11 @@ impl MyObserver {
                     return;
                 }
 
-                // `pop` blocks until a notification arrives or the queue is
-                // finalized, in which case it wakes with a sentinel value —
-                // recheck before treating it as real work.
-                let _notif = observer.obs_queue.pop();
-                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                // `pop` waits for the next notification. It returns `None` once the
+                // queue is finalized at shutdown.
+                let Some(_notif) = observer.obs_queue.pop() else {
                     return;
-                }
+                };
 
                 // Handle the notification.
             }
@@ -435,7 +439,7 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::traits::plugin_logic::PlgLogic;
 use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::queue::Queue;
-use thryve_utils::errors::get_err;
+use thryve_utils::errors::{ThryveError, get_err};
 use thryve_utils::extras::jobs::{TaskJob, ObsJob};
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::res::TaskResult;
@@ -455,7 +459,9 @@ impl MyPlugin {
     }
 }
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {}
+    fn clean_up(&self) -> Result<(), ThryveError> {
+        Ok(())
+    }
     impl_as_any!(MyPlugin);
 }
 
@@ -469,13 +475,11 @@ impl MyObserver {
                     return;
                 }
 
-                // `pop` blocks until a notification arrives or the queue is
-                // finalized, in which case it wakes with a sentinel value —
-                // recheck before treating it as real work.
-                let _notif = observer.obs_queue.pop();
-                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                // `pop` waits for the next notification. It returns `None` once the
+                // queue is finalized at shutdown.
+                let Some(_notif) = observer.obs_queue.pop() else {
                     return;
-                }
+                };
 
                 // Handle the notification.
             }
@@ -610,6 +614,14 @@ log/
     <Module>.log
 ```
 
+If a shutdown cuts work short, one line says how much:
+
+```text
+thryve exited leaving 3 things not done: 1 lost tasks, 0 lost notifications, 1 lost task results, 1 still running
+```
+
+It counts the tasks that never ran, the results that carried something (a message, or a task, plugin or observer to start), the notifications that were never delivered, and the threads still running when the grace period ran out. It goes to `Error.log`, or to `Main.log` when the Windows service was stopped, since stopping mid-work is expected there. With debugging on, `Debug.log` lists what was lost. A shutdown that lost nothing writes no line.
+
 ## License
 
 Thryve is dual-licensed under two models:
@@ -629,7 +641,7 @@ Conditions:
 - 🔹 You must make source code available when distributing
 - 🔹 If used over a network (SaaS), you must make source code available to users
 
-See the [`LICENSE`](LICENSE) file for the full license text.
+See the [`LICENSE`](./LICENSE) file for the full license text.
 
 ### Commercial License
 

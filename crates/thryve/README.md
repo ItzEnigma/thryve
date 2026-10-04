@@ -116,13 +116,11 @@ impl MyObserver {
                     return;
                 }
 
-                // `pop` blocks until a notification arrives or the queue is
-                // finalized, in which case it wakes with a sentinel value —
-                // recheck before treating it as real work.
-                let _notif = observer.obs_queue.pop();
-                if observer.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                // `pop` waits for the next notification. It returns `None` once the
+                // queue is finalized at shutdown.
+                let Some(_notif) = observer.obs_queue.pop() else {
                     return;
-                }
+                };
 
                 // Handle the notification.
             }
@@ -148,6 +146,7 @@ Plugins extend functionality without modifying the core. The idiomatic pattern i
 ```rust
 use std::sync::Arc;
 use thryve::utils::bases::plugin::Plugin;
+use thryve::utils::error::ThryveError;
 use thryve::utils::traits::PlgLogic;
 use thryve::utils::jobs::TaskJob;
 use thryve::utils::packets::packet_handle::PacketHandle;
@@ -175,8 +174,9 @@ impl MyPlugin {
 }
 
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {
+    fn clean_up(&self) -> Result<(), ThryveError> {
         // Cleanup logic here
+        Ok(())
     }
 
     impl_as_any!(MyPlugin);
@@ -211,7 +211,7 @@ The engine loop itself and the built-in logger/topology observers are implementa
 
 Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
 
-A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `sleep_tick_rate`, `shutdown_grace_period`, `worker_count`, `aging_interval` and the three pipe capacities must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
 
@@ -224,6 +224,7 @@ can_pause = true
 
 [engine]
 sleep_tick_rate = 4
+shutdown_grace_period = 10
 
 [threads]
 worker_count = 4
@@ -252,6 +253,7 @@ log_tasks= false
 | `service` | `can_stop` | bool | true | Accept stop commands |
 | `service` | `can_pause` | bool | true | Accept pause/resume commands |
 | `engine` | `sleep_tick_rate` | u64 | 4 | Idle sleep duration (ms) |
+| `engine` | `shutdown_grace_period` | usize | 10 | Seconds the shutdown waits for running tasks; a task still running then is named in `Error.log` and left behind, and the plugins aren't cleaned up |
 | `threads` | `worker_count` | usize | 4 | Number of worker threads |
 | `pipes` | `task_pipe_capacity` | usize | 1024 | Task channel buffer size |
 | `pipes` | `notif_pipe_capacity` | usize | 1024 | Notification channel buffer size |
@@ -298,7 +300,7 @@ use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
 use thryve::utils::jobs::{TaskJob, ObsJob};
-use thryve::utils::error::get_err;
+use thryve::utils::error::{ThryveError, get_err};
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
 use thryve::utils::impl_as_any;
@@ -317,7 +319,9 @@ impl MyPlugin {
     }
 }
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {}
+    fn clean_up(&self) -> Result<(), ThryveError> {
+        Ok(())
+    }
     impl_as_any!(MyPlugin);
 }
 
@@ -370,7 +374,7 @@ use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
 use thryve::utils::jobs::{TaskJob, ObsJob};
-use thryve::utils::error::get_err;
+use thryve::utils::error::{ThryveError, get_err};
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
 use thryve::utils::impl_as_any;
@@ -389,7 +393,9 @@ impl MyPlugin {
     }
 }
 impl PlgLogic for MyPlugin {
-    fn clean_up(&self) {}
+    fn clean_up(&self) -> Result<(), ThryveError> {
+        Ok(())
+    }
     impl_as_any!(MyPlugin);
 }
 

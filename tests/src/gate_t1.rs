@@ -90,7 +90,8 @@ fn fresh_dir(name: &str) -> PathBuf {
 fn ctx_with_files(dir: &Path, graph_mode: bool) -> Ctx {
     let (task_tx, task_rx) = bounded::<Task>(10);
     let (notif_tx, notif_rx) = bounded::<Notif>(10);
-    let packet_handle = PacketHandle::new(task_tx, notif_tx, graph_mode);
+    let (status_tx, status_rx) = crossbeam::channel::unbounded();
+    let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, graph_mode);
 
     let mut log_files: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
     log_files.insert(
@@ -109,7 +110,13 @@ fn ctx_with_files(dir: &Path, graph_mode: bool) -> Ctx {
     dir_data.dir_paths.insert(DirName::Topology, topology_dir);
     let datetime: DateTime<Local> = SystemTime::now().into();
 
-    let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+    let mut ctx = Ctx::new(
+        Config::default(),
+        task_rx,
+        notif_rx,
+        status_rx,
+        packet_handle,
+    );
     ctx.meta_data = MetaData::new(datetime, dir_data);
     ctx
 }
@@ -118,11 +125,18 @@ fn ctx_with_files(dir: &Path, graph_mode: bool) -> Ctx {
 fn bare_ctx() -> Ctx {
     let (task_tx, task_rx) = bounded::<Task>(10);
     let (notif_tx, notif_rx) = bounded::<Notif>(10);
-    let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+    let (status_tx, status_rx) = crossbeam::channel::unbounded();
+    let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
     let dir_data = DirData::new(std::env::temp_dir(), HashMap::new());
     let datetime: DateTime<Local> = SystemTime::now().into();
 
-    let mut ctx = Ctx::new(Config::default(), task_rx, notif_rx, packet_handle);
+    let mut ctx = Ctx::new(
+        Config::default(),
+        task_rx,
+        notif_rx,
+        status_rx,
+        packet_handle,
+    );
     ctx.meta_data = MetaData::new(datetime, dir_data);
     ctx
 }
@@ -170,7 +184,9 @@ mod names {
     struct QuietPlugin;
     impl PlgLogic for QuietPlugin {
         impl_as_any!(QuietPlugin);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     fn job() -> TaskJob {
@@ -372,7 +388,7 @@ mod config {
         std::fs::write(
             &path,
             "[service]\ncan_stop = true\ncan_pause = true\n\n\
-             [engine]\nsleep_tick_rate = 4\n\n\
+             [engine]\nsleep_tick_rate = 4\nshutdown_grace_period = 10\n\n\
              [threads]\nworker_count = 0\n\n\
              [pipes]\ntask_pipe_capacity = 0\nnotif_pipe_capacity = 1024\nres_pipe_capacity = 1024\n\n\
              [tasks]\nmax_priority = 15\naging_interval = 3\n\n\
@@ -602,7 +618,7 @@ mod sending {
     fn sending_after_the_engine_is_gone_returns_engine_not_running() {
         let (task_tx, task_rx) = bounded::<Task>(1);
         let (notif_tx, notif_rx) = bounded::<Notif>(1);
-        let handle = PacketHandle::new(task_tx, notif_tx, false);
+        let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         drop(task_rx);
         drop(notif_rx);
 
@@ -691,7 +707,9 @@ mod engine {
     struct QuietPlugin;
     impl PlgLogic for QuietPlugin {
         impl_as_any!(QuietPlugin);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     /// Everything the engine has forwarded to the sorter so far.
@@ -735,7 +753,9 @@ mod engine {
         manager.init_obs_sorter_thread().unwrap();
 
         manager.forward_notif(Notif::new("Ping", "Nobody", Box::new(ForeignCore)).unwrap());
-        let logger = manager.finalize().expect("the logger was loaded");
+        let logger = manager
+            .finalize(&mut Vec::new(), &mut Vec::new())
+            .expect("the logger was loaded");
 
         let mut messages = Vec::new();
         while let Some(notif) = logger.obs_queue.main_queue.pop() {
@@ -754,9 +774,9 @@ mod engine {
             let job = TaskJob::new(|| TaskResult::new("", String::new(), ""));
             Plugin::new("Resizer", Arc::new(QuietPlugin), ctx.packet_handle(), job).unwrap()
         };
-        plugins.load_plugin(&ctx.config, plugin()).unwrap();
+        plugins.load_plugin(&ctx.config, plugin(), false).unwrap();
         assert!(matches!(
-            plugins.load_plugin(&ctx.config, plugin()),
+            plugins.load_plugin(&ctx.config, plugin(), false),
             Err(ThryveError::Startup(StartupError::RegisterDuplicate {
                 name,
                 kind: NameInputType::PlgType,
@@ -781,7 +801,7 @@ mod engine {
                 kind: NameInputType::ObsType,
             })) if name == "Audit"
         ));
-        let _ = observers.finalize();
+        let _ = observers.finalize(&mut Vec::new(), &mut Vec::new());
     }
 }
 
@@ -994,7 +1014,8 @@ mod shutdown {
         let config = Config::default();
         let (task_tx, _task_rx) = bounded::<Task>(10);
         let (notif_tx, _notif_rx) = bounded::<Notif>(10);
-        let packet_handle = PacketHandle::new(task_tx, notif_tx, false);
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let queue = PQChild::new(&config, packet_handle.clone());
         let mut pool: ThreadPool<PQChild<Task>, Task> = ThreadPool::new(2, queue, packet_handle);
         let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
@@ -1006,10 +1027,11 @@ mod shutdown {
             );
 
             // One worker dies with the task's panic...
-            let died = wait_until(|| pool.workers.iter().any(|worker| worker.is_finished()));
+            let died = wait_until(|| pool.workers.iter().any(|(worker, _)| worker.is_finished()));
 
-            // ...and finalizing still joins both, without panicking on the dead one.
-            pool.finalize_plg();
+            // ...and stopping the pool still joins both, without panicking on the dead one.
+            pool.finalize_plg(&mut Vec::new(), &mut Vec::new());
+            pool.stop_workers(&mut Vec::new());
             died
         });
 

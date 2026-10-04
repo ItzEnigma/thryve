@@ -270,23 +270,20 @@ impl TopologyHandlerObserver {
     fn topology_modification(&self, observer: Arc<Observer>) {
         loop {
             if observer.exit_flag.load(Ordering::SeqCst) {
-                let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
-                return observer.tx.send_status(notif);
+                break;
             }
 
-            let notif = observer.obs_queue.pop();
+            let notif_opt = observer.obs_queue.pop();
 
-            // pop() can wake here because the queue was finalized while this
-            // thread was blocked inside it, in which case it returns a
-            // sentinel value rather than a real notification -- recheck
-            // before handing it to handle_entry.
-            if observer.exit_flag.load(Ordering::SeqCst) {
-                let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
-                return observer.tx.send_status(notif);
+            if let Some(notif) = notif_opt {
+                self.handle_entry(notif);
+            } else {
+                break;
             }
-
-            self.handle_entry(notif);
         }
+
+        let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
+        observer.tx.send_status(notif)
     }
 
     /// Handles an incoming topology modification notification.

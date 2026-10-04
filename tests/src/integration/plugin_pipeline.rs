@@ -49,7 +49,9 @@ mod tests_plugin_pipeline {
 
     impl PlgLogic for ImgPipelinePlugin {
         impl_as_any!(ImgPipelinePlugin);
-        fn clean_up(&self) {}
+        fn clean_up(&self) -> Result<(), thryve_utils::errors::ThryveError> {
+            Ok(())
+        }
     }
 
     impl ImgPipelinePlugin {

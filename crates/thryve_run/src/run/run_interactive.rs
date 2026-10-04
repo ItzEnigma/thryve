@@ -41,7 +41,7 @@
 //! # Ok::<(), thryve_utils::errors::ThryveError>(())
 //! ```
 
-use crossbeam::channel::bounded;
+use crossbeam::channel::{bounded, unbounded};
 use thryve_core::runtime::engine::Engine;
 use thryve_utils::errors::ThryveError;
 
@@ -144,20 +144,23 @@ fn engine_loop(mut eng: Engine) {
 pub fn summon_requirements(config: Config) -> Ctx {
     let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
     let (notif_tx, notif_rx) = bounded(config.pipes.notif_pipe_capacity);
+    let (status_tx, status_rx) = unbounded();
 
     if config.debugging.is_debugging {
         Ctx::new(
             config,
             task_rx,
             notif_rx,
-            PacketHandle::new(task_tx, notif_tx, config.debugging.visual_graph),
+            status_rx,
+            PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph),
         )
     } else {
         Ctx::new(
             config,
             task_rx,
             notif_rx,
-            PacketHandle::new(task_tx, notif_tx, false),
+            status_rx,
+            PacketHandle::new(task_tx, notif_tx, status_tx, false),
         )
     }
 }
