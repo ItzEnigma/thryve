@@ -15,7 +15,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::cfg::config::Config;
-use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::extras::thread_local;
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
@@ -57,7 +56,7 @@ fn make_queue(
 }
 
 fn no_op_task() -> Task {
-    Task::new("Bench", 1, TaskJob::new(TaskResult::default)).expect("valid task name")
+    Task::new("Bench", 1, TaskResult::default).expect("valid task name")
 }
 
 /// Pushes `total_tasks` (split across `pushers` threads) and pops the same

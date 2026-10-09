@@ -31,6 +31,7 @@ Thryve is designed around three main pillars:
 ### Key Features
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
+- **Typed tasks with follow-ups**: a task's value, or its own error, goes to the task declared after it with `then`, so plugins combine without knowing each other
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -47,7 +48,7 @@ Thryve is designed around three main pillars:
 
 1. **Tasks** enter through the task channel and are queued by priority
 2. **Worker threads** execute tasks from the priority queue
-3. **Results** are sent back to the engine for processing
+3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up
 4. **Notifications** flow through the observer system for logging and monitoring
 
 ## Core Concepts
@@ -58,20 +59,19 @@ Tasks are units of work submitted to the engine for execution:
 
 ```rust
 use thryve::utils::packets::task::Task;
-use thryve::utils::jobs::TaskJob;
 use thryve::utils::res::TaskResult;
 
-let task = Task::new("MyTask", 2, TaskJob::new(|| {
+let task = Task::new("MyTask", 2, || {
     // Task execution logic
     TaskResult::new("Success", "Done".to_string(), "Main")
-})).expect("valid task name");
+}).expect("valid task name");
 ```
 
 **Task Properties:**
 - **Unique ID**: Automatically assigned for tracking
 - **Name**: Human-readable identifier
 - **Priority**: Higher values = more urgent (0-14)
-- **Execution Function**: Closure returning a `TaskResult`, wrapped in a `TaskJob`
+- **Execution Function**: Closure returning a `TaskResult`
 
 ### Results
 
@@ -80,17 +80,50 @@ Results represent task execution outcomes and enable task chaining:
 ```rust
 use thryve::utils::res::TaskResult;
 use thryve::utils::packets::task::Task;
-use thryve::utils::jobs::TaskJob;
 
 // Terminal result
 let result = TaskResult::new("Success", "Done".to_string(), "Main");
 
 // Chained result — executes the next task once this one completes
-let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
+let next_task = Task::new("NextTask", 1, || {
     TaskResult::new("Ok", "".to_string(), "Main")
-})).expect("valid task name");
+}).expect("valid task name");
 let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main").chain(next_task);
 ```
+
+### Typed Tasks and Follow-ups
+
+A typed task, `AdvTask<T, E>`, returns `Result<T, E>`: a value, or its own error type. Sending it returns a handle, and `then` on the handle declares a follow-up: a task of its own that runs once the first one finishes, and gets its value or its error as a `Handoff`:
+
+```rust
+use thryve::utils::packets::packet_handle::PacketHandle;
+use thryve::utils::packets::task::AdvTask;
+use thryve::utils::res::Handoff;
+
+fn size_in_kb(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let file_size = AdvTask::new("FileSize", 2, || {
+        std::fs::metadata("photo.png").map(|meta| meta.len())
+    })?;
+
+    handle
+        .send_adv_task(file_size)?
+        .then("SizeInKb", |handoff| match handoff {
+            Handoff::Value(bytes) => Ok(bytes / 1024),
+            // `FileSize`'s own error, a `std::io::Error`, passed on to whoever follows.
+            Handoff::Error(error) => Err(error),
+        })?;
+
+    Ok(())
+}
+```
+
+- **Chains:** `then` returns the follow-up's handle, so steps chain. A task has one follow-up: `then` uses its handle up.
+- **Timing:** `then` works before or after the task finishes, since the engine keeps the result while the handle exists. Dropping a handle without `then` lets the result go, and an error is written to `Error.log`.
+- **Priority:** a follow-up inherits its task's priority, capped below realtime. `then_with_priority` gives it its own.
+- **Forwarding:** a task that creates its last step while it runs can forward to it with `AdvTask::forward` (or `then_forward`). It returns that step's handle, and whoever follows the task gets the step's result.
+- **Independent plugins:** a plugin exports functions that send its typed tasks and return their handles. The code that uses two plugins wires them together with `then`, so neither plugin names the other.
+
+Plain `Task`s and `chain` keep working for fire-and-forget work.
 
 ### Observers
 
@@ -148,7 +181,6 @@ use std::sync::Arc;
 use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::error::ThryveError;
 use thryve::utils::traits::PlgLogic;
-use thryve::utils::jobs::TaskJob;
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
 use thryve::utils::impl_as_any;
@@ -163,7 +195,7 @@ impl MyPlugin {
 
         // The task job calls back into the plugin's own logic, so it has
         // access to whatever state the plugin needs.
-        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+        let entry_point = move || core_clone.task_a(tx_clone);
 
         Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
@@ -193,13 +225,15 @@ Everything usable from Rust is re-exported under `thryve::`:
 | `thryve::run::run_service` | Windows service mode: `create_service`, `try_run_as_service` |
 | `thryve::utils::cfg::Config` / `thryve::utils::cfg::ctx::Ctx` | Configuration and application context |
 | `thryve::utils::packets::task::Task` | Unit of work with priority and unique ID |
-| `thryve::utils::packets::packet_handle::PacketHandle` | Handle for sending tasks/notifications to the engine |
+| `thryve::utils::packets::task::{AdvTask, AdvTaskHandle}` | Typed task returning `Result<T, E>` (`AdvTask::new`, or `AdvTask::forward` to forward), and the handle its follow-ups are declared on: `then`, `then_with_priority`, `then_forward` |
+| `thryve::utils::packets::packet_handle::PacketHandle` | Handle for sending tasks (`send_task`, `send_adv_task`) and notifications to the engine |
 | `thryve::utils::res::TaskResult` | Task execution outcome, with chaining via `.chain(task)` |
+| `thryve::utils::res::Handoff` | What a follow-up gets: the task's value, or its own error |
 | `thryve::utils::bases::plugin::Plugin` / `thryve::utils::traits::PlgLogic` | Plugin structure and the trait your plugin logic implements |
 | `thryve::utils::bases::observer::Observer` / `thryve::utils::traits::ObsLogic` | Observer structure and the trait your observer logic implements |
 | `thryve::utils::bases::notif::Notif` / `thryve::utils::traits::NotifLogic` | Notification structure and its logic trait |
-| `thryve::utils::jobs::{TaskJob, ObsJob}` | Closure wrappers expected by `Task::new`, `Plugin::new`, `Observer::new` |
-| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
+| `thryve::utils::jobs::ObsJob` | Closure wrapper expected by `Observer::new` (`Task::new` and `Plugin::new` take a plain closure) |
+| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError, TaskError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
 | `thryve::utils::impl_as_any!` | Macro that implements the `as_any` downcasting method required by `NotifLogic`/`ObsLogic` |
 Names are checked when a task, plugin, observer or notification is created: they must not be empty or contain control characters, and each constructor returns a `NamingError` otherwise. Log-file names (in the config) may contain only ASCII letters and digits, are compared ignoring case, and can't be `Main`, `Error`, `Debug` or a Windows device name such as `CON`.
 
@@ -279,15 +313,14 @@ log_tasks= false
 ```rust
 use thryve::utils::packets::task::Task;
 use thryve::utils::packets::packet_handle::PacketHandle;
-use thryve::utils::jobs::TaskJob;
 use thryve::utils::res::TaskResult;
 use thryve::utils::error::ThryveError;
 
 fn send_calculation(handle: &PacketHandle) -> Result<(), ThryveError> {
-    let task = Task::new("CalculateSum", 1, TaskJob::new(|| {
+    let task = Task::new("CalculateSum", 1, || {
         let result = 2 + 2;
         TaskResult::new("Success", format!("Result: {}", result), "Main")
-    }))?;
+    })?;
 
     // Fails only once the engine is gone; the task is then dropped.
     handle.send_task(task)
@@ -305,7 +338,7 @@ use thryve::utils::cfg::Config;
 use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
-use thryve::utils::jobs::{TaskJob, ObsJob};
+use thryve::utils::jobs::ObsJob;
 use thryve::utils::error::{ThryveError, get_err};
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
@@ -317,7 +350,7 @@ impl MyPlugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
-        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+        let entry_point = move || core_clone.task_a(tx_clone);
         Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {
@@ -379,7 +412,7 @@ use thryve::utils::cfg::Config;
 use thryve::utils::bases::plugin::Plugin;
 use thryve::utils::bases::observer::Observer;
 use thryve::utils::traits::{PlgLogic, ObsLogic, Queue};
-use thryve::utils::jobs::{TaskJob, ObsJob};
+use thryve::utils::jobs::ObsJob;
 use thryve::utils::error::{ThryveError, get_err};
 use thryve::utils::packets::packet_handle::PacketHandle;
 use thryve::utils::res::TaskResult;
@@ -391,7 +424,7 @@ impl MyPlugin {
         let core = Arc::new(Self);
         let core_clone = Arc::clone(&core);
         let tx_clone = tx.clone();
-        let entry_point = TaskJob::new(move || core_clone.task_a(tx_clone));
+        let entry_point = move || core_clone.task_a(tx_clone);
         Plugin::new("MyPluginType", core, tx, entry_point).expect("valid plugin type")
     }
     fn task_a(&self, _tx: PacketHandle) -> TaskResult {

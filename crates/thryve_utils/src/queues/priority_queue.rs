@@ -61,6 +61,25 @@ use crate::traits::queue::Queue;
 pub type PQChild<T> =
     QueueBase<SkipMap<Priority, AtomicCell<Option<Box<EnqueuedTask>>>>, T, TaskConfig>;
 
+/// The lowest base priority that counts as realtime: 80% of `max_priority`, rounded down.
+///
+/// Realtime tasks always come before the others, and ageing never makes a task realtime (see
+/// [`Priority`]'s ordering). With a `max_priority` of 0 or 1 the threshold is 0, so every level is
+/// realtime.
+pub(crate) fn realtime_threshold(max_priority: u8) -> u8 {
+    (max_priority as f32 * 0.8) as u8
+}
+
+/// The highest priority a follow-up can inherit: the level just below realtime.
+///
+/// A follow-up that inherits its dependency's priority must not become realtime that way: a
+/// realtime chain would keep every other task waiting, because ageing never lifts a task past
+/// realtime ones. `None` when every level is realtime (a `max_priority` of 0 or 1), so there's
+/// nothing below realtime to cap to.
+pub(crate) fn inherited_priority_cap(max_priority: u8) -> Option<u8> {
+    realtime_threshold(max_priority).checked_sub(1)
+}
+
 /// Wrapper for a task that tracks enqueue time for aging.
 ///
 /// This structure wraps a [`Task`] and records when it was added
@@ -240,7 +259,7 @@ impl Queue<Task> for PQChild<Task> {
 
         if !is_start {
             let notif = Log::log("Task Queue Paused".to_string(), "Main");
-            self.packet_handle.send_status(notif)
+            self.packet_handle.send_status_log(notif)
         }
     }
 
@@ -253,7 +272,7 @@ impl Queue<Task> for PQChild<Task> {
 
         if !is_start {
             let notif = Log::log("Task Queue continuing".to_string(), "Main");
-            self.packet_handle.send_status(notif);
+            self.packet_handle.send_status_log(notif);
         }
 
         self.worker_registry.notify_all();
@@ -330,7 +349,7 @@ impl Ord for Priority {
     /// prioritized over newer tasks (more like realtime tasks).
     /// There are also checks made that prevent starvation.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let threshold = (self.task_config.max_priority as f32 * 0.8) as u8;
+        let threshold = realtime_threshold(self.task_config.max_priority);
 
         let self_is_realtime = self.base_priority >= threshold;
         let other_is_realtime = other.base_priority >= threshold;

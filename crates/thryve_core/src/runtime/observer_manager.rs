@@ -473,11 +473,11 @@ impl ObserverManager {
                     // Sent as soon as each observer is done, so a later cleanup that never
                     // returns doesn't hold them back.
                     for line in lines.drain(..) {
-                        tx.send_status(line);
+                        tx.send_status_log(line);
                     }
                 }
 
-                tx.send_status(Log::log("Observer manager Finalized".to_string(), "Main"));
+                tx.send_status_log(Log::log("Observer manager Finalized".to_string(), "Main"));
             });
 
         // The clean-up thread (if it started), then the observers' own threads.

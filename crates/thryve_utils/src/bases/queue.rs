@@ -96,7 +96,7 @@ pub struct QueueBase<Q, P, C> {
     /// Handle for communicating with the engine.
     pub packet_handle: PacketHandle,
     /// Phantom data to maintain ownership of the packet type.
-    pub _marker: PhantomData<P>,
+    pub _marker: PhantomData<fn() -> P>,
 }
 
 impl<Q, P: Packet, C> QueueBase<Q, P, C> {

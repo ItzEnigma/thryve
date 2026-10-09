@@ -29,7 +29,9 @@
 //! - Notification receiver: Receives notifications from observers
 //! - Result receiver: Receives results from plugin executions
 
-use crate::runtime::{observer_manager::ObserverManager, plugin_manager::PluginManager};
+use crate::runtime::engine_wait_table::{WaitTable, WaitingState};
+use crate::runtime::observer_manager::ObserverManager;
+use crate::runtime::plugin_manager::PluginManager;
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
@@ -39,8 +41,9 @@ use thryve_utils::cfg::metrics::Metrics;
 use thryve_utils::extras::named_input::NamedInput;
 use thryve_utils::graphs::graph::TopologyNode;
 use thryve_utils::packets::notif_topology::TopologyModifier;
+use thryve_utils::packets::packet_handle::StatusMsg;
 use thryve_utils::packets::{notif_log::Log, task::Task};
-use thryve_utils::res::TaskResult;
+use thryve_utils::res::{SealedHandoff, TaskResult};
 use thryve_utils::threads::threadpool::TaskSlot;
 use thryve_utils::traits::queue::Queue;
 
@@ -94,8 +97,16 @@ pub struct Engine {
     notif_rx: Arc<Receiver<Notif>>,
     /// Receiver for task execution results.
     res_rx: Receiver<(u64, TaskResult)>,
-    /// Receiver for Thryve's own status lines. Unbounded, so their senders never wait.
-    status_rx: Arc<Receiver<Notif>>,
+    /// Receiver for Thryve's own messages: status lines, and the releases of dropped task
+    /// handles. Unbounded, so their senders never wait.
+    status_rx: Arc<Receiver<StatusMsg>>,
+    /// Where a typed task's follow-up and its result meet, under the task's id. An entry is a
+    /// follow-up waiting for the result, a result kept for a handle that may still call `then`,
+    /// a remembered release, or a link to the task a task forwarded to. Each goes once both sides
+    /// have arrived (see
+    /// [`accept_task`](Self::accept_task), [`handle_result`](Self::handle_result) and
+    /// [`check_status`](Self::check_status)), or at the shutdown, which counts what's left.
+    waiting_tasks: WaitTable,
     /// Set by [`finalize`](Self::finalize) as it starts; the engine's loops stop once it's set.
     /// Don't set it yourself: `finalize` would then take the engine for finalized already, return
     /// at once, and shut nothing down.
@@ -141,6 +152,7 @@ impl Engine {
             notif_rx: ctx.notif_rx.clone(),
             res_rx,
             status_rx: ctx.status_rx.clone(),
+            waiting_tasks: WaitTable::new(),
             exit_flag: false,
             pause_flag: false,
         };
@@ -220,15 +232,19 @@ impl Engine {
         }
     }
 
-    /// Checks for and forwards Thryve's own status lines.
+    /// Checks for Thryve's own messages: status lines and releases.
     ///
-    /// Takes up to 500 lines from the status channel, stopping early once it's empty, and
-    /// forwards each to the observer manager, which routes it to the logger. Lines past the 500
-    /// wait for the next turn.
+    /// Takes up to 500 messages from the status channel, stopping early once it's empty. A
+    /// status line goes to the observer manager, which routes it to the logger. A release means
+    /// a typed task's handle was dropped without a follow-up: if the task's result was kept,
+    /// nobody will take it now, so its error is written to `Error.log`; if the result hasn't
+    /// arrived yet, the release is remembered until it does. If the task forwarded, the release
+    /// follows the links and applies to the task at their end. Messages past the 500 wait for the
+    /// next turn.
     ///
     /// # Returns
     ///
-    /// `true` if any status lines were received.
+    /// `true` if any messages were received.
     pub fn check_status(&mut self) -> bool {
         let mut received_status = false;
         let number_to_process_per_turn = 500;
@@ -236,7 +252,15 @@ impl Engine {
         for _ in 0..number_to_process_per_turn {
             if let Ok(status) = self.status_rx.try_recv() {
                 received_status = true;
-                self.obs_manager.forward_notif(status);
+
+                match status {
+                    StatusMsg::LogLine(notif) => {
+                        self.obs_manager.forward_notif(notif);
+                    }
+                    StatusMsg::HandleRelease(wait_id) => {
+                        self.release(wait_id);
+                    }
+                }
             } else {
                 break;
             }
@@ -272,6 +296,12 @@ impl Engine {
     /// Takes in one task: in debug mode it records the task's metrics and its node in the
     /// topology graph, then it queues the task for the workers.
     ///
+    /// A follow-up declared with `then` is queued only once it has the result of the task it
+    /// follows. If that result was kept (the task finished first), it gets it now and is queued
+    /// at once. Otherwise it waits in `waiting_tasks`, and
+    /// [`handle_result`](Self::handle_result) queues it when the result arrives. If the task
+    /// forwarded, the follow-up follows the links and waits for the task at their end instead.
+    ///
     /// Every task the engine starts goes through here: the ones sent on the task channel, the
     /// follow-up tasks chained to results, and the plugins' init tasks, which startup hands over
     /// directly.
@@ -288,6 +318,11 @@ impl Engine {
             if self.config.debugging.visual_graph {
                 self.handle_graph_visualization(&task);
             }
+        }
+
+        if let Some(id) = task.waiting_on_id() {
+            self.attach(task, id);
+            return;
         }
 
         self.plugin_manager.threadpool.submit_task(task);
@@ -442,7 +477,9 @@ impl Engine {
     ///    worker can be blocked on a full one. Notifications are forwarded to the observers,
     ///    which still run; tasks, results and status lines are collected. Then it joins the
     ///    workers. A worker still running at the deadline is left behind, and `Error.log` names
-    ///    it and its task;
+    ///    it and its task. Then the wait table is emptied, since results are only collected now:
+    ///    a follow-up still waiting never gets its input and never runs, and a result kept for a
+    ///    handle that still exists is counted with the late results;
     /// 4. cleans up the plugins on a thread of its own, emptying the mailboxes the same way while
     ///    it runs, until the same deadline. A failed cleanup goes to `Error.log`. The cleanups are
     ///    skipped, and `Error.log` says so, if a worker was left behind (its plugin may still be
@@ -536,6 +573,23 @@ impl Engine {
         let workers = std::mem::take(&mut self.plugin_manager.threadpool.workers);
         let did_handle_logic_succeed =
             self.finalize_handle_logic(&mut fc, workers, Some(grace_period_deadline), None);
+
+        // Results are only collected from here on, so a follow-up still waiting never gets its
+        // input and never runs, and nobody will take a result kept for a live handle any more.
+        // That result joins the late ones: an error counts as lost work, and a value doesn't.
+        // A remembered release has nothing left to wait for, and a link has nothing to report:
+        // the task at its end reports its own result.
+        for (wait_id, wait_state) in self.waiting_tasks.table.drain() {
+            match wait_state {
+                WaitingState::FollowUP(task) => {
+                    fc.tasks.push(task);
+                }
+                WaitingState::HandoffKept(handoff) => {
+                    fc.results.push((wait_id, TaskResult::new_handoff(handoff)));
+                }
+                _ => (),
+            }
+        }
 
         // The plugins' cleanups run on a thread of their own, for the same reason: a `clean_up`
         // may send to a full mailbox. They're skipped, with a line saying why, if a worker was
@@ -641,6 +695,7 @@ impl Engine {
                 && !handle.is_finished()
             {
                 let res = handle.join();
+
                 if res.is_err() {
                     continue;
                 }
@@ -710,7 +765,16 @@ impl Engine {
     /// Handles a task execution result.
     ///
     /// Processes the result of a task execution, which may include:
-    /// - Submitting follow-up tasks
+    /// - Handing an `AdvTask`'s handoff to the follow-up waiting for it, which is then queued.
+    ///   A follow-up that inherited its priority gets it capped below realtime here, since only
+    ///   the engine knows `max_priority`. With no follow-up waiting, the handoff is kept while
+    ///   the task's handle exists, for a `then` that may still come. If the handle is already
+    ///   gone, an error is written to `Error.log` and a value is dropped. The handoff is taken
+    ///   out first, before anything else, and the engine never opens it
+    /// - Following a forward: the task's outcome becomes the forwarded-to task's. A follow-up
+    ///   already waiting moves on to that task, and a remembered release applies to it; with
+    ///   neither, a link is stored for the follow-up or release still to come
+    /// - Submitting the task chained to the result
     /// - Logging completion messages
     /// - Triggering shutdown on "Fin" or "FinErr" results
     ///
@@ -718,7 +782,42 @@ impl Engine {
     ///
     /// * `task_result` - Tuple of task ID and result
     pub fn handle_result(&mut self, task_result: (u64, TaskResult)) {
-        let mut result = task_result.1;
+        let (id, mut result) = task_result;
+
+        if let Some(sealed_handoff) = result.take_handoff() {
+            let wait_state = self.waiting_tasks.get_as_ref(id);
+
+            if wait_state.is_none() {
+                if sealed_handoff.is_finish() {
+                    self.waiting_tasks.insert_handoff(id, sealed_handoff);
+                } else {
+                    if let Some(next_id) = sealed_handoff.read_forward_id() {
+                        self.waiting_tasks.insert_link(id, next_id);
+                    }
+                }
+            } else if wait_state.is_released() {
+                if sealed_handoff.is_finish() {
+                    // The handle is already gone, so nobody can follow up on it.
+                    drop(self.waiting_tasks.remove(id));
+                    self.drop_unclaimed_handoff(sealed_handoff);
+                } else {
+                    self.waiting_tasks.remove(id);
+
+                    if let Some(current_id) = sealed_handoff.read_forward_id() {
+                        self.release(current_id);
+                    }
+                }
+            } else if wait_state.is_follow_up() {
+                if let Some(next_id) = sealed_handoff.read_forward_id()
+                    && let Some(task) = self.waiting_tasks.take_task(id)
+                {
+                    self.attach(task, next_id);
+                } else if let Some(task) = self.waiting_tasks.take_task(id) {
+                    let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
+                    self.plugin_manager.threadpool.submit_task(task);
+                }
+            }
+        }
 
         if let Some(next_task) = result.next_task.take() {
             self.accept_task(next_task);
@@ -766,6 +865,66 @@ impl Engine {
         if (result_type == "Fin" || result_type == "FinErr") && !self.exit_flag {
             // Not the service's Stop, so the summary of lost work, if any, goes to `Error.log`.
             self.finalize(false);
+        }
+    }
+
+    /// Lets go of a handoff that nobody will take: no follow-up was declared, and the task's
+    /// handle is gone. An error is written to `Error.log`, with the text the worker wrote while
+    /// the error's type was still known; a value is just dropped. The engine never opens it.
+    ///
+    /// Only a finished task's handoff gets here: the engine follows a forward instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `handoff` - The handoff nobody will take
+    fn drop_unclaimed_handoff(&mut self, handoff: SealedHandoff) {
+        if let SealedHandoff::Finished {
+            error_text: Some(error_text),
+            ..
+        } = handoff
+        {
+            self.obs_manager.forward_notif(Log::err(error_text));
+        }
+    }
+
+    /// Attaches a follow-up to the task it follows, through that task's forwards: if the task
+    /// forwarded, the follow-up goes to the task forwarded to, and so on to the end of the links.
+    /// Each link passed is removed, since only one follow-up or release ever comes through it.
+    ///
+    /// At the end, if that task's result was kept, the follow-up gets it and is queued. If
+    /// nothing is there yet, the follow-up waits there for the result.
+    ///
+    /// # Arguments
+    ///
+    /// * `task` - The follow-up
+    /// * `list_starts_from_id` - The id of the task it follows
+    fn attach(&mut self, task: Task, list_starts_from_id: u64) {
+        let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
+
+        if let WaitingState::None = wait_state {
+            self.waiting_tasks.insert_follow_up(last_id, task);
+        } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
+            self.plugin_manager.threadpool.submit_task(task);
+        }
+    }
+
+    /// Releases a task whose handle is gone, through its forwards like
+    /// [`attach`](Self::attach): nobody will follow up on the task at the end of the links.
+    ///
+    /// If that task's result was kept, it's let go, and an error is written to `Error.log`. If
+    /// nothing is there yet, the release is remembered until the result arrives.
+    ///
+    /// # Arguments
+    ///
+    /// * `list_starts_from_id` - The id of the task released
+    fn release(&mut self, list_starts_from_id: u64) {
+        let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
+
+        if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            self.drop_unclaimed_handoff(sealed_handoff);
+        } else if wait_state.is_none() {
+            self.waiting_tasks.release(last_id);
         }
     }
 
@@ -925,6 +1084,7 @@ impl Engine {
     /// (`logger` is set), a log line goes straight into the logger's queue, and any other
     /// notification goes into `notifs`: its observer is stopped or stopping, and the engine no
     /// longer holds it. Status lines are collected for the logger, which writes them at the end.
+    /// Releases are dropped: the wait table they're for is emptied once the workers have stopped.
     ///
     /// What arrives while it reads waits for the next call. Reading until the mailboxes are
     /// empty could go on forever while threads keep sending, and the callers check their
@@ -977,24 +1137,39 @@ impl Engine {
         }
 
         for status in self.status_rx.try_iter().take(status_count) {
-            status_reps.push(status);
+            if let StatusMsg::LogLine(notif) = status {
+                status_reps.push(notif);
+            }
+
             received = true;
         }
 
         received
+    }
+
+    /// How many entries the wait table holds: follow-ups waiting, handoffs kept, releases
+    /// remembered and forward links. Each entry goes once both sides have spoken (a link once a
+    /// follow-up or a release has followed it), so this is zero once every task has finished and
+    /// every handle has been used or dropped.
+    ///
+    /// For Thryve's tests. Not part of the public API.
+    #[doc(hidden)]
+    pub fn wait_table_len(&self) -> usize {
+        self.waiting_tasks.table.len()
     }
 }
 
 /// What [`Engine::finalize`] collects on its way, in one place, so the engine's helpers can take
 /// it as a whole.
 struct FinalizeCollection {
-    /// Tasks that never ran: still queued when the workers were stopped, or sent during the
-    /// shutdown.
+    /// Tasks that never ran: still queued when the workers were stopped, follow-ups still waiting
+    /// for a result, or sent during the shutdown.
     tasks: Vec<Task>,
     /// Notifications that were never delivered: left in the sorter's queue, or sent after the
     /// sorter had stopped to an observer other than the logger.
     notifs: Vec<Notif>,
-    /// Results that arrived during the shutdown; nothing handles them any more.
+    /// Results that arrived during the shutdown, and those kept for a task handle that still
+    /// existed; nothing handles them any more.
     results: Vec<(u64, TaskResult)>,
     /// Thryve's own status lines, which the logger writes at the very end, in order.
     status_reps: Vec<Notif>,
@@ -1019,10 +1194,11 @@ impl FinalizeCollection {
     /// logger.
     ///
     /// Counted as lost: the tasks that never ran, the results that carried something (a message,
-    /// a follow-up task, a plugin or an observer to load; an empty one isn't lost work), the
-    /// notifications that were never delivered, and the threads left running at a deadline. One
-    /// line gives the total and each count. It goes to `Main.log` after the service's Stop, and
-    /// to `Error.log` after any other shutdown. If nothing was lost, there's no line at all.
+    /// a follow-up task, or an `AdvTask`'s error that would have been logged; an empty one isn't
+    /// lost work), the notifications that were never delivered, and the threads left running at a
+    /// deadline. One line gives the total and each count. It goes to `Main.log` after the
+    /// service's Stop, and to `Error.log` after any other shutdown. If nothing was lost, there's no
+    /// line at all.
     ///
     /// With debugging on, `Debug.log` also gets the details, one entry per line: for each kind,
     /// its count, then each group (tasks by name, notifications by receiver, results by type)
@@ -1068,8 +1244,7 @@ impl FinalizeCollection {
             if let Some((_, result)) = self.results.pop()
                 && (result.next_task.is_some()
                     || !result.message.is_empty()
-                    || result.observer.is_some()
-                    || result.plugin.is_some())
+                    || result.handoff_error_text().is_some())
             {
                 result_map
                     .entry(result.result_type().to_string())

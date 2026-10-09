@@ -32,7 +32,6 @@ mod tests_plugin_pipeline {
     use thryve_run::run::run_interactive::{run_interactive, summon_requirements};
     use thryve_utils::bases::plugin::Plugin;
     use thryve_utils::cfg::config::Config;
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::impl_as_any;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
@@ -63,7 +62,7 @@ mod tests_plugin_pipeline {
             });
             let core_clone = Arc::clone(&core);
             let tx_clone = tx.clone();
-            let entry = TaskJob::new(move || core_clone.load_images(tx_clone));
+            let entry = move || core_clone.load_images(tx_clone);
 
             Plugin::new("Test", core, tx, entry).unwrap()
         }
@@ -86,7 +85,7 @@ mod tests_plugin_pipeline {
             for path in entries {
                 let output_dir = output_dir.clone();
                 let remaining = Arc::clone(&remaining);
-                let job = TaskJob::new(move || compress_one(&path, &output_dir, &remaining));
+                let job = move || compress_one(&path, &output_dir, &remaining);
                 tx.send_task(Task::new("CompressImage", 1, job).unwrap())
                     .unwrap();
             }

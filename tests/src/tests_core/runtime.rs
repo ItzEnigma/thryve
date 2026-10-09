@@ -16,7 +16,7 @@ mod tests_engine {
     use thryve_utils::bases::observer::Observer;
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::ctx::Ctx;
-    use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+    use thryve_utils::extras::jobs::ObsJob;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
@@ -299,11 +299,9 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Create a next task
-        let next_task = Task::new(
-            "nextTask",
-            5,
-            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
-        )
+        let next_task = Task::new("nextTask", 5, || {
+            TaskResult::new("Test", "testinggg".to_string(), "Main")
+        })
         .unwrap();
         let result_with_next =
             TaskResult::new("normal", "Done".to_string(), "Main").chain(next_task);
@@ -328,11 +326,9 @@ mod tests_engine {
         let mut engine = Engine::new(&ctx);
 
         // Send a task
-        let task = Task::new(
-            "testTask",
-            5,
-            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
-        )
+        let task = Task::new("testTask", 5, || {
+            TaskResult::new("Test", "testinggg".to_string(), "Main")
+        })
         .unwrap();
         task_tx.send(task).unwrap();
 
@@ -390,11 +386,9 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Send a task and notification
-        let task = Task::new(
-            "testTask",
-            5,
-            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
-        )
+        let task = Task::new("testTask", 5, || {
+            TaskResult::new("Test", "testinggg".to_string(), "Main")
+        })
         .unwrap();
         task_tx.send(task).unwrap();
         let notif = Log::log("test".to_string(), "Main");
@@ -418,11 +412,9 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new(
-            "TestTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let expected_size = task.size_in_bytes();
 
@@ -439,17 +431,13 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task1 = Task::new(
-            "Task1",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task1 = Task::new("Task1", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
-        let task2 = Task::new(
-            "Task2",
-            2,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task2 = Task::new("Task2", 2, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -467,11 +455,9 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new(
-            "TestTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -588,11 +574,9 @@ mod tests_engine {
         // Arrange
         let ctx = create_test_ctx();
         let mut engine = Engine::new(&ctx);
-        let task = Task::new(
-            "TestTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let result = TaskResult::new("Success", "Done".to_string(), "Main");
         let notif = Log::log("Test notification".to_string(), "Main");
@@ -630,11 +614,9 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Create a task without a callsite
-        let task = Task::new(
-            "TestTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - should not panic, should do nothing
@@ -674,11 +656,9 @@ mod tests_engine {
             42,
             "TestTask".to_string(),
         );
-        let mut task = Task::new(
-            "TestTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("TestTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         task.callsite = Some(callsite);
 
@@ -722,11 +702,9 @@ mod tests_engine {
         );
         callsite.current_executing_task_fingerprint = "parent_fingerprint_123".to_string();
 
-        let mut task = Task::new(
-            "ChildTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("ChildTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         task.callsite = Some(callsite);
 
@@ -768,11 +746,9 @@ mod tests_engine {
             100,
             "我的任务".to_string(),
         );
-        let mut task = Task::new(
-            "我的任务",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("我的任务", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         task.callsite = Some(callsite);
 
@@ -816,11 +792,9 @@ mod tests_engine {
         callsite.this_callsite_fingerprint = String::new();
         callsite.current_executing_task_fingerprint = String::new();
 
-        let mut task = Task::new(
-            "Test",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("Test", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         task.callsite = Some(callsite);
 
@@ -874,11 +848,9 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Send a task
-        let task = Task::new(
-            "testTask",
-            5,
-            TaskJob::new(|| TaskResult::new("Test", "testinggg".to_string(), "Main")),
-        )
+        let task = Task::new("testTask", 5, || {
+            TaskResult::new("Test", "testinggg".to_string(), "Main")
+        })
         .unwrap();
         ctx.packet_handle().send_task(task).unwrap();
         ctx.task_rx.try_recv().ok(); // ensure channel exists
@@ -909,11 +881,9 @@ mod tests_engine {
 
         // Fill the batch (batch size is 1024 for tasks)
         for i in 0..1024 {
-            let task = Task::new(
-                &format!("Task{}", i),
-                1,
-                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            )
+            let task = Task::new(&format!("Task{}", i), 1, || {
+                TaskResult::new("Ok", "Done".to_string(), "Main")
+            })
             .unwrap();
             engine.manage_metrics_tasks(&task);
         }
@@ -1126,11 +1096,9 @@ mod tests_engine {
             .expect("load_observer failed");
 
         // Create a result with a chained task
-        let next_task = Task::new(
-            "FollowUp",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("FollowUp", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let result = TaskResult::new("Success", "Test".to_string(), "Main").chain(next_task);
 
@@ -1236,7 +1204,7 @@ mod tests_observer_manager_init {
     use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::extras::jobs::ObsJob;
     use thryve_utils::packets::notif_log::Log;
-    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::packet_handle::{PacketHandle, StatusMsg};
     use thryve_utils::packets::task::Task;
     use thryve_utils::traits::observer_logic::ObsLogic;
     use thryve_utils::traits::queue::Queue;
@@ -1527,7 +1495,12 @@ mod tests_observer_manager_init {
         let lines: Vec<String> = ctx
             .status_rx
             .try_iter()
-            .map(|line| message(&line))
+            .map(|status| match status {
+                StatusMsg::LogLine(line) => message(&line),
+                StatusMsg::HandleRelease(id) => {
+                    panic!("expected a status line, got a release of {id}")
+                }
+            })
             .collect();
         assert_eq!(
             lines,
@@ -1994,9 +1967,8 @@ mod tests_plugin_manager {
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::ctx::Ctx;
     use thryve_utils::errors::{FinalizationError, ThryveError};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::notif_log::Log;
-    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::packet_handle::{PacketHandle, StatusMsg};
     use thryve_utils::packets::task::Task;
     use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::PlgLogic;
@@ -2068,8 +2040,7 @@ mod tests_plugin_manager {
         let mut manager = PluginManager::new(&ctx, res_tx);
 
         let plg_core = Arc::new(TestPlgLogic);
-        let job: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
         let plugin = Plugin::new("testType", plg_core, ctx.packet_handle(), job).unwrap();
 
         // Act
@@ -2092,14 +2063,12 @@ mod tests_plugin_manager {
 
         // Load first plugin
         let plg_core1 = Arc::new(TestPlgLogic);
-        let job1: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job1 = || TaskResult::new("OK", "success".to_string(), "Main");
         let plugin1 = Plugin::new("type1", plg_core1, ctx.packet_handle().clone(), job1).unwrap();
 
         // Load second plugin
         let plg_core2 = Arc::new(TestPlgLogic);
-        let job2: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job2 = || TaskResult::new("OK", "success".to_string(), "Main");
         let plugin2 = Plugin::new("type2", plg_core2, ctx.packet_handle().clone(), job2).unwrap();
 
         // Act
@@ -2124,8 +2093,7 @@ mod tests_plugin_manager {
 
         // Add a plugin
         let plg_core = Arc::new(TestPlgLogic);
-        let job: thryve_utils::extras::jobs::TaskJob =
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
         let plugin = Plugin::new("testType", plg_core, ctx.packet_handle(), job).unwrap();
         manager
             .load_plugin(&ctx.config, plugin, false)
@@ -2177,7 +2145,7 @@ mod tests_plugin_manager {
             cleaned_up: cleaned_up.clone(),
             fails,
         });
-        let job = TaskJob::new(|| TaskResult::new("", String::new(), ""));
+        let job = || TaskResult::new("", String::new(), "");
         let plugin = Plugin::new(plugin_type, core, ctx.packet_handle(), job).unwrap();
         manager
             .load_plugin(&ctx.config, plugin, false)
@@ -2223,7 +2191,16 @@ mod tests_plugin_manager {
         assert!(failing.load(Ordering::SeqCst));
         assert_eq!(messages(&status_reps), ["ThreadPool Finalized"]);
 
-        let sent: Vec<Notif> = ctx.status_rx.try_iter().collect();
+        let sent: Vec<Notif> = ctx
+            .status_rx
+            .try_iter()
+            .map(|status| match status {
+                StatusMsg::LogLine(line) => line,
+                StatusMsg::HandleRelease(id) => {
+                    panic!("expected a status line, got a release of {id}")
+                }
+            })
+            .collect();
         let sent = messages(&sent);
         assert!(
             sent.iter()

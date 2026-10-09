@@ -292,7 +292,7 @@ impl<'a> Thryve<'a> {
                                 .unwrap_or_else(PoisonError::into_inner) = Some(handle);
                         }
                     } else {
-                        packet_handle.send_status(Log::err(
+                        packet_handle.send_status_log(Log::err(
                             "service 'start' called multiple times".to_string(),
                         ));
                     }
@@ -311,7 +311,7 @@ impl<'a> Thryve<'a> {
                         if let Err(e) = handle.join() {
                             // Thread join error indicates the engine thread panicked
                             // This is a critical failure that requires immediate attention
-                            packet_handle.send_status(Log::err(format!(
+                            packet_handle.send_status_log(Log::err(format!(
                                 "Engine thread join error (thread panicked): {:?}",
                                 e
                             )));

@@ -49,6 +49,7 @@ pub mod utils {
         pub use thryve_utils::errors::NamingError;
         pub use thryve_utils::errors::RuleError;
         pub use thryve_utils::errors::StartupError;
+        pub use thryve_utils::errors::TaskError;
         pub use thryve_utils::errors::ThryveError;
         pub use thryve_utils::errors::get_err;
         pub use thryve_utils::errors::get_err_oneline;

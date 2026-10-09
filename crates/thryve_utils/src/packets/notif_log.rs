@@ -88,6 +88,7 @@ impl Log {
     ///
     /// let notif = Log::log("Processing complete".to_string(), "Main");
     /// ```
+    #[must_use]
     pub fn log(message: String, logfile: &str) -> Notif {
         let temp = Box::new(Log {
             message,
@@ -123,6 +124,7 @@ impl Log {
     ///
     /// let error_notif = Log::err("Connection failed".to_string());
     /// ```
+    #[must_use]
     pub fn err(message: String) -> Notif {
         let temp = Box::new(Log {
             message,

@@ -33,7 +33,6 @@ use thryve_run::run::run_interactive::summon_requirements;
 use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::cfg::config::Config;
 use thryve_utils::errors::{ConfigError, RuleError, ThryveError, get_err};
-use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::packets::notif_log::Log;
 use thryve_utils::packets::task::Task;
 use thryve_utils::res::TaskResult;
@@ -66,7 +65,7 @@ fn turns_in(engine: &mut Engine, length: Duration) -> usize {
 /// A task that counts itself in `ran` and chains the next link until `remaining` reaches 0; the
 /// last one returns `Fin`.
 fn link(remaining: usize, ran: Arc<AtomicUsize>) -> Task {
-    let job = TaskJob::new(move || {
+    let job = move || {
         ran.fetch_add(1, Ordering::SeqCst);
 
         if remaining == 0 {
@@ -74,7 +73,7 @@ fn link(remaining: usize, ran: Arc<AtomicUsize>) -> Task {
         } else {
             TaskResult::new("Next", String::new(), "Main").chain(link(remaining - 1, ran))
         }
-    });
+    };
 
     Task::new("Link", 0, job).unwrap()
 }
@@ -89,9 +88,7 @@ mod wake_up {
         let mut ctx = summon_requirements(Config::default());
         let ran = Arc::new(AtomicUsize::new(0));
         let chain = ran.clone();
-        let first = TaskJob::new(move || {
-            TaskResult::new("Next", String::new(), "Main").chain(link(999, chain))
-        });
+        let first = move || TaskResult::new("Next", String::new(), "Main").chain(link(999, chain));
         let plugin = Plugin::new("Chain", Arc::new(QuietPlugin), ctx.packet_handle(), first);
         ctx.plugins.push(plugin.unwrap());
 
@@ -156,7 +153,7 @@ mod bounded_turns {
         }
         // Status lines have a fixed limit of 500.
         for i in 0..501 {
-            packet_handle.send_status(Log::log(format!("status {i}"), "Main"));
+            packet_handle.send_status_log(Log::log(format!("status {i}"), "Main"));
         }
 
         assert!(engine.check_tasks(), "the first turn found no task");

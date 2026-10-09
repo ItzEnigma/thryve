@@ -107,7 +107,7 @@ pub struct ThreadPool<Q, P> {
     /// Handle for sending tasks and notifications.
     pub packet_handle: PacketHandle,
     /// Phantom data for the packet type.
-    _marker: PhantomData<P>,
+    _marker: PhantomData<fn() -> P>,
 }
 
 impl<Q, P: Packet> ThreadPool<Q, P>
@@ -240,7 +240,7 @@ where
                                 if let Err(e) = res_tx.send(res_container) {
                                     let notif =
                                         Log::log(format!("Failed to send result: {}", e), "Error");
-                                    tx.send_status(notif);
+                                    tx.send_status_log(notif);
                                 }
                             }
                         } else {
@@ -251,7 +251,7 @@ where
                     // The engine reads the status mailbox until the worker has finished, and once
                     // more after joining it, so this line isn't lost.
                     let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                    tx.send_status(notif);
+                    tx.send_status_log(notif);
                 })
                 .map_err(|e| StartupError::ThreadInit {
                     thread_name,

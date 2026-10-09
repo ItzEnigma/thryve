@@ -213,39 +213,14 @@ mod tests_extras {
             }
         }
 
-        // Tests for jobs module - type aliases don't need extensive testing
-        // but we can verify they compile and work correctly
+        // Tests for the jobs module. `TaskJob` is internal to `thryve_utils` (tasks take a plain
+        // closure), so only `ObsJob` is tested here.
         mod jobs_tests {
 
-            use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+            use thryve_utils::extras::jobs::ObsJob;
 
             use super::*;
             use std::sync::Arc;
-
-            #[test]
-            fn test_task_job_type_alias_compiles() {
-                // Arrange & Act - just verify the type alias works
-                let _job = TaskJob::new(|| {
-                    thryve_utils::res::TaskResult::new("Test", "Test message".to_string(), "Main")
-                });
-
-                // Assert - if we got here, the type alias is valid
-            }
-
-            #[test]
-            fn test_task_job_execution() {
-                // Arrange
-                let job = TaskJob::new(|| {
-                    thryve_utils::res::TaskResult::new("Success", "Completed".to_string(), "Main")
-                });
-
-                // Act
-                let result = job.call_once();
-
-                // Assert
-                assert_eq!(result.result_type(), "Success");
-                assert_eq!(result.message, "Completed");
-            }
 
             #[test]
             fn test_obs_job_type_alias_compiles() {
@@ -257,23 +232,6 @@ mod tests_extras {
                 );
 
                 // Assert - if we got here, the type alias is valid
-            }
-
-            #[test]
-            fn test_task_job_from_boxed_fnonce() {
-                // Arrange
-                let boxed: Box<dyn FnOnce() -> thryve_utils::res::TaskResult + Send + Sync> =
-                    Box::new(|| {
-                        thryve_utils::res::TaskResult::new("FromBoxed", "Done".to_string(), "Main")
-                    });
-
-                // Act
-                let job: TaskJob = TaskJob::from(boxed);
-                let result = job.call_once();
-
-                // Assert
-                assert_eq!(result.result_type(), "FromBoxed");
-                assert_eq!(result.message, "Done");
             }
 
             #[test]
@@ -634,7 +592,6 @@ mod tests_extras {
 }
 
 mod tests_res {
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::task::*;
     use thryve_utils::res::TaskResult;
     use thryve_utils::traits::packets::Packet;
@@ -647,15 +604,14 @@ mod tests_res {
         let log_file = "Main";
 
         // Act
-        let result = TaskResult::new(result_type, message, log_file);
+        let mut result = TaskResult::new(result_type, message, log_file);
 
         // Assert
         assert_eq!(result.result_type(), "Success");
         assert_eq!(result.message, "Task completed successfully");
         assert_eq!(result.log_msg_to_file(), "Main");
         assert!(result.next_task.is_none());
-        assert!(result.observer.is_none());
-        assert!(result.plugin.is_none());
+        assert!(result.take_handoff().is_none());
     }
 
     #[test]
@@ -685,11 +641,9 @@ mod tests_res {
     #[test]
     fn test_result_chaining_with_task() {
         // Arrange
-        let next_task = Task::new(
-            "FollowUpTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("FollowUpTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -700,8 +654,6 @@ mod tests_res {
         assert_eq!(result.result_type(), "Chained");
         assert_eq!(result.message, "Continuing to next task");
         assert!(result.next_task.is_some());
-        assert!(result.observer.is_none());
-        assert!(result.plugin.is_none());
 
         // Verify the task details
         if let Some(task) = result.next_task {
@@ -721,8 +673,7 @@ mod tests_res {
         // Assert
         assert_eq!(
             display_str,
-            "result type: Test, message: Display message, next task: None, observer: None, \
-             plugin: None"
+            "result type: Test, message: Display message, next task: None, handoff: None"
         );
     }
 
@@ -737,18 +688,16 @@ mod tests_res {
         // Assert
         assert_eq!(
             display_str,
-            "result type: Test, message: , next task: None, observer: None, plugin: None"
+            "result type: Test, message: , next task: None, handoff: None"
         );
     }
 
     #[test]
     fn test_result_display_names_the_next_task() {
         // Arrange
-        let next_task = Task::new(
-            "FollowUp",
-            1,
-            TaskJob::new(|| TaskResult::new("Done", String::new(), "Main")),
-        )
+        let next_task = Task::new("FollowUp", 1, || {
+            TaskResult::new("Done", String::new(), "Main")
+        })
         .unwrap();
         let result = TaskResult::new("Step", "chained".to_string(), "Main").chain(next_task);
 
@@ -758,8 +707,7 @@ mod tests_res {
         // Assert
         assert_eq!(
             display_str,
-            "result type: Step, message: chained, next task: FollowUp, observer: None, \
-             plugin: None"
+            "result type: Step, message: chained, next task: FollowUp, handoff: None"
         );
     }
 
@@ -767,22 +715,14 @@ mod tests_res {
     fn test_result_chaining_pattern() {
         // Arrange & Act - Simulate a task chain
         let task1_result = TaskResult::new("Step1", "First step done".to_string(), "Main").chain(
-            Task::new(
-                "Step2",
-                2,
-                TaskJob::new(|| {
-                    TaskResult::new("Step2", "Second step done".to_string(), "Main").chain(
-                        Task::new(
-                            "Step3",
-                            3,
-                            TaskJob::new(|| {
-                                TaskResult::new("Final", "All done".to_string(), "Main")
-                            }),
-                        )
-                        .unwrap(),
-                    )
-                }),
-            )
+            Task::new("Step2", 2, || {
+                TaskResult::new("Step2", "Second step done".to_string(), "Main").chain(
+                    Task::new("Step3", 3, || {
+                        TaskResult::new("Final", "All done".to_string(), "Main")
+                    })
+                    .unwrap(),
+                )
+            })
             .unwrap(),
         );
 
@@ -887,11 +827,9 @@ mod tests_res {
     #[test]
     fn test_size_in_bytes_with_chained_result() {
         // Arrange
-        let next_task = Task::new(
-            "NextTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("NextTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let result =
             TaskResult::new("Chained", "Chained message".to_string(), "Main").chain(next_task);
@@ -908,26 +846,24 @@ mod tests_res {
     #[test]
     fn test_result_fin_returns_finishing_result() {
         // Arrange & Act
-        let result = TaskResult::fin();
+        let mut result = TaskResult::fin();
 
         // Assert
         assert_eq!(result.result_type(), "Fin");
         assert_eq!(result.message, "finishing capture: starting exit now.");
         assert_eq!(result.log_msg_to_file(), "Main");
         assert!(result.next_task.is_none());
-        assert!(result.observer.is_none());
-        assert!(result.plugin.is_none());
+        assert!(result.take_handoff().is_none());
     }
 
     #[test]
     fn test_result_fin_default_fields() {
         // Arrange & Act
-        let result = TaskResult::fin();
+        let mut result = TaskResult::fin();
 
         // Assert - all optional fields should be None
         assert!(result.next_task.is_none());
-        assert!(result.observer.is_none());
-        assert!(result.plugin.is_none());
+        assert!(result.take_handoff().is_none());
     }
 
     #[test]
@@ -957,11 +893,9 @@ mod tests_res {
             "parent_task_fp".to_string(),
         );
 
-        let next_task = Task::new(
-            "ChainedTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("ChainedTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - chain should set up callsite when thread-local fingerprint is set
@@ -988,7 +922,7 @@ mod tests_res {
     #[test]
     fn test_result_chain_records_the_exact_call_line() {
         thryve_utils::extras::thread_local::tl_set_current_task_fingerprint("parent".to_string());
-        let next_task = Task::new("Next", 1, TaskJob::new(TaskResult::default)).unwrap();
+        let next_task = Task::new("Next", 1, TaskResult::default).unwrap();
 
         let result = TaskResult::default().chain(next_task);
         let chained_at = line!() - 1;
@@ -1010,11 +944,9 @@ mod tests_res {
                 fingerprint.to_string(),
             );
 
-            let next_task = Task::new(
-                "ChainedTask",
-                1,
-                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            )
+            let next_task = Task::new("ChainedTask", 1, || {
+                TaskResult::new("Ok", "Done".to_string(), "Main")
+            })
             .unwrap();
 
             // Act
@@ -1038,11 +970,9 @@ mod tests_res {
         // Arrange - ensure thread-local fingerprint is empty
         thryve_utils::extras::thread_local::tl_set_current_task_fingerprint(String::new());
 
-        let next_task = Task::new(
-            "ChainedTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("ChainedTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - chain should not set up callsite when thread-local fingerprint is empty
@@ -1058,11 +988,9 @@ mod tests_res {
     #[test]
     fn test_result_chain_with_unicode_message() {
         // Arrange
-        let next_task = Task::new(
-            "UnicodeTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("UnicodeTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - chain with unicode message
@@ -1078,11 +1006,9 @@ mod tests_res {
     fn test_result_chain_with_long_message() {
         // Arrange
         let long_message = "a".repeat(10000);
-        let next_task = Task::new(
-            "LongTask",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let next_task = Task::new("LongTask", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - chain with long message

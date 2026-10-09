@@ -351,7 +351,7 @@ impl PluginManager {
 
                     if let Err(e) = plugin.clean_up() {
                         let e_message = get_err(&e);
-                        tx.send_status(Log::err(e_message));
+                        tx.send_status_log(Log::err(e_message));
                     }
 
                     let _ = worker_slot_clone.take();

@@ -33,8 +33,10 @@
 use std::sync::Arc;
 
 use crate::errors::{NameInputType, NamingError, ThryveError};
-use crate::extras::{jobs::TaskJob, named_input::NamedInput};
+use crate::extras::jobs::TaskJob;
+use crate::extras::named_input::NamedInput;
 use crate::packets::packet_handle::PacketHandle;
+use crate::res::TaskResult;
 use crate::traits::plugin_logic::{PlgLogic, PluginB};
 
 /// Core plugin structure for the Thryve plugin system.
@@ -60,7 +62,6 @@ use crate::traits::plugin_logic::{PlgLogic, PluginB};
 /// use std::sync::Arc;
 /// use thryve_utils::bases::plugin::Plugin;
 /// use thryve_utils::errors::ThryveError;
-/// use thryve_utils::extras::jobs::TaskJob;
 /// use thryve_utils::impl_as_any;
 /// use thryve_utils::packets::packet_handle::PacketHandle;
 /// use thryve_utils::res::TaskResult;
@@ -80,7 +81,7 @@ use crate::traits::plugin_logic::{PlgLogic, PluginB};
 /// # let (task_tx, _) = crossbeam::channel::bounded(1);
 /// # let (notif_tx, _) = crossbeam::channel::bounded(1);
 /// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
-/// let init = TaskJob::new(|| TaskResult::new("Ready", "hasher loaded".to_string(), "Main"));
+/// let init = || TaskResult::new("Ready", "hasher loaded".to_string(), "Main");
 /// let plugin = Plugin::new("Hasher", Arc::new(Hasher), handle, init)?;
 /// # Ok::<(), thryve_utils::errors::NamingError>(())
 /// ```
@@ -92,7 +93,7 @@ pub struct Plugin {
     /// Packet handle for communicating with the engine.
     pub tx: PacketHandle,
     /// Initialization function executed when the plugin loads.
-    plg_entry_point: TaskJob,
+    plg_entry_point: Box<dyn FnOnce() -> TaskResult + Send + 'static>,
 }
 
 impl PluginB for Plugin {
@@ -140,13 +141,13 @@ impl Plugin {
         plg_type: &str,
         plg_core: Arc<dyn PlgLogic>,
         tx: PacketHandle,
-        job: TaskJob,
+        job: impl FnOnce() -> TaskResult + Send + 'static,
     ) -> Result<Self, NamingError> {
         Ok(Self {
             plg_type: NamedInput::new(plg_type, NameInputType::PlgType)?,
             plg_core,
             tx,
-            plg_entry_point: job,
+            plg_entry_point: Box::new(job),
         })
     }
 
@@ -160,8 +161,11 @@ impl Plugin {
     ///
     /// The initialization function closure, or a default error function if
     /// called multiple times.
-    pub fn plg_entry_point(&mut self) -> TaskJob {
-        std::mem::take(&mut self.plg_entry_point)
+    pub fn plg_entry_point(&mut self) -> Box<dyn FnOnce() -> TaskResult + Send + 'static> {
+        std::mem::replace(
+            &mut self.plg_entry_point,
+            Box::new(|| TaskJob::default().call_once()),
+        )
     }
 
     /// Returns the plugin's type, which identifies it.

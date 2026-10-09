@@ -70,7 +70,7 @@ use thryve_utils::cfg::dir_data::DirData;
 use thryve_utils::cfg::meta_data::MetaData;
 use thryve_utils::errors::{FinalizationError, ThryveError, get_err};
 use thryve_utils::extras::dir_paths::DirName;
-use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::extras::named_input::LogFileNamedInput;
 use thryve_utils::impl_as_any;
 use thryve_utils::packets::notif_log::Log;
@@ -252,12 +252,17 @@ pub(crate) fn run_real_engine(
 }
 
 /// The text of one of the engine's log files.
-fn read_log(dir: &Path, file: &str) -> String {
+pub(crate) fn read_log(dir: &Path, file: &str) -> String {
     std::fs::read_to_string(dir.join(file)).unwrap()
 }
 
 /// The summary line a shutdown writes for these counts of lost work.
-fn summary_line(tasks: usize, notifs: usize, results: usize, still_running: usize) -> String {
+pub(crate) fn summary_line(
+    tasks: usize,
+    notifs: usize,
+    results: usize,
+    still_running: usize,
+) -> String {
     let total = tasks + notifs + results + still_running;
     format!(
         "thryve exited leaving {total} things not done: {tasks} lost tasks, {notifs} lost \
@@ -267,12 +272,7 @@ fn summary_line(tasks: usize, notifs: usize, results: usize, still_running: usiz
 
 /// A task with nothing to do.
 pub(crate) fn idle_task(name: &str) -> Task {
-    Task::new(
-        name,
-        0,
-        TaskJob::new(|| TaskResult::new("", String::new(), "")),
-    )
-    .unwrap()
+    Task::new(name, 0, || TaskResult::new("", String::new(), "")).unwrap()
 }
 
 /// A task that tells `ran` it has run, then returns a result of type `res_type` with `message`
@@ -284,10 +284,10 @@ fn reporting_task(
     ran: crossbeam::channel::Sender<()>,
 ) -> Task {
     let (res_type, message) = (res_type.to_string(), message.to_string());
-    let job = TaskJob::new(move || {
+    let job = move || {
         let _ = ran.send(());
         TaskResult::new(&res_type, message, "Main")
-    });
+    };
     Task::new(name, 0, job).unwrap()
 }
 
@@ -417,11 +417,11 @@ fn stuck_task(
 ) {
     let (started_tx, started_rx) = bounded(1);
     let (release_tx, release_rx) = bounded::<()>(1);
-    let job = TaskJob::new(move || {
+    let job = move || {
         let _ = started_tx.send(());
         let _ = release_rx.recv_timeout(Duration::from_secs(30));
         TaskResult::new("", String::new(), "")
-    });
+    };
     (Task::new(name, 0, job).unwrap(), started_rx, release_tx)
 }
 
@@ -438,7 +438,7 @@ fn load_plugin(
     plugin_type: &str,
     core: Arc<dyn PlgLogic>,
 ) {
-    let job = TaskJob::new(|| TaskResult::new("", String::new(), ""));
+    let job = || TaskResult::new("", String::new(), "");
     let plugin = Plugin::new(plugin_type, core, packet_handle.clone(), job).unwrap();
     let config = Config::default();
     let _init_task = engine
@@ -475,7 +475,7 @@ mod draining {
         // "Burst" sends 200 tasks through a mailbox that holds one, so each send waits for the
         // engine to read. "Finisher" returns `Fin` once the burst has started.
         let (burst_started_tx, burst_started_rx) = bounded(1);
-        let burst_job = TaskJob::new(move || {
+        let burst_job = move || {
             for i in 0..200 {
                 if packet_handle.send_task(idle_task("Child")).is_err() {
                     break;
@@ -485,11 +485,11 @@ mod draining {
                 }
             }
             TaskResult::new("", String::new(), "")
-        });
-        let finisher_job = TaskJob::new(move || {
+        };
+        let finisher_job = move || {
             let _ = burst_started_rx.recv_timeout(Duration::from_secs(5));
             TaskResult::fin()
-        });
+        };
         engine.accept_task(Task::new("Burst", 0, burst_job).unwrap());
         engine.accept_task(Task::new("Finisher", 0, finisher_job).unwrap());
 
@@ -518,10 +518,10 @@ mod draining {
         let (ran_tx, ran_rx) = bounded(2);
         for name in ["First", "Second"] {
             let ran_tx = ran_tx.clone();
-            let job = TaskJob::new(move || {
+            let job = move || {
                 let _ = ran_tx.send(());
                 TaskResult::new("Ok", format!("{name} done"), "Main")
-            });
+            };
             engine.accept_task(Task::new(name, 0, job).unwrap());
         }
         for _ in 0..2 {
@@ -1010,8 +1010,7 @@ mod lost_work {
             "notification type: Measurement, notification receiver: Metrics",
             "task results: 1 not done",
             "Report: 1",
-            "result type: Report, message: row 7 done, next task: None, observer: None, \
-             plugin: None",
+            "result type: Report, message: row 7 done, next task: None, handoff: None",
         ] {
             assert!(
                 debug.contains(expected),
@@ -1071,7 +1070,11 @@ mod real_startup {
     }
 
     /// A loaded plugin whose init task runs `job`.
-    fn plugin(ctx: &Ctx, plugin_type: &str, job: TaskJob) -> Plugin {
+    fn plugin(
+        ctx: &Ctx,
+        plugin_type: &str,
+        job: impl FnOnce() -> TaskResult + Send + Sync + 'static,
+    ) -> Plugin {
         Plugin::new(plugin_type, Arc::new(QuietPlugin), ctx.packet_handle(), job).unwrap()
     }
 
@@ -1089,33 +1092,33 @@ mod real_startup {
         for i in 0..5 {
             let packet_handle = ctx.packet_handle();
             let child_ran_tx = child_ran_tx.clone();
-            let job = TaskJob::new(move || {
+            let job = move || {
                 for line in 0..3 {
                     let text = format!("Busy{i} says {line}");
                     let _ = packet_handle.send_notification(Log::log(text, "Main"));
                 }
                 for _ in 0..2 {
                     let child_ran_tx = child_ran_tx.clone();
-                    let child = TaskJob::new(move || {
+                    let child = move || {
                         let _ = child_ran_tx.send(());
                         TaskResult::new("ChildDone", "child done".to_string(), "Main")
-                    });
+                    };
                     let _ = packet_handle.send_task(Task::new("Child", 0, child).unwrap());
                 }
                 TaskResult::new("", String::new(), "")
-            });
+            };
             ctx.plugins.push(plugin(&ctx, &format!("Busy{i}"), job));
         }
 
         // A sixth one ends the run once all ten tasks have run.
-        let stopper = TaskJob::new(move || {
+        let stopper = move || {
             for _ in 0..10 {
                 if child_ran_rx.recv_timeout(Duration::from_secs(5)).is_err() {
                     break;
                 }
             }
             TaskResult::fin()
-        });
+        };
         ctx.plugins.push(plugin(&ctx, "Stopper", stopper));
 
         // The loop pauses and resumes the engine a few times before it runs. Each of those used
@@ -1138,10 +1141,10 @@ mod real_startup {
     fn no_plugin_code_runs_before_the_engine_starts() {
         let mut ctx = summon_requirements(Config::default());
         let (ran_tx, ran_rx) = bounded::<()>(1);
-        let job = TaskJob::new(move || {
+        let job = move || {
             let _ = ran_tx.send(());
             TaskResult::fin()
-        });
+        };
         ctx.plugins.push(plugin(&ctx, "Early", job));
 
         let previous_hook = std::panic::take_hook();
@@ -1178,8 +1181,7 @@ mod real_startup {
     #[test]
     fn the_service_loop_ends_after_a_fin() {
         let mut ctx = summon_requirements(Config::default());
-        ctx.plugins
-            .push(plugin(&ctx, "Stopper", TaskJob::new(TaskResult::fin)));
+        ctx.plugins.push(plugin(&ctx, "Stopper", TaskResult::fin));
 
         // `Stop` never comes, so only the `Fin` can end the loop. The engine is finalized once,
         // by the `Fin`; the loop's own finalize, meant for `Stop`, doesn't run again.
@@ -1201,10 +1203,10 @@ mod real_startup {
 
         // The init task plays the service manager, sending `Stop` while the engine runs.
         let stop = is_running.clone();
-        let job = TaskJob::new(move || {
+        let job = move || {
             stop.store(false, Ordering::SeqCst);
             TaskResult::new("", String::new(), "")
-        });
+        };
         ctx.plugins.push(plugin(&ctx, "Stopper", job));
 
         let outcome = run_real_engine(
@@ -1252,11 +1254,11 @@ mod workers_wake_up {
 
         // "First" chains "Second", which returns `Fin`.
         let (ran_tx, ran_rx) = bounded(1);
-        let first = TaskJob::new(move || {
+        let first = move || {
             let _ = ran_tx.send(());
-            let second = Task::new("Second", 0, TaskJob::new(TaskResult::fin)).unwrap();
+            let second = Task::new("Second", 0, TaskResult::fin).unwrap();
             TaskResult::new("", String::new(), "").chain(second)
-        });
+        };
         engine.accept_task(Task::new("First", 0, first).unwrap());
         ran_rx
             .recv_timeout(Duration::from_secs(5))
@@ -1303,7 +1305,7 @@ mod status_lines {
         let sender = packet_handle.clone();
         std::thread::spawn(move || {
             for i in 0..100 {
-                sender.send_status(Log::log(format!("status line {i}"), "Main"));
+                sender.send_status_log(Log::log(format!("status line {i}"), "Main"));
             }
             let _ = done_tx.send(());
         });
@@ -1347,10 +1349,10 @@ mod graph_mode {
 
         // Loaded and queued the way startup does it.
         let (ran_tx, ran_rx) = bounded(1);
-        let job = TaskJob::new(move || {
+        let job = move || {
             let _ = ran_tx.send(());
             TaskResult::new("", String::new(), "")
-        });
+        };
         let plugin = Plugin::new("Grapher", Arc::new(QuietPlugin), packet_handle, job).unwrap();
         let init_task = engine
             .plugin_manager

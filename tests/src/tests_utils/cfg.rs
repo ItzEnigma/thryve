@@ -562,7 +562,7 @@ mod tests_ctx {
     use thryve_utils::bases::plugin::Plugin;
     use thryve_utils::cfg::config::Config;
     use thryve_utils::cfg::ctx::*;
-    use thryve_utils::extras::jobs::{ObsJob, TaskJob};
+    use thryve_utils::extras::jobs::ObsJob;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
 
@@ -655,9 +655,7 @@ mod tests_ctx {
                 "TestType",
                 Arc::new(TestPlgLogic),
                 ctx.packet_handle(),
-                TaskJob::new(|| {
-                    thryve_utils::res::TaskResult::new("Ok", "Done".to_string(), "Main")
-                }),
+                || thryve_utils::res::TaskResult::new("Ok", "Done".to_string(), "Main"),
             )
             .unwrap(),
         );

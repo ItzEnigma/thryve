@@ -283,7 +283,7 @@ impl TopologyHandlerObserver {
         }
 
         let notif = Log::log("Topology Handler Obs Thread Exited...".to_string(), "Main");
-        observer.tx.send_status(notif)
+        observer.tx.send_status_log(notif)
     }
 
     /// Handles an incoming topology modification notification.

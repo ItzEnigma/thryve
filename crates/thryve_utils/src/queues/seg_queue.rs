@@ -169,7 +169,7 @@ impl Queue<Notif> for QChild {
 
         if !is_start {
             let notif = Log::log("Obs Queue Paused".to_string(), "Main");
-            self.packet_handle.send_status(notif)
+            self.packet_handle.send_status_log(notif)
         }
     }
 
@@ -182,7 +182,7 @@ impl Queue<Notif> for QChild {
 
         if !is_start {
             let notif = Log::log("Obs Queue continuing".to_string(), "Main");
-            self.packet_handle.send_status(notif);
+            self.packet_handle.send_status_log(notif);
         }
 
         self.worker_registry.notify_all();

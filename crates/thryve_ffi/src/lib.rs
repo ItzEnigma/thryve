@@ -165,8 +165,8 @@
 //! # Memory Management Rules
 //!
 //! 1. **Ownership Transfer**: When you pass a pointer to a Rust function, ownership may be transferred.
-//!    - `thryve_plugin_create`: Takes ownership of `entry_point` (transmutes it into `TaskJob`)
-//!    - `thryve_task_create`: Takes ownership of `job` (transmutes it into `TaskJob`)
+//!    - `thryve_plugin_create`: Takes ownership of `entry_point` (wraps it in the plugin's init closure)
+//!    - `thryve_task_create`: Takes ownership of `job` (wraps it in the task's closure)
 //!    - `thryve_ctx_add_plugin`: Takes ownership of `plugin` (converts from raw pointer to Box, then clones into vector)
 //!    - `thryve_ctx_add_observer`: Takes ownership of `observer` (converts from raw pointer to Box, then clones into vector)
 //! 2. **Never free after transfer**: After calling `thryve_plugin_create` or `thryve_task_create`, do **not** free the
@@ -189,7 +189,6 @@ use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
 use thryve_utils::errors::{FinalizationError, StartupError, ThryveError};
 use thryve_utils::extras::jobs::ObsJob;
-use thryve_utils::extras::jobs::TaskJob;
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
 use thryve_utils::traits::notif_logic::NotifLogic;
@@ -1153,12 +1152,12 @@ pub unsafe extern "C" fn thryve_task_create(
                 .to_str()
                 .unwrap_or("Unknown")
                 .to_string();
-            // Create the TaskJob wrapper — wrap the FFI function pointer in a TaskJob closure
-            let task_job = TaskJob::new(move || {
+            // Wrap the FFI function pointer in a closure that converts its result
+            let task_job = move || {
                 let ffi_result = (job)();
                 // Convert ThryveTaskResult to TaskResult
                 ffi_result_to_result(ffi_result)
-            });
+            };
             let Ok(task) = Task::new(&task_name, priority, task_job) else {
                 return std::ptr::null_mut();
             };
@@ -1544,12 +1543,12 @@ pub unsafe extern "C" fn thryve_plugin_create(
         // Create the packet handle clone
         let packet_handle = unsafe { &*(tx as *const PacketHandle) }.clone();
 
-        // Create the TaskJob wrapper — wrap the FFI function pointer in a TaskJob closure
-        let task_job = TaskJob::new(move || {
+        // Wrap the FFI function pointer in a closure that converts its result
+        let task_job = move || {
             let ffi_result = (entry_point)();
             // Convert ThryveTaskResult to TaskResult
             ffi_result_to_result(ffi_result)
-        });
+        };
 
         // Create the PlgLogic adapter - PluginLogicAdapter already implements PlgLogic
         let adapter: Arc<dyn PlgLogic> =

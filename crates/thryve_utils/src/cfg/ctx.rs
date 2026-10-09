@@ -44,6 +44,7 @@ use crate::extras::{
     log_format::{log_line, write_line},
     named_input::LogFileNamedInput,
 };
+use crate::packets::packet_handle::StatusMsg;
 use crate::packets::{packet_handle::PacketHandle, task::Task};
 
 /// Central context structure for the Thryve application.
@@ -78,8 +79,9 @@ pub struct Ctx {
     pub task_rx: Arc<Receiver<Task>>,
     /// Receiver for incoming notifications.
     pub notif_rx: Arc<Receiver<Notif>>,
-    /// Receiver for Thryve's own status lines, from an unbounded channel.
-    pub status_rx: Arc<Receiver<Notif>>,
+    /// Receiver for Thryve's own messages to the engine (status lines, and the releases of dropped
+    /// task handles), from an unbounded channel.
+    pub status_rx: Arc<Receiver<StatusMsg>>,
     /// Handle for sending to the engine (private).
     packet_handle: PacketHandle,
     /// Collection of observers during initialization.
@@ -105,8 +107,9 @@ impl Ctx {
     /// * `config` - Application configuration
     /// * `task_rx` - Receiver for incoming tasks
     /// * `notif_rx` - Receiver for incoming notifications
-    /// * `status_rx` - Receiver for Thryve's own status lines; it must belong to the same channel
-    ///   as the status sender in `packet_handle`, or the status lines never reach the logger
+    /// * `status_rx` - Receiver for Thryve's own messages; it must belong to the same channel as
+    ///   the status sender in `packet_handle`, or the status lines never reach the logger and
+    ///   dropped task handles are never released
     /// * `packet_handle` - Handle for sending to the engine
     ///
     /// # Returns
@@ -116,7 +119,7 @@ impl Ctx {
         config: Config,
         task_rx: Receiver<Task>,
         notif_rx: Receiver<Notif>,
-        status_rx: Receiver<Notif>,
+        status_rx: Receiver<StatusMsg>,
         packet_handle: PacketHandle,
     ) -> Self {
         Self {
@@ -214,7 +217,6 @@ impl Ctx {
     /// # use crossbeam::channel::bounded;
     /// # use thryve_utils::cfg::config::Config;
     /// # use thryve_utils::cfg::ctx::Ctx;
-    /// # use thryve_utils::extras::jobs::TaskJob;
     /// # use thryve_utils::packets::packet_handle::PacketHandle;
     /// # use thryve_utils::packets::task::Task;
     /// # use thryve_utils::res::TaskResult;
@@ -225,7 +227,7 @@ impl Ctx {
     /// # let (status_tx, status_rx) = crossbeam::channel::unbounded();
     /// # let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
     /// # let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
-    /// # let my_task = Task::new("Example", 0, TaskJob::new(|| TaskResult::new("", "".to_string(), ""))).expect("valid task name");
+    /// # let my_task = Task::new("Example", 0, || TaskResult::new("", "".to_string(), "")).expect("valid task name");
     /// let handle = ctx.packet_handle();
     /// handle.send_task(my_task)?;
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())

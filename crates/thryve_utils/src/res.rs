@@ -25,15 +25,17 @@
 //!
 //! - Regular results: Terminal nodes that end execution
 //! - Tasked results: Edges that chain to the next task
-//! - Observer results: Results that spawn new observers
-//! - Plugin results: Results that load new plugins
+//! - Handoff results: what an [`AdvTask`](crate::packets::task::AdvTask) or a follow-up returns.
+//!   They carry the task's `Result<T, E>`, sealed, which the engine hands to the task's follow-up
+//!   as a [`Handoff`], and no message. A forwarding task's carries the id of the task whose
+//!   outcome becomes its own instead.
 
+use std::any::Any;
 use std::fmt::Display;
 use std::panic::Location;
 use std::path::PathBuf;
 
-use crate::bases::observer::Observer;
-use crate::bases::plugin::Plugin;
+use crate::errors::{self, TaskError};
 use crate::extras::thread_local;
 use crate::graphs::callsite::TaskCallSite;
 use crate::packets::task::Task;
@@ -57,23 +59,21 @@ use crate::traits::packets::Packet;
 /// - `message`: Human-readable result message
 /// - `log_msg_to_file`: Log file name for the message
 /// - `next_task`: Optional task to execute next
-/// - `observer`: Optional observer to spawn
-/// - `plugin`: Optional plugin to load
+/// - `handoff`: An [`AdvTask`](crate::packets::task::AdvTask)'s sealed result (private)
 ///
 /// # Example
 ///
 /// ```no_run
 /// use thryve_utils::res::TaskResult;
 /// use thryve_utils::packets::task::Task;
-/// use thryve_utils::extras::jobs::TaskJob;
 ///
 /// // Regular result (terminal)
 /// let result = TaskResult::new("Success", "Done".to_string(), "Main");
 ///
 /// // Tasked result (chains to next task)
-/// let next_task = Task::new("NextTask", 1, TaskJob::new(|| {
+/// let next_task = Task::new("NextTask", 1, || {
 ///     TaskResult::new("Ok", "".to_string(), "Main")
-/// })).expect("valid task name");
+/// }).expect("valid task name");
 /// let chained = TaskResult::new("Chained", "Moving on".to_string(), "Main")
 ///     .chain(next_task);
 /// ```
@@ -88,29 +88,44 @@ pub struct TaskResult {
     log_msg_to_file: String,
     /// Optional task to execute next.
     pub next_task: Option<Task>,
-    /// Optional observer to spawn.
-    pub observer: Option<Observer>,
-    /// Optional plugin to load.
-    pub plugin: Option<Plugin>,
+    /// What an [`AdvTask`](crate::packets::task::AdvTask) hands over: its sealed `Result<T, E>`.
+    /// `None` for every other task.
+    handoff: Option<SealedHandoff>,
 }
 
 impl Display for TaskResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "result type: {}, message: {}, next task: {}, observer: {}, plugin: {}",
+            "result type: {}, message: {}, next task: {}, handoff: {}",
             self.result_type,
             self.message,
             self.next_task
                 .as_ref()
                 .map_or("None", |task| task.task_name()),
-            self.observer
-                .as_ref()
-                .map_or("None", |observer| observer.obs_type()),
-            self.plugin
-                .as_ref()
-                .map_or("None", |plugin| plugin.plg_type()),
+            if let Some(handoff) = self.handoff.as_ref() {
+                match handoff {
+                    SealedHandoff::Finished { .. } => {
+                        self.handoff_error_text().unwrap_or(String::from("a value"))
+                    }
+                    SealedHandoff::Forward { to } => format!("forwarded to task {to}"),
+                }
+            } else {
+                String::from("None")
+            }
         )
+    }
+}
+
+impl From<TaskError> for TaskResult {
+    fn from(value: TaskError) -> Self {
+        Self {
+            result_type: String::from("TaskError"),
+            message: errors::get_err_oneline(&value),
+            log_msg_to_file: String::from("Error"),
+            next_task: None,
+            handoff: None,
+        }
     }
 }
 
@@ -145,8 +160,7 @@ impl TaskResult {
             message: msg,
             log_msg_to_file: logging_file.to_string(),
             next_task: None,
-            observer: None,
-            plugin: None,
+            handoff: None,
         }
     }
 
@@ -178,12 +192,11 @@ impl TaskResult {
     /// ```no_run
     /// use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
-    /// use thryve_utils::extras::jobs::TaskJob;
     ///
     /// // Create a result and chain a follow-up task
-    /// let next_task = Task::new("FollowUp", 1, TaskJob::new(|| {
+    /// let next_task = Task::new("FollowUp", 1, || {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// })).expect("valid task name");
+    /// }).expect("valid task name");
     ///
     /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
     ///     .chain(next_task);
@@ -194,17 +207,16 @@ impl TaskResult {
     /// ```no_run
     /// use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
-    /// use thryve_utils::extras::jobs::TaskJob;
     ///
     /// // Create a result and chain a follow-up task
-    /// let next_task_1 = Task::new("FollowUp2", 1, TaskJob::new(|| {
+    /// let next_task_1 = Task::new("FollowUp2", 1, || {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// })).expect("valid task name");
+    /// }).expect("valid task name");
     ///
     ///
-    /// let next_task_2 = Task::new("FollowUp2", 1, TaskJob::new(|| {
+    /// let next_task_2 = Task::new("FollowUp2", 1, || {
     ///     TaskResult::new("Done", "Completed".to_string(), "Main")
-    /// })).expect("valid task name");
+    /// }).expect("valid task name");
     ///
     /// // A double chain should make next_task_2 overwrite next_task_1
     /// let chained_result = TaskResult::new("Step1", "First step".to_string(), "Main")
@@ -248,8 +260,8 @@ impl TaskResult {
     /// # Note
     ///
     /// This returns the size of the struct itself, not the heap
-    /// memory allocated by its fields (such as the `String` message
-    /// or optional `Task`, `Observer`, or `Plugin` fields).
+    /// memory allocated by its fields (such as the `String` message,
+    /// the optional `Task` or the handoff's sealed result).
     pub fn size_in_bytes(&self) -> usize {
         std::mem::size_of_val(self)
     }
@@ -265,8 +277,7 @@ impl TaskResult {
             message: String::from("finishing capture: starting exit now."),
             log_msg_to_file: "Main".to_string(),
             next_task: None,
-            observer: None,
-            plugin: None,
+            handoff: None,
         }
     }
 
@@ -278,5 +289,157 @@ impl TaskResult {
     /// Returns the name of the log file the message is written to.
     pub fn log_msg_to_file(&self) -> &str {
         &self.log_msg_to_file
+    }
+}
+
+impl TaskResult {
+    /// The result an [`AdvTask`](crate::packets::task::AdvTask)'s job returns: it carries the
+    /// handoff and nothing to log.
+    ///
+    /// Its type is `AdvTask`, so the shutdown's summary of lost work groups these results under
+    /// that name. The shutdown also uses it to put a handoff the engine kept back into a result,
+    /// so that it's counted like the results that arrived late.
+    ///
+    /// For Thryve's own crates. Not part of the public API.
+    #[doc(hidden)]
+    pub fn new_handoff(handoff: SealedHandoff) -> Self {
+        Self {
+            result_type: String::from("AdvTask"),
+            message: String::default(),
+            log_msg_to_file: String::default(),
+            next_task: None,
+            handoff: Some(handoff),
+        }
+    }
+
+    /// Takes the handoff out, leaving `None`. The engine calls it first thing when a result
+    /// arrives.
+    ///
+    /// For Thryve's own crates. Not part of the public API.
+    #[doc(hidden)]
+    pub fn take_handoff(&mut self) -> Option<SealedHandoff> {
+        self.handoff.take()
+    }
+
+    /// The handoff's error text, if it carries an error, without taking the handoff out.
+    ///
+    /// `None` when there's no handoff, and when it carries a value or a forward. For Thryve's own
+    /// crates. Not part of the public API.
+    #[doc(hidden)]
+    pub fn handoff_error_text(&self) -> Option<String> {
+        if let Some(handoff) = self.handoff.as_ref() {
+            return handoff.error_text();
+        }
+
+        None
+    }
+}
+
+/// What an [`AdvTask`](crate::packets::task::AdvTask) hands over when it finishes: its result,
+/// sealed so the engine can carry it without knowing its type.
+///
+/// The worker that ran the task builds it. The engine moves it around but never opens it: it
+/// doesn't know `T` or `E`, and it never runs task code. Only code that knows the types opens it:
+/// the job of the task's follow-up, on a worker.
+///
+/// A forwarding task hands over a [`Forward`](Self::Forward) instead: not a result, but the id of
+/// the task whose outcome becomes its own. Nothing in it is sealed; the engine reads the id and
+/// links the two tasks, so a follow-up never gets a forward.
+///
+/// For Thryve's own crates. Not part of the public API.
+#[doc(hidden)]
+pub enum SealedHandoff {
+    /// The task's code returned.
+    Finished {
+        /// The task's whole `Result<T, E>`, boxed: its value, or its own typed error.
+        sealed: Box<dyn Any + Send>,
+        /// The error's text, written on the worker while the type was still known, so the engine
+        /// can log an error that nobody handles. `None` when the task returned a value.
+        error_text: Option<String>,
+    },
+
+    /// The task forwarded: its closure returned the handle of another task, whose outcome becomes
+    /// this task's. Whoever follows this task gets that task's result.
+    Forward {
+        /// The id of the task forwarded to.
+        to: u64,
+    },
+}
+
+/// What a follow-up gets: the result of the task it follows, as the task's value or its own error.
+///
+/// A follow-up is declared with
+/// [`AdvTaskHandle::then`](crate::packets::task::AdvTaskHandle::then), and its closure takes a
+/// `Handoff<T, E>`, where `T` and `E` are the task's types. The error is the task's own, typed,
+/// with its fields and causes. Once a follow-up gets it, the engine doesn't write it to
+/// `Error.log`: what happens to it is up to the follow-up.
+#[derive(Debug)]
+pub enum Handoff<T: Send + 'static, E: std::error::Error + Send + 'static> {
+    /// The task returned `Ok`: its value.
+    Value(T),
+    /// The task returned `Err`: its own error.
+    Error(E),
+}
+
+impl SealedHandoff {
+    /// Whether the task's code returned: a value or an error, sealed.
+    pub fn is_finish(&self) -> bool {
+        matches!(self, SealedHandoff::Finished { .. })
+    }
+
+    /// Whether the task forwarded to another task.
+    pub fn is_forward(&self) -> bool {
+        matches!(self, SealedHandoff::Forward { .. })
+    }
+
+    /// The id of the task forwarded to, or `None` if the task's code returned instead.
+    pub fn read_forward_id(&self) -> Option<u64> {
+        match self {
+            Self::Forward { to } => Some(*to),
+            _ => None,
+        }
+    }
+
+    /// The error's text, if the task returned an error. `None` when it returned a value, or
+    /// forwarded.
+    pub fn error_text(&self) -> Option<String> {
+        match self {
+            SealedHandoff::Finished {
+                sealed: _,
+                error_text: e,
+            } => e.clone(),
+            _ => None,
+        }
+    }
+
+    /// Opens the handoff as the [`Handoff`] a follow-up gets. `None` if it doesn't hold a
+    /// `Result<T, E>`, which only a bug in Thryve can cause: `then` ties a follow-up's types to the
+    /// task's, and the engine follows a forward instead of handing it over.
+    pub(crate) fn open<T, E>(self) -> Option<Handoff<T, E>>
+    where
+        T: Send + 'static,
+        E: std::error::Error + Send + 'static,
+    {
+        match self {
+            SealedHandoff::Finished { sealed, .. } => sealed
+                .downcast::<Result<T, E>>()
+                .ok()
+                .map(|result| Handoff::from(*result)),
+
+            _ => None,
+        }
+    }
+}
+
+impl<T, E> From<Result<T, E>> for Handoff<T, E>
+where
+    T: Send + 'static,
+    E: std::error::Error + Send + 'static,
+{
+    fn from(value: Result<T, E>) -> Self {
+        match value {
+            Ok(adv_task) => Handoff::Value(adv_task),
+            Err(e) => Handoff::Error(e),
+        }
     }
 }

@@ -12,7 +12,9 @@
 //! This module provides the [`PacketHandle`] struct, which serves as the
 //! exclusive interface for plugins and observers to communicate with the
 //! engine. It encapsulates the sender ends of crossbeam channels for
-//! tasks and notifications.
+//! tasks, notifications and Thryve's own status messages. Typed tasks are
+//! sent with [`PacketHandle::send_adv_task`], which returns the handle
+//! their follow-ups are declared on.
 //!
 //! # Architecture
 //!
@@ -25,9 +27,9 @@
 //! # Usage
 //!
 //! The packet handle is created by the engine during initialization and
-//! passed to modules. Since it only contains two channel senders,
-//! cloning is inexpensive, making it easy to distribute throughout
-//! the system.
+//! passed to modules. Since it only holds channel senders and a shared
+//! switch, cloning is inexpensive, making it easy to distribute
+//! throughout the system.
 
 use std::panic::Location;
 use std::path::PathBuf;
@@ -38,7 +40,7 @@ use crate::bases::notif::Notif;
 use crate::errors::{EngineNotRunningError, ThryveError};
 use crate::extras::thread_local;
 use crate::graphs::callsite::TaskCallSite;
-use crate::packets::task::Task;
+use crate::packets::task::{AdvTask, AdvTaskHandle, Task};
 use crate::traits::packets::Packet;
 
 use crossbeam::channel::Sender;
@@ -64,7 +66,6 @@ use crossbeam::channel::Sender;
 ///
 /// ```no_run
 /// # use crossbeam::channel::bounded;
-/// # use thryve_utils::extras::jobs::TaskJob;
 /// # use thryve_utils::packets::notif_log::Log;
 /// # use thryve_utils::res::TaskResult;
 /// use thryve_utils::packets::packet_handle::PacketHandle;
@@ -74,9 +75,9 @@ use crossbeam::channel::Sender;
 /// # let (notif_tx, _notif_rx) = bounded(1);
 /// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
 /// // Send a task to the engine
-/// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
+/// handle.send_task(Task::new("MyTask", 0, || {
 ///     TaskResult::new("", "".to_string(), "")
-/// })).expect("valid task name"))?;
+/// }).expect("valid task name"))?;
 ///
 /// // Send a notification to the engine
 /// # let my_notification = Log::log("hello".to_string(), "Main");
@@ -89,9 +90,10 @@ pub struct PacketHandle {
     task_tx: Sender<Task>,
     /// Sender for notifications.
     notif_tx: Sender<Notif>,
-    /// Sender for Thryve's own status lines. Its channel has no capacity limit, so a status line
-    /// never waits, even while the engine isn't reading.
-    status_tx: Sender<Notif>,
+    /// Sender for Thryve's own messages to the engine: status lines, and the releases of dropped
+    /// task handles. Its channel has no capacity limit, so a send never waits, even while the
+    /// engine isn't reading.
+    status_tx: Sender<StatusMsg>,
     /// Whether graph mode is on. Shared by every clone of this handle, so one failure turns
     /// graph mode off everywhere.
     is_graph_visualization_enabled: Arc<AtomicBool>,
@@ -114,8 +116,8 @@ impl PacketHandle {
     ///
     /// * `task_tx` - Sender for tasks
     /// * `notif_tx` - Sender for notifications
-    /// * `status_tx` - Sender for Thryve's own status lines; its channel should be unbounded, so
-    ///   that [`send_status`](Self::send_status) never waits
+    /// * `status_tx` - Sender for Thryve's own messages: status lines, and the releases of
+    ///   dropped task handles. Its channel should be unbounded, so that sending on it never waits
     /// * `is_graph_vis_enabled` - Whether graph visualization is enabled.
     ///   When true, call site information is captured for each task, until graph mode fails
     ///   and turns off.
@@ -139,7 +141,7 @@ impl PacketHandle {
     pub fn new(
         task_tx: Sender<Task>,
         notif_tx: Sender<Notif>,
-        status_tx: Sender<Notif>,
+        status_tx: Sender<StatusMsg>,
         is_graph_vis_enabled: bool,
     ) -> Self {
         Self {
@@ -187,7 +189,6 @@ impl PacketHandle {
     ///
     /// ```no_run
     /// # use crossbeam::channel::bounded;
-    /// # use thryve_utils::extras::jobs::TaskJob;
     /// # use thryve_utils::packets::packet_handle::PacketHandle;
     /// # use thryve_utils::res::TaskResult;
     /// use thryve_utils::packets::task::Task;
@@ -195,10 +196,10 @@ impl PacketHandle {
     /// # let (task_tx, _task_rx) = bounded(1);
     /// # let (notif_tx, _notif_rx) = bounded(1);
     /// # let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
-    /// handle.send_task(Task::new("MyTask", 0, TaskJob::new(|| {
+    /// handle.send_task(Task::new("MyTask", 0, || {
     ///     // Task logic here
     ///     TaskResult::new("", "".to_string(), "")
-    /// })).expect("valid task name"))?;
+    /// }).expect("valid task name"))?;
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     #[track_caller]
@@ -259,14 +260,21 @@ impl PacketHandle {
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     pub fn send_notification(&self, notif: Notif) -> Result<(), ThryveError> {
-        self.send_notification_helper(notif, false)
+        // A send fails only once the engine is gone (its receiving end was dropped). The error
+        // holds the notification, so dropping the error drops the notification.
+        self.notif_tx.send(notif).map_err(|e| {
+            drop(e);
+            EngineNotRunningError::Notif
+        })?;
+
+        Ok(())
     }
 
     /// Sends one of Thryve's own status lines, such as "ThreadPool Finalized", to the engine.
     ///
-    /// Status lines have their own channel with no capacity limit, so this never waits, even
-    /// while the engine isn't reading (during startup, a pause or a shutdown) or is the sender
-    /// itself. That's safe because Thryve sends a fixed, small number of them; your plugins'
+    /// Status lines go through the status mailbox, which has no capacity limit, so this never
+    /// waits, even while the engine isn't reading (during startup, a pause or a shutdown) or is
+    /// the sender itself. That's safe because Thryve sends a fixed, small number of them; your plugins'
     /// traffic stays on the bounded channels. The engine reads this channel like the others and
     /// routes the lines to the logger.
     ///
@@ -282,28 +290,32 @@ impl PacketHandle {
     ///
     /// * `notif` - The status line
     #[doc(hidden)]
-    pub fn send_status(&self, notif: Notif) {
-        let _ = self.send_notification_helper(notif, true);
+    pub fn send_status_log(&self, notif: Notif) {
+        self.send_status_helper(StatusMsg::LogLine(notif));
     }
 
-    fn send_notification_helper(&self, notif: Notif, is_status: bool) -> Result<(), ThryveError> {
-        if !is_status {
-            // A send fails only once the engine is gone (its receiving end was dropped). The error
-            // holds the notification, so dropping the error drops the notification.
-            self.notif_tx.send(notif).map_err(|e| {
-                drop(e);
-                EngineNotRunningError::Notif
-            })?;
+    /// Tells the engine that the handle of the task `handle_id` is gone without a follow-up, so
+    /// nobody will take the task's result: the engine lets it go, and writes an error to
+    /// `Error.log`.
+    ///
+    /// [`AdvTaskHandle`]'s `drop` sends it, unless `then` used the handle. It goes through the
+    /// status mailbox because a handle can be dropped anywhere, even on the engine thread, which
+    /// must never wait on one of its own bounded mailboxes. A failed send is dropped without an
+    /// error: the engine is gone, and the result with it.
+    ///
+    /// For Thryve's own crates. Not part of the public API.
+    ///
+    /// # Arguments
+    ///
+    /// * `handle_id` - The id of the task whose handle was dropped
+    #[doc(hidden)]
+    pub fn send_status_release(&self, handle_id: u64) {
+        self.send_status_helper(StatusMsg::HandleRelease(handle_id));
+    }
 
-            return Ok(());
-        }
-
-        self.status_tx.send(notif).map_err(|e| {
-            drop(e);
-            EngineNotRunningError::Notif
-        })?;
-
-        Ok(())
+    /// Sends on the status mailbox. A failed send means the engine is gone, so it's dropped.
+    fn send_status_helper(&self, status_msg: StatusMsg) {
+        let _ = self.status_tx.send(status_msg);
     }
 
     /// Returns whether graph mode is on.
@@ -323,4 +335,51 @@ impl PacketHandle {
         self.is_graph_visualization_enabled
             .swap(false, Ordering::SeqCst)
     }
+}
+
+impl PacketHandle {
+    /// Sends a typed task ([`AdvTask`]) to the engine.
+    ///
+    /// It's queued and run like any other task. When it finishes, its result reaches the engine
+    /// as a handoff. It returns the task's handle: [`then`](AdvTaskHandle::then) on it declares a
+    /// follow-up, which gets the result. The engine keeps the result while the handle exists, so
+    /// `then` can come after the task finished. Once the handle is dropped without a follow-up,
+    /// an error is written to `Error.log` and a value is dropped.
+    ///
+    /// Like [`send_task`](Self::send_task), it passes your call's file and line on to graph mode
+    /// (`#[track_caller]`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ThryveError::EngineNotRunning`] ([`EngineNotRunningError::Task`]) when the engine
+    /// is gone: it has stopped, or it failed to start. The task is dropped.
+    #[track_caller]
+    pub fn send_adv_task<T, E>(
+        &self,
+        adv_task: AdvTask<T, E>,
+    ) -> Result<AdvTaskHandle<T, E>, ThryveError>
+    where
+        T: Send + 'static,
+        E: std::error::Error + Send + 'static,
+    {
+        let task = adv_task.into_task();
+        let handle = AdvTaskHandle::new(&task, self.clone());
+
+        self.send_task(task)?;
+
+        Ok(handle)
+    }
+}
+
+/// What the status mailbox carries: Thryve's own messages to the engine, whose senders never
+/// wait.
+///
+/// For Thryve's own crates. Not part of the public API.
+#[doc(hidden)]
+pub enum StatusMsg {
+    /// A status line, such as "ThreadPool Finalized", for the logger.
+    LogLine(Notif),
+    /// The handle of the task with this id was dropped without a follow-up, so nobody will take
+    /// the task's result.
+    HandleRelease(u64),
 }

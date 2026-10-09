@@ -301,55 +301,32 @@ pub mod named_input {
 }
 
 pub mod jobs {
-    //! Job types for task and observer initialization.
-    //!
-    //! This module defines the [`TaskJob`] and [`ObsJob`] types used
-    //! as jobs in the Thryve system. These types simplify the
-    //! type signatures throughout the codebase.
+    //! Job types for tasks and observers.
     //!
     //! # Job Types
     //!
-    //! - [`TaskJob`]: Wrapper for task execution closures
+    //! - `TaskJob`: the boxed closure a task runs. It's internal to `thryve_utils`:
+    //!   [`Task::new`](crate::packets::task::Task::new) and
+    //!   [`Plugin::new`](crate::bases::plugin::Plugin::new) take a plain closure and build it.
     //! - [`ObsJob`]: Closure for observer initialization
     use std::sync::Arc;
 
     use crate::bases::observer::Observer;
-    use crate::res::TaskResult;
+    use crate::res::{SealedHandoff, TaskResult};
 
-    /// A task execution closure wrapper.
+    /// The closure a task runs, boxed: it takes no arguments and returns a [`TaskResult`].
     ///
-    /// A `TaskJob` is a wrapper around a closure that takes no arguments and returns
-    /// a [`TaskResult`]. Tasks are executed by worker
-    /// threads, and the result indicates success or failure along with
-    /// optional follow-up actions.
+    /// Internal to `thryve_utils`. [`Task::new`](crate::packets::task::Task::new),
+    /// `Task::new_init` and [`Plugin::new`](crate::bases::plugin::Plugin::new) take a plain closure
+    /// and wrap it in one, so the code that writes tasks never names this type. A worker runs it
+    /// once, through [`call_once`](TaskJob::call_once).
     ///
-    /// This type is a newtype wrapper around `Box<dyn FnOnce() -> TaskResult + Send + Sync>`
-    /// to allow implementing `Default` (since the orphan rules prevent
-    /// implementing traits for type aliases).
-    ///
-    /// # Traits
-    ///
-    /// - `FnOnce`: Can be called exactly once (via [`call_once`](TaskJob::call_once))
-    /// - `Send`: Can be sent to another thread
-    /// - `Sync`: Can be shared between threads
-    /// - `Default`: Returns an error function as a placeholder
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use thryve_utils::extras::jobs::TaskJob;
-    /// use thryve_utils::res::TaskResult;
-    ///
-    /// let job: TaskJob = TaskJob::new(|| {
-    ///     // Task execution logic
-    ///     TaskResult::new("Success", "Done".to_string(), "Main")
-    /// });
-    ///
-    /// let result = job.call_once();
-    /// ```
-    pub struct TaskJob {
+    /// It's a newtype around `Box<dyn FnOnce() -> TaskResult + Send + Sync>` so that it can
+    /// implement `Default`: the placeholder that reports `BIGERR` if it ever runs, which means a
+    /// job was taken twice.
+    pub(crate) struct TaskJob {
         /// The inner closure that executes the task.
-        inner: Box<dyn FnOnce() -> TaskResult + Send + Sync>,
+        inner: Box<dyn FnOnce() -> TaskResult + Send>,
     }
 
     impl TaskJob {
@@ -362,7 +339,7 @@ pub mod jobs {
         /// # Returns
         ///
         /// A new `TaskJob` wrapping the closure.
-        pub fn new(closure: impl FnOnce() -> TaskResult + Send + Sync + 'static) -> Self {
+        pub fn new(closure: impl FnOnce() -> TaskResult + Send + 'static) -> Self {
             TaskJob {
                 inner: Box::new(closure),
             }
@@ -384,19 +361,6 @@ pub mod jobs {
         /// # Returns
         ///
         /// The [`TaskResult`] returned by the closure.
-        ///
-        /// # Example
-        ///
-        /// ```no_run
-        /// use thryve_utils::extras::jobs::TaskJob;
-        /// use thryve_utils::res::TaskResult;
-        ///
-        /// let job: TaskJob = TaskJob::new(|| {
-        ///     TaskResult::new("Success", "Done".to_string(), "Main")
-        /// });
-        ///
-        /// let result = job.call_once();
-        /// ```
         pub fn call_once(self) -> TaskResult {
             (self.inner)()
         }
@@ -425,13 +389,13 @@ pub mod jobs {
         }
     }
 
-    impl From<Box<dyn FnOnce() -> TaskResult + Send + Sync>> for TaskJob {
+    impl From<Box<dyn FnOnce() -> TaskResult + Send>> for TaskJob {
         /// Converts a `Box<dyn FnOnce() -> TaskResult + Send + Sync>` into a `TaskJob`.
         ///
         /// Lets callers construct a `TaskJob` directly from a boxed closure via
         /// `TaskJob::from(boxed_closure)` or the `Into` trait, without going
         /// through [`TaskJob::new`].
-        fn from(boxed: Box<dyn FnOnce() -> TaskResult + Send + Sync>) -> Self {
+        fn from(boxed: Box<dyn FnOnce() -> TaskResult + Send>) -> Self {
             TaskJob { inner: boxed }
         }
     }
@@ -518,6 +482,24 @@ pub mod jobs {
         fn from(boxed: Box<dyn Fn(Arc<Observer>) + Send + Sync>) -> Self {
             ObsJob { inner: boxed }
         }
+    }
+
+    /// What a task runs: a job it can run now, or one that waits for another task's handoff.
+    pub(crate) enum Job {
+        /// Runs as soon as a worker takes the task.
+        TaskReady(TaskJob),
+        /// A follow-up declared with `then`: the engine holds it until the task it waits on
+        /// finishes, then gives it that task's sealed handoff, which makes it ready.
+        TaskWait {
+            /// The id of the task it waits on.
+            on: u64,
+            /// Whether its priority was inherited from the task it waits on (`then`), rather than
+            /// given (`then_with_priority`). An inherited priority is capped below realtime when
+            /// the task becomes ready.
+            inherits_priority: bool,
+            /// Takes the sealed handoff of the task it waits on, and returns this task's result.
+            input_job: Box<dyn FnOnce(SealedHandoff) -> TaskResult + Send>,
+        },
     }
 }
 

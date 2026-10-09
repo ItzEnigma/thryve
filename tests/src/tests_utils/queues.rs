@@ -258,7 +258,6 @@ mod tests_priority_queue {
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::cfg::config::{Config, TaskConfig};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::queues::priority_queue::*;
@@ -296,11 +295,9 @@ mod tests_priority_queue {
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
-        let task = Task::new(
-            "testTask",
-            5,
-            TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main")),
-        )
+        let task = Task::new("testTask", 5, || {
+            TaskResult::new("OK", "success".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - push task
@@ -343,7 +340,7 @@ mod tests_priority_queue {
         let config = Config::default();
         let queue = PQChild::new(&config, packet_handle);
         for name in ["first", "second"] {
-            let job = TaskJob::new(|| TaskResult::new("OK", String::new(), "Main"));
+            let job = || TaskResult::new("OK", String::new(), "Main");
             queue.push(Task::new(name, 5, job).unwrap());
         }
 
@@ -432,17 +429,13 @@ mod tests_priority_queue {
         let queue = PQChild::new(&config, packet_handle);
 
         // Push tasks with different priorities (lower number = higher priority)
-        let task_low = Task::new(
-            "lowPriority",
-            1,
-            TaskJob::new(|| TaskResult::new("OK", "low".to_string(), "Main")),
-        )
+        let task_low = Task::new("lowPriority", 1, || {
+            TaskResult::new("OK", "low".to_string(), "Main")
+        })
         .unwrap();
-        let task_high = Task::new(
-            "highPriority",
-            10,
-            TaskJob::new(|| TaskResult::new("OK", "high".to_string(), "Main")),
-        )
+        let task_high = Task::new("highPriority", 10, || {
+            TaskResult::new("OK", "high".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - push in reverse order

@@ -177,7 +177,6 @@ mod names {
     use thryve_run::run::run_interactive::summon_requirements;
     use thryve_utils::bases::plugin::Plugin;
     use thryve_utils::errors::{NameInputType, NamingError, StartupError, ThryveError};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
@@ -189,8 +188,8 @@ mod names {
         }
     }
 
-    fn job() -> TaskJob {
-        TaskJob::new(|| TaskResult::new("", String::new(), ""))
+    fn job() -> impl FnOnce() -> TaskResult + Send + Sync + 'static {
+        || TaskResult::new("", String::new(), "")
     }
 
     fn is_control_char_error(error: &NamingError, expected: NameInputType, bad: &str) -> bool {
@@ -604,16 +603,10 @@ mod startup {
 mod sending {
     use super::*;
     use thryve_utils::errors::{EngineNotRunningError, ThryveError, get_err};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::res::TaskResult;
 
     fn task() -> Task {
-        Task::new(
-            "Late",
-            0,
-            TaskJob::new(|| TaskResult::new("", String::new(), "")),
-        )
-        .unwrap()
+        Task::new("Late", 0, || TaskResult::new("", String::new(), "")).unwrap()
     }
 
     #[test]
@@ -640,7 +633,7 @@ mod sending {
         ));
 
         // Thryve's own status lines are dropped without an error or a panic.
-        handle.send_status(Log::log("ThreadPool Finalized".to_string(), "Main"));
+        handle.send_status_log(Log::log("ThreadPool Finalized".to_string(), "Main"));
     }
 
     mod ffi {
@@ -702,7 +695,6 @@ mod engine {
     use thryve_run::run::run_interactive::summon_requirements;
     use thryve_utils::bases::plugin::Plugin;
     use thryve_utils::errors::{NameInputType, StartupError, ThryveError};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::res::TaskResult;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
@@ -773,7 +765,7 @@ mod engine {
         let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
         let mut plugins = PluginManager::new(&ctx, res_tx);
         let plugin = || {
-            let job = TaskJob::new(|| TaskResult::new("", String::new(), ""));
+            let job = || TaskResult::new("", String::new(), "");
             Plugin::new("Resizer", Arc::new(QuietPlugin), ctx.packet_handle(), job).unwrap()
         };
         plugins.load_plugin(&ctx.config, plugin(), false).unwrap();
@@ -1006,7 +998,6 @@ mod topology {
 
 mod shutdown {
     use super::*;
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::queues::priority_queue::PQChild;
     use thryve_utils::res::TaskResult;
     use thryve_utils::threads::threadpool::ThreadPool;
@@ -1024,9 +1015,7 @@ mod shutdown {
 
         let finished = with_silent_panics(|| {
             pool.run_threads_plugins(Arc::new(res_tx)).unwrap();
-            pool.submit_task(
-                Task::new("Boom", 0, TaskJob::new(|| panic!("the task panics"))).unwrap(),
-            );
+            pool.submit_task(Task::new("Boom", 0, || panic!("the task panics")).unwrap());
 
             // One worker dies with the task's panic...
             let died = wait_until(|| pool.workers.iter().any(|(worker, _)| worker.is_finished()));

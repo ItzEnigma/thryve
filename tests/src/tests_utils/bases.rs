@@ -14,7 +14,6 @@ mod tests_plugin {
     use crossbeam::channel::bounded;
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::bases::plugin::*;
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::packet_handle::PacketHandle;
     use thryve_utils::packets::task::Task;
     use thryve_utils::res::TaskResult;
@@ -38,7 +37,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act
         let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
@@ -55,7 +54,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act
         let plugin = Plugin::new("type456", plg_core, packet_handle, job).unwrap();
@@ -72,7 +71,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act
         let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
@@ -89,13 +88,13 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         let mut plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
         // Act - first call should return the original job
         let first_fn = plugin.plg_entry_point();
-        let first_result = first_fn.call_once();
+        let first_result = first_fn();
 
         // Assert - first call returns original job
         assert_eq!(first_result.result_type(), "OK");
@@ -103,7 +102,7 @@ mod tests_plugin {
 
         // Act - second call should return default error function
         let second_fn = plugin.plg_entry_point();
-        let second_result = second_fn.call_once();
+        let second_result = second_fn();
 
         // Assert - second call returns error function
         assert_eq!(second_result.result_type(), "BIGERR");
@@ -121,7 +120,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         let plugin = Plugin::new("TestType", plg_core, packet_handle, job).unwrap();
 
@@ -137,7 +136,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act
         let plugin = Plugin::new("b", plg_core, packet_handle, job).unwrap();
@@ -155,7 +154,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act
         let plugin = Plugin::new(&long_type, plg_core, packet_handle, job).unwrap();
@@ -172,7 +171,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act & Assert - rejected: plg_type cannot be empty
         assert!(matches!(
@@ -191,7 +190,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act & Assert - accepted: names only reject empty text and control characters
         assert!(Plugin::new("test-type", plg_core, packet_handle, job).is_ok());
@@ -205,7 +204,7 @@ mod tests_plugin {
         let packet_handle =
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
         let plg_core = Arc::new(TestPlgLogic);
-        let job: TaskJob = TaskJob::new(|| TaskResult::new("OK", "success".to_string(), "Main"));
+        let job = || TaskResult::new("OK", "success".to_string(), "Main");
 
         // Act & Assert - accepted: names only reject empty text and control characters
         assert!(Plugin::new("Test_Type", plg_core, packet_handle, job).is_ok());

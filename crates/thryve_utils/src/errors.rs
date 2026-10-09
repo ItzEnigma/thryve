@@ -68,8 +68,15 @@ pub enum ThryveError {
     #[error("engine is not running")]
     EngineNotRunning(#[from] EngineNotRunningError),
 
-    #[error("An Error Occured while finalizing")]
+    /// Something failed during the shutdown, for example a plugin's cleanup.
+    /// [`FinalizationError`] says what.
+    #[error("an error occurred while finalizing")]
     Finalization(#[from] FinalizationError),
+
+    /// A follow-up couldn't run its closure: it got no input, or an input of the wrong type.
+    /// [`TaskError`] says which.
+    #[error("task failed")]
+    Task(#[from] TaskError),
 }
 
 /// Why starting Thryve failed.
@@ -246,7 +253,7 @@ pub enum ConfigError {
     },
 
     /// The file couldn't be read, for example because it doesn't exist.
-    #[error("failed to read config file '{}'" , .path.display())]
+    #[error("failed to read config file '{}'", .path.display())]
     FileRead {
         /// The configuration file.
         path: PathBuf,
@@ -256,7 +263,7 @@ pub enum ConfigError {
 
     /// The file parsed, but some values would break the engine. The message lists every one of
     /// them, one per line.
-    #[error("invalid config file '{}':\n{}" , .path.display(), violation)]
+    #[error("invalid config file '{}':\n{}", .path.display(), violation)]
     ConfigViolation {
         /// The configuration file.
         path: PathBuf,
@@ -283,12 +290,44 @@ pub enum EngineNotRunningError {
     Notif,
 }
 
+/// What failed during the shutdown.
+///
+/// A plugin's [`clean_up`](crate::traits::plugin_logic::PlgLogic::clean_up) returns it inside
+/// [`ThryveError::Finalization`]. Thryve writes it to `Error.log` and goes on with the shutdown.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FinalizationError {
-    /// A task was sent and dropped.
+    /// A plugin's cleanup failed.
     #[error("plugin {} failed to clean up successfully", plugin_type)]
-    PluginCleanup { plugin_type: String },
+    PluginCleanup {
+        /// The plugin's type.
+        plugin_type: String,
+    },
+}
+
+/// Why a follow-up couldn't run its closure: it got no input, or an input of the wrong type.
+///
+/// A follow-up is declared with
+/// [`AdvTaskHandle::then`](crate::packets::task::AdvTaskHandle::then), which ties its input to the
+/// task it follows, so only a bug in Thryve can cause either. The follow-up's job doesn't panic: it
+/// returns the error as its result, so the engine still hears back from it, and the error's text
+/// goes to `Error.log`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum TaskError {
+    /// The follow-up reached a worker before it got the result of the task it waits for.
+    #[error("task '{}' waited with no input", task_name)]
+    WaitWithNoInput {
+        /// The follow-up's name.
+        task_name: String,
+    },
+
+    /// The follow-up got a result that isn't the `Result<T, E>` of the task it follows.
+    #[error("handoff to task '{}' failed to downcast properly", task_name)]
+    SealedHandoffFailedDowncast {
+        /// The follow-up's name.
+        task_name: String,
+    },
 }
 
 /// What a name is for: a task name, a plugin type, and so on.

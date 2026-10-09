@@ -55,7 +55,7 @@ use crate::{graphs::callsite::TaskCallSite, res::TaskResult};
 ///     }
 /// }
 /// ```
-pub trait Packet: Send + Sync + 'static {
+pub trait Packet: Send + 'static {
     /// Processes the packet and returns a result.
     ///
     /// This method provides the execution logic for packets. For tasks,

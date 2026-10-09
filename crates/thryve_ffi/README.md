@@ -331,7 +331,7 @@ Foreign Language                              Rust
                                               ┌─────────────────────────┐
 3. thryve_plugin_create(type, core, tx,          │ Takes ownership of:       │
    clean_up, entry_point)                      │ - type (CString)          │
-   → ThryvePlugin                                 │ - entry_point (TaskJob)   │
+   → ThryvePlugin                                 │ - entry_point (closure)   │
                                               │ Does NOT take:            │
                                               │ - clean_up                │
                                               │ - plg_core_ptr (passed    │

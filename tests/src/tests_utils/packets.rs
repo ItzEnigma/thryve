@@ -9,7 +9,6 @@
 
 mod tests_task {
     use thryve_utils::errors::{NameInputType, NamingError};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::graphs::callsite::TaskCallSite;
     use thryve_utils::packets::task::*;
     use thryve_utils::res::TaskResult;
@@ -22,18 +21,14 @@ mod tests_task {
         let priority = 5;
 
         // Act
-        let task1 = Task::new(
-            task_name,
-            priority,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task1 = Task::new(task_name, priority, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
-        let task2 = Task::new(
-            task_name,
-            priority,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task2 = Task::new(task_name, priority, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Assert
@@ -45,11 +40,9 @@ mod tests_task {
     #[test]
     fn test_task_new_with_zero_priority() {
         // Arrange & Act
-        let task = Task::new(
-            "LowPriority",
-            0,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("LowPriority", 0, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Assert
@@ -59,11 +52,9 @@ mod tests_task {
     #[test]
     fn test_task_new_with_max_u8_priority() {
         // Arrange & Act
-        let task = Task::new(
-            "MaxPriority",
-            u8::MAX,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("MaxPriority", u8::MAX, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Assert
@@ -73,11 +64,9 @@ mod tests_task {
     #[test]
     fn test_task_process_executes_job() {
         // Arrange
-        let task = Task::new(
-            "ProcessTest",
-            1,
-            TaskJob::new(|| TaskResult::new("Success", "Processed".to_string(), "Main")),
-        )
+        let task = Task::new("ProcessTest", 1, || {
+            TaskResult::new("Success", "Processed".to_string(), "Main")
+        })
         .unwrap();
         let task_id = task.id;
 
@@ -95,11 +84,9 @@ mod tests_task {
     #[test]
     fn test_task_clamp_task_priority_clamps_high_priority() {
         // Arrange
-        let mut task = Task::new(
-            "HighPriority",
-            10,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("HighPriority", 10, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let max_priority = 4u8;
 
@@ -113,11 +100,9 @@ mod tests_task {
     #[test]
     fn test_task_clamp_task_priority_keeps_valid_priority() {
         // Arrange
-        let mut task = Task::new(
-            "ValidPriority",
-            3,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("ValidPriority", 3, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let max_priority = 4u8;
 
@@ -131,11 +116,9 @@ mod tests_task {
     #[test]
     fn test_task_clamp_task_priority_at_boundary() {
         // Arrange
-        let mut task = Task::new(
-            "BoundaryPriority",
-            4,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("BoundaryPriority", 4, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let max_priority = 4u8;
 
@@ -149,11 +132,9 @@ mod tests_task {
     #[test]
     fn test_task_clamp_task_priority_with_zero_max() {
         // Arrange
-        let mut task = Task::new(
-            "AnyPriority",
-            100,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("AnyPriority", 100, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let max_priority = 0u8;
 
@@ -167,24 +148,9 @@ mod tests_task {
     #[test]
     fn test_task_unique_ids_are_sequential() {
         // Arrange & Act
-        let task1 = Task::new(
-            "T1",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        )
-        .unwrap();
-        let task2 = Task::new(
-            "T2",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        )
-        .unwrap();
-        let task3 = Task::new(
-            "T3",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "".to_string(), "Main")),
-        )
-        .unwrap();
+        let task1 = Task::new("T1", 1, || TaskResult::new("Ok", "".to_string(), "Main")).unwrap();
+        let task2 = Task::new("T2", 1, || TaskResult::new("Ok", "".to_string(), "Main")).unwrap();
+        let task3 = Task::new("T3", 1, || TaskResult::new("Ok", "".to_string(), "Main")).unwrap();
 
         // Assert
         assert_eq!(task2.id, task1.id + 1);
@@ -195,11 +161,7 @@ mod tests_task {
     fn test_task_with_empty_name_is_rejected() {
         // Arrange & Act & Assert - rejected: an empty name is an error
         assert!(matches!(
-            Task::new(
-                "",
-                1,
-                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            ),
+            Task::new("", 1, || TaskResult::new("Ok", "Done".to_string(), "Main"),),
             Err(NamingError::NameEmpty {
                 kind: NameInputType::TaskName
             })
@@ -209,11 +171,9 @@ mod tests_task {
     #[test]
     fn test_task_with_numbers_in_name() {
         // Arrange & Act
-        let task = Task::new(
-            "Task123",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("Task123", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Assert
@@ -224,11 +184,11 @@ mod tests_task {
     fn test_task_with_hyphen_in_name_is_accepted() {
         // Arrange & Act
         assert!(
-            Task::new(
-                "Invalid-Name",
-                1,
-                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            )
+            Task::new("Invalid-Name", 1, || TaskResult::new(
+                "Ok",
+                "Done".to_string(),
+                "Main"
+            ),)
             .is_ok()
         );
     }
@@ -236,11 +196,9 @@ mod tests_task {
     #[test]
     fn test_task_process_returns_correct_id() {
         // Arrange
-        let task = Task::new(
-            "IdTest",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("IdTest", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
         let expected_id = task.id;
 
@@ -255,11 +213,9 @@ mod tests_task {
     #[test]
     fn test_size_in_bytes_returns_struct_size() {
         // Arrange
-        let task = Task::new(
-            "SizeTest",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("SizeTest", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -273,17 +229,13 @@ mod tests_task {
     #[test]
     fn test_size_in_bytes_consistent_across_instances() {
         // Arrange
-        let task1 = Task::new(
-            "Task1",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task1 = Task::new("Task1", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
-        let task2 = Task::new(
-            "Task2",
-            2,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task2 = Task::new("Task2", 2, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -297,11 +249,9 @@ mod tests_task {
     #[test]
     fn test_size_in_bytes_matches_mem_size_of() {
         // Arrange
-        let task = Task::new(
-            "MemSizeTest",
-            5,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("MemSizeTest", 5, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -314,11 +264,9 @@ mod tests_task {
     #[test]
     fn test_task_set_callsite_sets_callsite() {
         // Arrange
-        let mut task = Task::new(
-            "CallsiteTest",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("CallsiteTest", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         let callsite = TaskCallSite::new(
@@ -340,11 +288,9 @@ mod tests_task {
     #[test]
     fn test_task_get_callsite_returns_default_when_none_set() {
         // Arrange
-        let task = Task::new(
-            "NoCallsite",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("NoCallsite", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -358,11 +304,9 @@ mod tests_task {
     #[test]
     fn test_task_process_returns_error_result() {
         // Arrange
-        let task = Task::new(
-            "ErrorTest",
-            1,
-            TaskJob::new(|| TaskResult::new("Error", "Something went wrong".to_string(), "Error")),
-        )
+        let task = Task::new("ErrorTest", 1, || {
+            TaskResult::new("Error", "Something went wrong".to_string(), "Error")
+        })
         .unwrap();
 
         // Act
@@ -379,11 +323,11 @@ mod tests_task {
     fn test_task_with_special_characters_in_name_is_accepted() {
         // Arrange & Act & Assert - accepted: names only reject empty text and control characters
         assert!(
-            Task::new(
-                "Task-With_Dots.And123",
-                1,
-                TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-            )
+            Task::new("Task-With_Dots.And123", 1, || TaskResult::new(
+                "Ok",
+                "Done".to_string(),
+                "Main"
+            ),)
             .is_ok()
         );
     }
@@ -391,11 +335,9 @@ mod tests_task {
     #[test]
     fn test_task_callsite_preserved_after_process() {
         // Arrange
-        let mut task = Task::new(
-            "CallsitePreserve",
-            1,
-            TaskJob::new(|| TaskResult::new("Ok", "Done".to_string(), "Main")),
-        )
+        let mut task = Task::new("CallsitePreserve", 1, || {
+            TaskResult::new("Ok", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         let callsite = TaskCallSite::new(
@@ -416,7 +358,6 @@ mod tests_task {
 mod tests_packet_handle {
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::errors::{NameInputType, NamingError};
-    use thryve_utils::extras::jobs::TaskJob;
     use thryve_utils::packets::notif_log::Log;
     use thryve_utils::packets::packet_handle::*;
     use thryve_utils::packets::task::Task;
@@ -445,11 +386,9 @@ mod tests_packet_handle {
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, notif_rx) = crossbeam::channel::bounded::<Notif>(10);
         let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
-        let task = Task::new(
-            "TestTask",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTask", 0, || {
+            TaskResult::new("Success", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act
@@ -492,17 +431,13 @@ mod tests_packet_handle {
         let handle2 = handle1.clone();
 
         // Assert - both handles can send
-        let task1 = Task::new(
-            "Task1",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        )
+        let task1 = Task::new("Task1", 0, || {
+            TaskResult::new("Success", "Done".to_string(), "Main")
+        })
         .unwrap();
-        let task2 = Task::new(
-            "Task2",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        )
+        let task2 = Task::new("Task2", 0, || {
+            TaskResult::new("Success", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         handle1.send_task(task1).unwrap();
@@ -524,11 +459,9 @@ mod tests_packet_handle {
 
         // Act
         for i in 0..5 {
-            let task = Task::new(
-                &format!("Task{}", i),
-                0,
-                TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-            )
+            let task = Task::new(&format!("Task{}", i), 0, || {
+                TaskResult::new("Success", "Done".to_string(), "Main")
+            })
             .unwrap();
             handle.send_task(task).unwrap();
         }
@@ -574,11 +507,9 @@ mod tests_packet_handle {
         // Act - send interleaved
         handle
             .send_task(
-                Task::new(
-                    "T1",
-                    0,
-                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-                )
+                Task::new("T1", 0, || {
+                    TaskResult::new("Success", "Done".to_string(), "Main")
+                })
                 .unwrap(),
             )
             .unwrap();
@@ -587,11 +518,9 @@ mod tests_packet_handle {
             .unwrap();
         handle
             .send_task(
-                Task::new(
-                    "T2",
-                    0,
-                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-                )
+                Task::new("T2", 0, || {
+                    TaskResult::new("Success", "Done".to_string(), "Main")
+                })
                 .unwrap(),
             )
             .unwrap();
@@ -620,31 +549,25 @@ mod tests_packet_handle {
         // Act
         handle
             .send_task(
-                Task::new(
-                    "Low",
-                    0,
-                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-                )
+                Task::new("Low", 0, || {
+                    TaskResult::new("Success", "Done".to_string(), "Main")
+                })
                 .unwrap(),
             )
             .unwrap();
         handle
             .send_task(
-                Task::new(
-                    "Medium",
-                    50,
-                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-                )
+                Task::new("Medium", 50, || {
+                    TaskResult::new("Success", "Done".to_string(), "Main")
+                })
                 .unwrap(),
             )
             .unwrap();
         handle
             .send_task(
-                Task::new(
-                    "High",
-                    100,
-                    TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-                )
+                Task::new("High", 100, || {
+                    TaskResult::new("Success", "Done".to_string(), "Main")
+                })
                 .unwrap(),
             )
             .unwrap();
@@ -685,11 +608,9 @@ mod tests_packet_handle {
             PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, false);
 
         // Act - a task with an empty name can't be created, so nothing can be sent
-        let task = Task::new(
-            "",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        );
+        let task = Task::new("", 0, || {
+            TaskResult::new("Success", "Done".to_string(), "Main")
+        });
 
         // Assert
         assert!(matches!(
@@ -739,11 +660,9 @@ mod tests_packet_handle {
         let (task_tx, task_rx) = crossbeam::channel::bounded::<Task>(10);
         let (notif_tx, _) = crossbeam::channel::bounded::<Notif>(10);
         let handle = PacketHandle::new(task_tx, notif_tx, crossbeam::channel::unbounded().0, true);
-        let task = Task::new(
-            "TestTaskWithGraph",
-            0,
-            TaskJob::new(|| TaskResult::new("Success", "Done".to_string(), "Main")),
-        )
+        let task = Task::new("TestTaskWithGraph", 0, || {
+            TaskResult::new("Success", "Done".to_string(), "Main")
+        })
         .unwrap();
 
         // Act - send task with graph visualization enabled
@@ -769,7 +688,7 @@ mod tests_packet_handle {
     }
 
     fn any_task() -> Task {
-        Task::new("Probe", 0, TaskJob::new(TaskResult::default)).unwrap()
+        Task::new("Probe", 0, TaskResult::default).unwrap()
     }
 
     #[test]
