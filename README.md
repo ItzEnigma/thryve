@@ -24,7 +24,7 @@ Thryve is designed around three main pillars:
 ### Key Features
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
-- **Typed tasks with follow-ups**: a task's value, or its own error, goes to the task declared after it with `then`, so plugins combine without knowing each other
+- **Typed tasks with follow-ups and joins**: a task's value, or its own error, goes to the task declared after it with `then`, and several tasks can share one follow-up with `join`, so plugins combine without knowing each other
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -40,7 +40,7 @@ Thryve is designed around three main pillars:
 
 1. **Tasks** enter through the task channel and are queued by priority
 2. **Worker threads** execute tasks from the priority queue
-3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up
+3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, or into its join
 4. **Notifications** flow through the observer system for logging and monitoring
 
 ## Core Concepts
@@ -117,6 +117,40 @@ fn size_in_kb(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 Plain `Task`s and `chain` keep working for fire-and-forget work.
 
+### Joins
+
+Several typed tasks of one type can share one follow-up with `join`. It uses their handles up, and its closure gets a `JoinHandoff`: every value, in the order of the handles, or the first error and the position of the task that failed:
+
+```rust
+use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::packets::task::{AdvTask, join};
+use thryve_utils::res::JoinHandoff;
+
+fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let mut sizes = Vec::new();
+    for path in ["a.png", "b.png", "c.png"] {
+        let file_size = AdvTask::new("FileSize", 2, move || {
+            std::fs::metadata(path).map(|meta| meta.len())
+        })?;
+        sizes.push(handle.send_adv_task(file_size)?);
+    }
+
+    join(sizes, "TotalSize", |joined| match joined {
+        // Every file's size, in the order of `sizes`.
+        JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
+        // The first `FileSize` that failed, with its own `std::io::Error`.
+        JoinHandoff::Error { error, .. } => Err(error),
+    })?;
+
+    Ok(())
+}
+```
+
+- **Fails fast:** the join runs as soon as one task fails. The other tasks still run, and nobody takes their results: an error is written to `Error.log`.
+- **A follow-up like any other:** `join` returns the join's own handle, so the join can be followed with `then`, or be one of the tasks of another join. It waits for each task whether that task finished before the join was declared or after, and a task that forwards fills its slot with the result of the task it forwarded to.
+- **Priority:** the join inherits the highest priority among its tasks, capped below realtime. `join_with_priority` gives it its own.
+- **Splitting has a cost:** joins of joins let work be split, and split again: ten images, each split into rows, and the rows' results archived into one zip. But every piece is a task of its own, with its own trip through the queue, its own result and its own slot, and every join adds one more task. Splitting finer than the work needs adds that overhead without making anything faster, so aim for a balance: enough pieces to keep the workers busy, each big enough to be worth a task.
+
 ### Observers
 
 Observers are long-running components that process notifications:
@@ -172,10 +206,12 @@ Core utilities, data structures, and traits.
 |-----------|-------------|
 | `Task` | Unit of work with priority and unique ID |
 | `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) |
+| `join` / `join_with_priority` | One follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
 | `Notif` | Notification structure for observer communication |
 | `Log` | Logging notification implementation |
 | `TaskResult` | Task execution outcome with chaining capability |
 | `Handoff` | What a follow-up gets: the task's value, or its own error |
+| `JoinHandoff` | What a join's follow-up gets: every task's value, in order, or the first error and the position of the task that failed |
 | `ThreadPool` | Generic thread pool for tasks and notifications |
 | `PQChild` | Priority queue with aging mechanism |
 | `QChild` | Segmented queue for notifications |

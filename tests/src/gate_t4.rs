@@ -152,14 +152,14 @@ fn answer() -> AdvTask<u32, HashError> {
 }
 
 /// A packet handle whose tasks land in the returned mailbox instead of an engine's.
-fn handle_and_mailbox(is_graph_mode_on: bool) -> (PacketHandle, Receiver<Task>) {
+pub(crate) fn handle_and_mailbox(is_graph_mode_on: bool) -> (PacketHandle, Receiver<Task>) {
     let (task_tx, task_rx) = bounded(10);
     let handle = PacketHandle::new(task_tx, bounded(10).0, unbounded().0, is_graph_mode_on);
     (handle, task_rx)
 }
 
 /// Like [`handle_and_mailbox`], but also returns the status mailbox, where releases land.
-fn handle_mailbox_and_status() -> (PacketHandle, Receiver<Task>, Receiver<StatusMsg>) {
+pub(crate) fn handle_mailbox_and_status() -> (PacketHandle, Receiver<Task>, Receiver<StatusMsg>) {
     let (task_tx, task_rx) = bounded(10);
     let (status_tx, status_rx) = unbounded();
     let handle = PacketHandle::new(task_tx, bounded(10).0, status_tx, false);
@@ -167,7 +167,11 @@ fn handle_mailbox_and_status() -> (PacketHandle, Receiver<Task>, Receiver<Status
 }
 
 /// A task that forwards: when it runs, it sends `to` through `sender` and returns its handle.
-fn forwarding<T, E>(name: &str, sender: &PacketHandle, to: AdvTask<T, E>) -> AdvTask<T, E>
+pub(crate) fn forwarding<T, E>(
+    name: &str,
+    sender: &PacketHandle,
+    to: AdvTask<T, E>,
+) -> AdvTask<T, E>
 where
     T: Send + 'static,
     E: std::error::Error + Send + 'static,
@@ -192,7 +196,7 @@ fn gated_answer(go: Receiver<()>) -> AdvTask<u32, HashError> {
 
 /// Sends `task`, takes it out of the mailbox and runs it the way a worker does. Returns the id it
 /// was sent with, the id its result came back with, and the result.
-fn run_like_a_worker<T, E>(task: AdvTask<T, E>) -> (u64, u64, TaskResult)
+pub(crate) fn run_like_a_worker<T, E>(task: AdvTask<T, E>) -> (u64, u64, TaskResult)
 where
     T: Send + 'static,
     E: std::error::Error + Send + 'static,
@@ -207,7 +211,9 @@ where
 }
 
 /// Opens a result's handoff as the `Result<T, E>` it sealed, and returns it with the error text.
-fn open<T: 'static, E: 'static>(mut result: TaskResult) -> (Result<T, E>, Option<String>) {
+pub(crate) fn open<T: 'static, E: 'static>(
+    mut result: TaskResult,
+) -> (Result<T, E>, Option<String>) {
     match result
         .take_handoff()
         .expect("an AdvTask's result carries a handoff")
@@ -263,7 +269,7 @@ fn handle_a_result(engine: &mut Engine) {
 
 /// Runs the engine's turns until `got` receives what a follow-up sent it, for up to 5 seconds, and
 /// returns it.
-fn run_until_received<X>(engine: &mut Engine, got: &Receiver<X>) -> X {
+pub(crate) fn run_until_received<X>(engine: &mut Engine, got: &Receiver<X>) -> X {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Ok(received) = got.try_recv() {
@@ -275,7 +281,7 @@ fn run_until_received<X>(engine: &mut Engine, got: &Receiver<X>) -> X {
 }
 
 /// Runs the engine's turns until its wait table is empty, for up to 5 seconds.
-fn run_until_the_wait_table_is_empty(engine: &mut Engine) {
+pub(crate) fn run_until_the_wait_table_is_empty(engine: &mut Engine) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while engine.wait_table_len() > 0 {
         assert!(

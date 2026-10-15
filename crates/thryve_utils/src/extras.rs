@@ -484,7 +484,8 @@ pub mod jobs {
         }
     }
 
-    /// What a task runs: a job it can run now, or one that waits for another task's handoff.
+    /// What a task runs: a job it can run now, one that waits for another task's handoff, or a
+    /// join's, which waits for several.
     pub(crate) enum Job {
         /// Runs as soon as a worker takes the task.
         TaskReady(TaskJob),
@@ -499,6 +500,22 @@ pub mod jobs {
             inherits_priority: bool,
             /// Takes the sealed handoff of the task it waits on, and returns this task's result.
             input_job: Box<dyn FnOnce(SealedHandoff) -> TaskResult + Send>,
+        },
+        /// A join declared with `join`: the engine fills its slots as the tasks it waits on
+        /// finish, then makes it ready, once every slot is full or as soon as one task fails.
+        JoinWait {
+            /// One slot per task, in the order the handles were given: the task's id, and its
+            /// sealed handoff once it has arrived.
+            slots: Vec<(u64, Option<SealedHandoff>)>,
+            /// Whether its priority was inherited from the tasks it waits on (`join`: the highest
+            /// of theirs), rather than given (`join_with_priority`). An inherited priority is
+            /// capped below realtime when the task becomes ready.
+            inherits_priority: bool,
+            /// How many slots are still empty.
+            remaining_inputs: usize,
+            /// Takes the slots' handoffs, in order, some of them still empty if a task failed
+            /// first, and returns this task's result.
+            input_job: Box<dyn FnOnce(Vec<Option<SealedHandoff>>) -> TaskResult + Send>,
         },
     }
 }

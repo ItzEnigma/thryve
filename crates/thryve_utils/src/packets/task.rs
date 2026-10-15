@@ -29,7 +29,8 @@
 //! [`then`](AdvTaskHandle::then) on it declares a follow-up, a task of its own that gets the
 //! result as a [`Handoff`]. A task that creates its last step while it runs can forward to it
 //! with [`AdvTask::forward`] or [`then_forward`](AdvTaskHandle::then_forward), and whoever follows
-//! it gets that step's result.
+//! it gets that step's result. Several tasks of one type can share one follow-up with [`join`]: it
+//! runs once all of them have finished, with all their values, or as soon as one fails.
 //!
 //! # Unique Identification
 //!
@@ -40,13 +41,15 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::errors::{NameInputType, NamingError, TaskError, ThryveError, get_err_oneline};
+use crate::errors::{
+    JoinError, NameInputType, NamingError, TaskError, ThryveError, get_err_oneline,
+};
 use crate::extras::jobs::Job;
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
 use crate::graphs::callsite::TaskCallSite;
 use crate::packets::packet_handle::PacketHandle;
 use crate::queues::priority_queue::inherited_priority_cap;
-use crate::res::{Handoff, SealedHandoff, TaskResult};
+use crate::res::{Handoff, JoinHandoff, SealedHandoff, TaskResult};
 use crate::traits::packets::Packet;
 
 /// Atomic counter for generating unique task IDs.
@@ -246,6 +249,34 @@ impl Task {
         })
     }
 
+    /// Creates a join that waits for the tasks whose ids are in `join_values`: it starts with one
+    /// empty slot per id, in that order, and the engine fills them (see
+    /// [`join_insert`](Self::join_insert)) and then makes it ready (see
+    /// [`with_join_inputs`](Self::with_join_inputs)), which hands the slots to `fn_to_exec`.
+    ///
+    /// `inherits_priority` says whether `task_priority` was inherited from those tasks, in which
+    /// case it's capped below realtime when the join becomes ready.
+    fn new_join_wait(
+        task_name: &str,
+        task_priority: u8,
+        inherits_priority: bool,
+        join_values: Vec<u64>,
+        fn_to_exec: impl FnOnce(Vec<Option<SealedHandoff>>) -> TaskResult + Send + 'static,
+    ) -> Result<Self, NamingError> {
+        Ok(Self {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new(task_name, NameInputType::TaskName)?,
+            base_priority: task_priority,
+            job: Job::JoinWait {
+                slots: join_values.iter().map(|id| (*id, None)).collect(),
+                inherits_priority,
+                remaining_inputs: join_values.len(),
+                input_job: Box::new(fn_to_exec),
+            },
+        })
+    }
+
     /// Creates a plugin's init task, named after the plugin's type.
     ///
     /// The plugin manager sends it when it loads the plugin. The type was checked when the plugin
@@ -318,6 +349,81 @@ impl Task {
         self
     }
 
+    /// Puts the handoff of one of a join's tasks into its slot, at `position`, and counts it as
+    /// arrived.
+    ///
+    /// The engine knows which task the handoff came from, so it finds the slot by position and
+    /// never searches the slots by id.
+    ///
+    /// For Thryve's engine. Not part of the public API.
+    ///
+    /// # Errors
+    ///
+    /// Gives the handoff back, unplaced and uncounted, if this task isn't a join, `position` is
+    /// past its last slot, or that slot is already full. Only a bug in Thryve can cause any of
+    /// them; the engine then treats the handoff like any result nobody claimed.
+    #[doc(hidden)]
+    pub fn join_insert(
+        &mut self,
+        sealed: SealedHandoff,
+        position: usize,
+    ) -> Result<(), SealedHandoff> {
+        if let Job::JoinWait {
+            slots,
+            remaining_inputs,
+            ..
+        } = &mut self.job
+            && let Some((_, sealed_handoff_opt)) = slots.get_mut(position)
+            && sealed_handoff_opt.is_none()
+        {
+            slots[position].1 = Some(sealed);
+            *remaining_inputs -= 1;
+            return Ok(());
+        }
+
+        Err(sealed)
+    }
+
+    /// Makes a join ready: hands its slots' handoffs, in order, to its job, which then runs like any
+    /// ready task's.
+    ///
+    /// The engine calls it once every slot is full, or as soon as one of the join's tasks fails (a
+    /// join fails fast), so some slots may still be empty; the job tells the two cases apart.
+    ///
+    /// If its priority was inherited (it was declared with [`join`]), it's lowered to just below
+    /// realtime when it's realtime or higher, as a follow-up's is in
+    /// [`with_input`](Self::with_input). A priority given with [`join_with_priority`] is kept as
+    /// it is. A task that isn't a join comes back unchanged.
+    ///
+    /// For Thryve's engine. Not part of the public API.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_priority` - The configured `tasks.max_priority`, which sets where realtime starts
+    #[doc(hidden)]
+    pub fn with_join_inputs(mut self, max_priority: u8) -> Self {
+        if let Job::JoinWait {
+            mut slots,
+            inherits_priority,
+            input_job,
+            ..
+        } = self.job
+        {
+            let inputs: Vec<Option<SealedHandoff>> = slots
+                .drain(..)
+                .map(|(_, sealed_handoff_opt)| sealed_handoff_opt)
+                .collect();
+
+            if inherits_priority && let Some(cap) = inherited_priority_cap(max_priority) {
+                self.base_priority = self.base_priority.min(cap);
+            }
+
+            self.job = Job::TaskReady(TaskJob::new(move || input_job(inputs)));
+        }
+
+        self
+    }
+
     /// Returns the size of this task in bytes.
     ///
     /// This method returns the memory footprint of the task struct
@@ -352,6 +458,34 @@ impl Task {
             Job::TaskWait { on, .. } => Some(on),
             _ => None,
         }
+    }
+
+    /// How many of a join's slots are still empty, or `None` for a task that isn't a join.
+    ///
+    /// For Thryve's engine, which holds a join until it's ready instead of queueing it. Not part of
+    /// the public API.
+    #[doc(hidden)]
+    pub fn waiting_on_join(&self) -> Option<usize> {
+        match self.job {
+            Job::JoinWait {
+                remaining_inputs, ..
+            } => Some(remaining_inputs),
+            _ => None,
+        }
+    }
+
+    /// The ids of the tasks a join waits for, in the order their handles were given, or `None` for
+    /// a task that isn't a join.
+    ///
+    /// It's a copy, so the engine can fill the join's slots while it goes through the ids. For
+    /// Thryve's engine. Not part of the public API.
+    #[doc(hidden)]
+    pub fn join_get_ids(&self) -> Option<Vec<u64>> {
+        if let Job::JoinWait { slots, .. } = &self.job {
+            return Some(slots.iter().map(|(id, _)| *id).collect());
+        }
+
+        None
     }
 }
 
@@ -451,7 +585,8 @@ pub struct AdvTask<T: Send + 'static, E: std::error::Error + Send + 'static> {
 /// can be chained. It doesn't hold the task's result: the result goes to the engine, which hands it
 /// to the follow-up. `then` uses the handle up, so a task has at most one follow-up. Returning the
 /// handle from a forwarding task (see [`AdvTask::forward`]) uses it up too: whoever follows the
-/// forwarding task gets this task's result.
+/// forwarding task gets this task's result. So does passing it to [`join`], whose follow-up
+/// waits for this task together with the others.
 ///
 /// The engine keeps the task's result for as long as the handle exists, so `then` works even
 /// after the task has finished. Dropping the handle without calling `then` tells the engine that
@@ -910,4 +1045,210 @@ where
     };
 
     Box::new(wrapper)
+}
+
+/// Declares a join: one follow-up for several tasks, which runs once all of them have finished,
+/// with all their values, or as soon as one of them fails, with its error.
+///
+/// `slots` holds the handles of the tasks to join, which each return `Result<T, E>`; each one
+/// fills a slot of the join, in order. The join is sent to the engine now, but it waits there
+/// until those tasks finish or one fails; then its closure runs on a worker with a
+/// [`JoinHandoff`]:
+///
+/// - [`Filled`](JoinHandoff::Filled) when every task returned a value: the values, in the order of
+///   `slots`;
+/// - [`Error`](JoinHandoff::Error) when one failed: its position in `slots`, counted from 0, and
+///   its own error. A join fails fast: it runs as soon as one task fails, without waiting for the
+///   rest. The other tasks still run, and nobody takes their results: an error is written to
+///   `Error.log`, and a value is dropped.
+///
+/// A task that forwards fills its slot with the result of the task it forwarded to, whether it
+/// forwarded before the join was declared or after.
+///
+/// It uses up the handles and returns the join's own handle, an ordinary [`AdvTaskHandle`], so the
+/// join can be followed with [`then`](AdvTaskHandle::then), or be one of the tasks of another join.
+/// It runs at the highest priority among the tasks it joins, capped just below realtime, so a join
+/// never runs as realtime by inheritance. To give it a priority of its own, use
+/// [`join_with_priority`].
+///
+/// Joins of joins split work and split it again, but every piece is a task of its own, with its
+/// own trip through the queue and its own slot, and every join is one more task. Splitting finer
+/// than the work needs adds that overhead without making anything faster: aim for enough pieces to
+/// keep the workers busy, each big enough to be worth a task.
+///
+/// # Errors
+///
+/// - [`ThryveError::Join`] if `slots` is empty;
+/// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character. The handles
+///   are then released, as if they had been dropped;
+/// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+///
+/// # Example
+///
+/// ```no_run
+/// # use crossbeam::channel::{bounded, unbounded};
+/// # use thryve_utils::packets::packet_handle::PacketHandle;
+/// use thryve_utils::packets::task::{AdvTask, join};
+/// use thryve_utils::res::JoinHandoff;
+///
+/// # let (task_tx, _task_rx) = bounded(4);
+/// # let (notif_tx, _notif_rx) = bounded(1);
+/// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
+/// let mut sizes = Vec::new();
+/// for path in ["a.png", "b.png", "c.png"] {
+///     let file_size = AdvTask::new("FileSize", 2, move || {
+///         std::fs::metadata(path).map(|meta| meta.len())
+///     })?;
+///     sizes.push(handle.send_adv_task(file_size)?);
+/// }
+///
+/// join(sizes, "TotalSize", |joined| match joined {
+///     // Every file's size, in the order of `sizes`.
+///     JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
+///     // The first `FileSize` that failed, with its own `std::io::Error`.
+///     JoinHandoff::Error { error, .. } => Err(error),
+/// })?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[track_caller]
+pub fn join<T, E, U, E2>(
+    slots: Vec<AdvTaskHandle<T, E>>,
+    task_name: &str,
+    fn_to_exec: impl FnOnce(JoinHandoff<Vec<T>, E>) -> Result<U, E2> + Send + 'static,
+) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    E: std::error::Error + Send + 'static,
+    E2: std::error::Error + Send + 'static,
+{
+    declare_join(slots, task_name, true, 0, fn_to_exec)
+}
+
+/// Like [`join`], but the join runs at `priority` instead of inheriting the highest priority among
+/// the tasks it joins. It's kept as given, so it can be realtime.
+///
+/// # Errors
+///
+/// The same as [`join`].
+#[track_caller]
+pub fn join_with_priority<T, E, U, E2>(
+    slots: Vec<AdvTaskHandle<T, E>>,
+    task_name: &str,
+    priority: u8,
+    fn_to_exec: impl FnOnce(JoinHandoff<Vec<T>, E>) -> Result<U, E2> + Send + 'static,
+) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    E: std::error::Error + Send + 'static,
+    E2: std::error::Error + Send + 'static,
+{
+    declare_join(slots, task_name, false, priority, fn_to_exec)
+}
+
+/// What [`join`] and [`join_with_priority`] share: checks the handles and the name, builds the join
+/// as a task that waits on the handles' tasks, sends it, and returns its handle.
+///
+/// With `inherits_priority`, the join runs at the highest priority among the handles' tasks, and
+/// `priority` is only where the search starts; without it, the join runs at `priority`.
+///
+/// It marks the handles as used once the join's name has passed its check, so that dropping them
+/// at the end sends no releases. A join that fails on the name leaves them unused, and their drops
+/// release the tasks' results.
+///
+/// `#[track_caller]`, like them, so graph mode records the plugin's line.
+#[track_caller]
+fn declare_join<T, E, U, E2>(
+    mut slots: Vec<AdvTaskHandle<T, E>>,
+    task_name: &str,
+    inherits_priority: bool,
+    mut priority: u8,
+    fn_to_exec: impl FnOnce(JoinHandoff<Vec<T>, E>) -> Result<U, E2> + Send + 'static,
+) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+where
+    T: Send + 'static,
+    U: Send + 'static,
+    E: std::error::Error + Send + 'static,
+    E2: std::error::Error + Send + 'static,
+{
+    let slots_len = slots.len();
+
+    if slots_len == 0 {
+        return Err(JoinError::MonitorsZeroInputs {
+            task_name: String::from(task_name),
+        }
+        .into());
+    }
+
+    let name_as_string = String::from(task_name);
+    let tx: PacketHandle = slots[0].tx.clone();
+    let mut input_ids = vec![0; slots_len];
+
+    for (i, handle) in slots.iter().enumerate() {
+        if inherits_priority && priority < handle.base_priority {
+            priority = handle.base_priority;
+        }
+
+        input_ids[i] = handle.task_id;
+    }
+
+    let job = move |mut sealed_handoffs: Vec<Option<SealedHandoff>>| -> TaskResult {
+        let mut opened_handoffs: Vec<T> = Vec::new();
+        let mut error_opt: Option<JoinError> = None;
+
+        for (i, sealed_handoff_opt) in sealed_handoffs.drain(..).enumerate() {
+            if let Some(sealed_handoff) = sealed_handoff_opt {
+                if let Some(handoff) = sealed_handoff.open() {
+                    match handoff {
+                        Handoff::Value(value) => opened_handoffs.push(value),
+                        Handoff::Error(e) => {
+                            let join_handoff_error = JoinHandoff::Error {
+                                position: i,
+                                error: e,
+                            };
+                            return seal_result(
+                                name_as_string.clone(),
+                                fn_to_exec(join_handoff_error),
+                            );
+                        }
+                    };
+                } else {
+                    return JoinError::WrongType {
+                        task_name: name_as_string.clone(),
+                        position: i,
+                    }
+                    .into();
+                }
+            } else {
+                if error_opt.is_none() {
+                    error_opt = Some(JoinError::InputsMissing {
+                        task_name: name_as_string.clone(),
+                        position: i,
+                    });
+                }
+            }
+        }
+
+        if let Some(error) = error_opt {
+            return error.into();
+        }
+
+        let join_handoff = JoinHandoff::Filled {
+            values: opened_handoffs,
+        };
+        seal_result(name_as_string, fn_to_exec(join_handoff))
+    };
+
+    let join_task = Task::new_join_wait(task_name, priority, inherits_priority, input_ids, job)?;
+
+    for handle in slots.iter_mut() {
+        handle.is_used = true;
+    }
+
+    let join_handle = AdvTaskHandle::new(&join_task, tx.clone());
+
+    tx.send_task(join_task)?;
+
+    Ok(join_handle)
 }

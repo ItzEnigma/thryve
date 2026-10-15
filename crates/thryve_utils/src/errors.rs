@@ -77,6 +77,10 @@ pub enum ThryveError {
     /// [`TaskError`] says which.
     #[error("task failed")]
     Task(#[from] TaskError),
+
+    /// A join couldn't be declared: it was given no tasks to wait for. [`JoinError`] says so.
+    #[error("join failed")]
+    Join(#[from] JoinError),
 }
 
 /// Why starting Thryve failed.
@@ -315,7 +319,8 @@ pub enum FinalizationError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TaskError {
-    /// The follow-up reached a worker before it got the result of the task it waits for.
+    /// The follow-up reached a worker before it got the result of the task it waits for. A join
+    /// that reaches a worker before it's ready reports it too.
     #[error("task '{}' waited with no input", task_name)]
     WaitWithNoInput {
         /// The follow-up's name.
@@ -327,6 +332,54 @@ pub enum TaskError {
     SealedHandoffFailedDowncast {
         /// The follow-up's name.
         task_name: String,
+    },
+}
+
+/// Why a join failed: it was given no tasks to wait for, or it ran with an input missing or of the
+/// wrong type.
+///
+/// A join is declared with [`join`](crate::packets::task::join), which refuses an empty list by
+/// returning [`MonitorsZeroInputs`](Self::MonitorsZeroInputs) inside
+/// [`ThryveError::Join`]. The other two cases come from the join's job, and only a bug in Thryve
+/// can cause them, since each input is tied to a task the join waits for. Like a follow-up's
+/// [`TaskError`], the job doesn't panic: it returns the error as its result, so the engine still
+/// hears back from it, and the error's text goes to `Error.log`.
+///
+/// A position counts the join's inputs from 0, in the order their handles were given.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum JoinError {
+    /// The join was given no tasks to wait for.
+    #[error("join task '{}' monitors 0 inputs", task_name)]
+    MonitorsZeroInputs {
+        /// The join's name.
+        task_name: String,
+    },
+
+    /// The join ran with an input missing, and none of its inputs had failed.
+    #[error(
+        "join task '{}' failed to get input in position '{}'",
+        task_name,
+        position
+    )]
+    InputsMissing {
+        /// The join's name.
+        task_name: String,
+        /// The first input that was missing.
+        position: usize,
+    },
+
+    /// An input's result isn't the `Result<T, E>` of the tasks the join waits for.
+    #[error(
+        "join task '{}' received a wrong type for position '{}'",
+        task_name,
+        position
+    )]
+    WrongType {
+        /// The join's name.
+        task_name: String,
+        /// The input whose result had the wrong type.
+        position: usize,
     },
 }
 

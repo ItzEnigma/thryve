@@ -102,11 +102,15 @@ pub struct Engine {
     status_rx: Arc<Receiver<StatusMsg>>,
     /// Where a typed task's follow-up and its result meet, under the task's id. An entry is a
     /// follow-up waiting for the result, a result kept for a handle that may still call `then`,
-    /// a remembered release, or a link to the task a task forwarded to. Each goes once both sides
-    /// have arrived (see
+    /// a remembered release, a link to the task a task forwarded to, or a join's follower
+    /// waiting for one of the join's tasks. Each goes once both sides have arrived (see
     /// [`accept_task`](Self::accept_task), [`handle_result`](Self::handle_result) and
     /// [`check_status`](Self::check_status)), or at the shutdown, which counts what's left.
-    waiting_tasks: WaitTable,
+    waiting_tasks: WaitTable<WaitingState>,
+    /// The joins still waiting for some of their tasks, by the join's id. Each missing task's
+    /// follower, in `waiting_tasks`, leads here; the join is taken out and queued when the last
+    /// one's result arrives.
+    waiting_joins: WaitTable<Task>,
     /// Set by [`finalize`](Self::finalize) as it starts; the engine's loops stop once it's set.
     /// Don't set it yourself: `finalize` would then take the engine for finalized already, return
     /// at once, and shut nothing down.
@@ -153,6 +157,7 @@ impl Engine {
             res_rx,
             status_rx: ctx.status_rx.clone(),
             waiting_tasks: WaitTable::new(),
+            waiting_joins: WaitTable::new(),
             exit_flag: false,
             pause_flag: false,
         };
@@ -302,6 +307,10 @@ impl Engine {
     /// [`handle_result`](Self::handle_result) queues it when the result arrives. If the task
     /// forwarded, the follow-up follows the links and waits for the task at their end instead.
     ///
+    /// A join declared with `join` is queued only once it has the results of all its tasks: it
+    /// takes the kept ones now, leaves a follower for each of the others, and waits in
+    /// `waiting_joins` until they arrive (see `add_join_to_waiting`).
+    ///
     /// Every task the engine starts goes through here: the ones sent on the task channel, the
     /// follow-up tasks chained to results, and the plugins' init tasks, which startup hands over
     /// directly.
@@ -322,6 +331,9 @@ impl Engine {
 
         if let Some(id) = task.waiting_on_id() {
             self.attach(task, id);
+            return;
+        } else if task.waiting_on_join().is_some() {
+            self.add_join_to_waiting(task);
             return;
         }
 
@@ -478,8 +490,9 @@ impl Engine {
     ///    which still run; tasks, results and status lines are collected. Then it joins the
     ///    workers. A worker still running at the deadline is left behind, and `Error.log` names
     ///    it and its task. Then the wait table is emptied, since results are only collected now:
-    ///    a follow-up still waiting never gets its input and never runs, and a result kept for a
-    ///    handle that still exists is counted with the late results;
+    ///    a follow-up still waiting never gets its input and never runs, nor does a join still
+    ///    waiting for some of its tasks, and a result kept for a handle that still exists is
+    ///    counted with the late results;
     /// 4. cleans up the plugins on a thread of its own, emptying the mailboxes the same way while
     ///    it runs, until the same deadline. A failed cleanup goes to `Error.log`. The cleanups are
     ///    skipped, and `Error.log` says so, if a worker was left behind (its plugin may still be
@@ -578,7 +591,8 @@ impl Engine {
         // input and never runs, and nobody will take a result kept for a live handle any more.
         // That result joins the late ones: an error counts as lost work, and a value doesn't.
         // A remembered release has nothing left to wait for, and a link has nothing to report:
-        // the task at its end reports its own result.
+        // the task at its end reports its own result. Nor has a join's follower: its task
+        // reports itself.
         for (wait_id, wait_state) in self.waiting_tasks.table.drain() {
             match wait_state {
                 WaitingState::FollowUP(task) => {
@@ -589,6 +603,13 @@ impl Engine {
                 }
                 _ => (),
             }
+        }
+
+        // A join still waiting never runs either, so it counts with the tasks that never ran.
+        // None of its tasks failed, or it would have run, so its slots hold only values: nothing
+        // in them is lost work.
+        for (_, join_task) in self.waiting_joins.table.drain() {
+            fc.tasks.push(join_task);
         }
 
         // The plugins' cleanups run on a thread of their own, for the same reason: a `clean_up`
@@ -774,6 +795,13 @@ impl Engine {
     /// - Following a forward: the task's outcome becomes the forwarded-to task's. A follow-up
     ///   already waiting moves on to that task, and a remembered release applies to it; with
     ///   neither, a link is stored for the follow-up or release still to come
+    /// - Handing a handoff to the join whose follower waits for it: it goes into the join's slot
+    ///   at the follower's position, and the join is queued once none of its slots is empty, or
+    ///   at once if the handoff is an error, since a join fails fast. If the join has already
+    ///   run (another of its tasks failed first), nobody will take the handoff: an error is
+    ///   written to `Error.log`, and a value is dropped. A forward never goes into a slot: the
+    ///   follower moves on to the task forwarded to, even when the join has already run, so that
+    ///   task's result finds it (see `attach_follower`)
     /// - Submitting the task chained to the result
     /// - Logging completion messages
     /// - Triggering shutdown on "Fin" or "FinErr" results
@@ -805,6 +833,18 @@ impl Engine {
 
                     if let Some(current_id) = sealed_handoff.read_forward_id() {
                         self.release(current_id);
+                    }
+                }
+            } else if wait_state.is_join_part_placeholder() {
+                if let WaitingState::JoinPartPlaceHolder { join_id, position } =
+                    self.waiting_tasks.remove(id)
+                {
+                    if let Some(next_id) = sealed_handoff.read_forward_id() {
+                        self.attach_follower(next_id, join_id, position);
+                    } else if self.waiting_joins.get_mut(join_id).is_some() {
+                        self.fill_join_slot(sealed_handoff, join_id, position);
+                    } else {
+                        self.drop_unclaimed_handoff(sealed_handoff);
                     }
                 }
             } else if wait_state.is_follow_up() {
@@ -909,6 +949,58 @@ impl Engine {
         }
     }
 
+    /// Moves a join's follower on to the task its task forwarded to, through that task's own
+    /// forwards like [`attach`](Self::attach): the join now waits for the result of the task at
+    /// the end of the links. Each link passed is removed.
+    ///
+    /// At the end, if that task's result was kept (it can arrive before the forward, since the
+    /// two travel separately), the join gets it now through
+    /// [`fill_join_slot`](Self::fill_join_slot), or it's let go if the join has already run. If
+    /// nothing is there yet, the follower waits there for the result.
+    ///
+    /// Nothing else can be there, since the handle of the task forwarded to went into the
+    /// forward. If something is (only a bug in Thryve could cause it), it's dropped with a line in
+    /// `Error.log`, and the join won't get that input.
+    ///
+    /// # Arguments
+    ///
+    /// * `list_starts_from_id` - The id of the task forwarded to
+    /// * `join_task_id` - The join's id, its key in `waiting_joins`
+    /// * `position` - The follower's slot in the join
+    fn attach_follower(&mut self, list_starts_from_id: u64, join_task_id: u64, position: usize) {
+        let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
+
+        if let WaitingState::None = wait_state {
+            self.waiting_tasks.store(
+                last_id,
+                WaitingState::JoinPartPlaceHolder {
+                    join_id: join_task_id,
+                    position,
+                },
+            );
+        } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            if self.waiting_joins.get_mut(join_task_id).is_some() {
+                self.fill_join_slot(sealed_handoff, join_task_id, position);
+            } else {
+                self.drop_unclaimed_handoff(sealed_handoff);
+            }
+        } else {
+            // The walk never ends on a link, and the handle of the task forwarded to went into
+            // the forward, so nothing else can wait on its result.
+            let found = match wait_state {
+                WaitingState::FollowUP(_) => "a follow-up",
+                WaitingState::Released => "a release",
+                WaitingState::JoinPartPlaceHolder { .. } => "another join",
+                _ => "a link",
+            };
+            self.obs_manager.forward_notif(Log::err(format!(
+                "the input at position {position} of join task {join_task_id} was forwarded to \
+                 task {last_id}, which already had {found} waiting on its result; it was \
+                 dropped, and the join won't get that input"
+            )));
+        }
+    }
+
     /// Releases a task whose handle is gone, through its forwards like
     /// [`attach`](Self::attach): nobody will follow up on the task at the end of the links.
     ///
@@ -925,6 +1017,130 @@ impl Engine {
             self.drop_unclaimed_handoff(sealed_handoff);
         } else if wait_state.is_none() {
             self.waiting_tasks.release(last_id);
+        }
+    }
+
+    /// Declares a join that has just arrived: for each of its tasks, in order, finds where that
+    /// task's result arrives, and sets the join up to receive it.
+    ///
+    /// Each task's links are followed to their end, as in [`attach`](Self::attach), since a
+    /// task that forwarded finishes with the outcome of the task at the end. There:
+    /// - a kept result goes into the join's slot for that task now. A join fails fast, so the
+    ///   first kept error triggers it, and every kept result after that one is late: nobody will
+    ///   take it, so an error is written to `Error.log`, and a value is dropped;
+    /// - with nothing there yet, the join leaves its follower, with the join's id and the slot's
+    ///   position, for [`handle_result`](Self::handle_result) to find when the result arrives.
+    ///   That's the same before and after an error: once the join has run, the result the
+    ///   follower waits for is late too.
+    ///
+    /// Nothing else can be there, since the task's handle went into the join. If something is
+    /// (only a bug in Thryve could cause it), it's dropped with a line in `Error.log`, and unless
+    /// another of its tasks fails, the join waits for that task until the shutdown.
+    ///
+    /// After the walk, the join is queued if an error triggered it or no slot is left empty;
+    /// otherwise it waits in `waiting_joins`.
+    ///
+    /// # Arguments
+    ///
+    /// * `join_task` - The join, as declared with `join`
+    fn add_join_to_waiting(&mut self, mut join_task: Task) {
+        if let Some(input_ids) = join_task.join_get_ids() {
+            let mut has_save_been_triggered = false;
+            for (i, current_id) in input_ids.into_iter().enumerate() {
+                let (id, wait_state) = self.waiting_tasks.remove_while_is_link(current_id);
+
+                match wait_state {
+                    WaitingState::None => {
+                        self.waiting_tasks.store(
+                            id,
+                            WaitingState::JoinPartPlaceHolder {
+                                join_id: join_task.id,
+                                position: i,
+                            },
+                        );
+                    }
+                    WaitingState::HandoffKept(sealed_handoff) => {
+                        if has_save_been_triggered {
+                            self.drop_unclaimed_handoff(sealed_handoff);
+                        } else if sealed_handoff.error_text().is_some() {
+                            if let Err(sealed_handoff_err) =
+                                join_task.join_insert(sealed_handoff, i)
+                            {
+                                self.drop_unclaimed_handoff(sealed_handoff_err);
+                            }
+
+                            has_save_been_triggered = true;
+                        } else if let Err(sealed_handoff_err) =
+                            join_task.join_insert(sealed_handoff, i)
+                        {
+                            self.drop_unclaimed_handoff(sealed_handoff_err);
+                        }
+                    }
+                    // The walk never ends on a link, and the task's handle went into the join,
+                    // so nothing else can wait on its result.
+                    other => {
+                        let found = match other {
+                            WaitingState::FollowUP(_) => "a follow-up",
+                            WaitingState::Released => "a release",
+                            WaitingState::JoinPartPlaceHolder { .. } => "another join",
+                            _ => "a link",
+                        };
+                        self.obs_manager.forward_notif(Log::err(format!(
+                            "join task '{}' found {found} waiting on its input at position {i} \
+                             (task {id}); it was dropped, and unless another input fails, the \
+                             join will wait for that input until the shutdown",
+                            join_task.task_name()
+                        )));
+                    }
+                }
+            }
+
+            if let Some(remaining_inputs) = join_task.waiting_on_join() {
+                if remaining_inputs == 0 || has_save_been_triggered {
+                    let join_task_ready =
+                        join_task.with_join_inputs(self.config.tasks.max_priority);
+                    self.plugin_manager.threadpool.submit_task(join_task_ready);
+                } else {
+                    self.waiting_joins.store(join_task.id, join_task);
+                }
+            }
+        }
+    }
+
+    /// Puts one of a join's results into its slot, at `position`, and queues the join once none
+    /// of its slots is empty, or at once if the result is an error, since a join fails fast. If
+    /// the join's priority was inherited, it's capped below realtime as it becomes ready.
+    ///
+    /// Only for a join still waiting in `waiting_joins`: both callers check first, and let the
+    /// result go if the join has already run. Here, a join that isn't there drops the result
+    /// without a word. A slot that's already full hands the result back, and it's let go.
+    ///
+    /// # Arguments
+    ///
+    /// * `sealed_handoff` - The result: a finished task's, never a forward
+    /// * `join_task_id` - The join's id, its key in `waiting_joins`
+    /// * `position` - The slot the result goes into
+    fn fill_join_slot(
+        &mut self,
+        sealed_handoff: SealedHandoff,
+        join_task_id: u64,
+        position: usize,
+    ) {
+        let is_sealed_handoff_an_error = sealed_handoff.error_text().is_some();
+
+        if let Some(join_task) = self.waiting_joins.get_mut(join_task_id) {
+            let inserted_result = join_task.join_insert(sealed_handoff, position);
+            let remaining_inputs_opt = join_task.waiting_on_join();
+
+            if let Err(sealed_handoff_err) = inserted_result {
+                self.drop_unclaimed_handoff(sealed_handoff_err);
+            } else if let Some(remaining_inputs) = remaining_inputs_opt
+                && (remaining_inputs == 0 || is_sealed_handoff_an_error)
+                && let Some(join_task) = self.waiting_joins.take(join_task_id)
+            {
+                let join_task_ready = join_task.with_join_inputs(self.config.tasks.max_priority);
+                self.plugin_manager.threadpool.submit_task(join_task_ready);
+            }
         }
     }
 
@@ -1147,15 +1363,17 @@ impl Engine {
         received
     }
 
-    /// How many entries the wait table holds: follow-ups waiting, handoffs kept, releases
-    /// remembered and forward links. Each entry goes once both sides have spoken (a link once a
-    /// follow-up or a release has followed it), so this is zero once every task has finished and
-    /// every handle has been used or dropped.
+    /// How many entries the wait table holds, plus the joins still waiting: follow-ups waiting,
+    /// handoffs kept, releases remembered, forward links, joins' followers, and the joins
+    /// themselves. Each entry goes once both sides have spoken (a link once a follow-up or a
+    /// release has followed it, a join once its last task's result has arrived or one of its tasks
+    /// has failed, a follower once its task's result has arrived, even after its join has run),
+    /// so this is zero once every task has finished and every handle has been used or dropped.
     ///
     /// For Thryve's tests. Not part of the public API.
     #[doc(hidden)]
     pub fn wait_table_len(&self) -> usize {
-        self.waiting_tasks.table.len()
+        self.waiting_tasks.table.len() + self.waiting_joins.table.len()
     }
 }
 
@@ -1163,7 +1381,7 @@ impl Engine {
 /// it as a whole.
 struct FinalizeCollection {
     /// Tasks that never ran: still queued when the workers were stopped, follow-ups still waiting
-    /// for a result, or sent during the shutdown.
+    /// for a result, joins still waiting for some of their tasks, or sent during the shutdown.
     tasks: Vec<Task>,
     /// Notifications that were never delivered: left in the sorter's queue, or sent after the
     /// sorter had stopped to an observer other than the logger.

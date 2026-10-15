@@ -45,6 +45,7 @@ pub mod utils {
         pub use thryve_utils::errors::ConfigViolations;
         pub use thryve_utils::errors::EngineNotRunningError;
         pub use thryve_utils::errors::FinalizationError;
+        pub use thryve_utils::errors::JoinError;
         pub use thryve_utils::errors::NameInputType;
         pub use thryve_utils::errors::NamingError;
         pub use thryve_utils::errors::RuleError;

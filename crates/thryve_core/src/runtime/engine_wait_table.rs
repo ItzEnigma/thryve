@@ -13,8 +13,11 @@
 //! different mailboxes, so they can arrive in any order. Under the task's id, the table remembers
 //! whichever came first until the other side arrives. A task that forwarded leaves a link to the
 //! task forwarded to; links can chain into a list, which the follow-up or the release follows to
-//! its end. It's a plain store: the engine decides what
-//! each arrival means (see
+//! its end. A join waits on several tasks: each of them gets the join's follower, which leads to
+//! the join in a second table of the same kind, keyed by the join's id, and which moves along a
+//! forward like a follow-up does.
+//!
+//! It's a plain store: the engine decides what each arrival means (see
 //! [`Engine::accept_task`](crate::runtime::engine::Engine::accept_task),
 //! [`Engine::handle_result`](crate::runtime::engine::Engine::handle_result) and
 //! [`Engine::check_status`](crate::runtime::engine::Engine::check_status)).
@@ -25,15 +28,18 @@ use std::collections::HashMap;
 
 use thryve_utils::{packets::task::Task, res::SealedHandoff};
 
-/// One entry per typed task whose follow-up or result is waiting for the other side, or whose
-/// forward hasn't been followed yet. An entry goes once both sides have arrived, so the table
-/// doesn't grow.
-pub struct WaitTable {
+/// A store keyed by task id, used twice by the engine.
+///
+/// As `WaitTable<WaitingState>`, the wait table: one entry per typed task whose follow-up or
+/// result is waiting for the other side, whose forward hasn't been followed yet, or whose result
+/// a join waits for. As `WaitTable<Task>`, the joins still waiting for some of their tasks, by the
+/// join's id. An entry goes once both sides have arrived, so neither table grows.
+pub struct WaitTable<T> {
     /// The entries, by task id. The shutdown empties it directly.
-    pub table: HashMap<u64, WaitingState>,
+    pub table: HashMap<u64, T>,
 }
 
-impl Default for WaitTable {
+impl<T> Default for WaitTable<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -55,6 +61,18 @@ pub enum WaitingState {
         next_id: u64,
     },
 
+    /// A join's follower: the join waits for this task's result, which goes into its slot at
+    /// `position`. Left when the join is declared, since its task hadn't finished yet. If the
+    /// task forwards, the follower moves on to the task forwarded to, whose result the join then
+    /// waits for. If the join has already run when the result arrives (another of its tasks
+    /// failed first), the result is late, and nobody takes it.
+    JoinPartPlaceHolder {
+        /// The join's id, its key in the engine's table of waiting joins.
+        join_id: u64,
+        /// The slot the result goes into: the task's place among the join's handles.
+        position: usize,
+    },
+
     /// The task's handle was dropped before its result arrived, so nobody will take the result.
     Released,
     /// No entry: what [`WaitTable::remove`] and [`WaitTable::get_as_ref`] return for an id the
@@ -62,7 +80,7 @@ pub enum WaitingState {
     None,
 }
 
-impl WaitTable {
+impl<T> WaitTable<T> {
     /// An empty table.
     pub fn new() -> Self {
         Self {
@@ -70,18 +88,39 @@ impl WaitTable {
         }
     }
 
-    /// Stores `state` under `wait_id`, unless the id already has an entry: then the table keeps
-    /// that one, and `state` is dropped. The engine checks for an entry first.
-    pub fn store(&mut self, wait_id: u64, state: WaitingState) {
-        self.table.entry(wait_id).or_insert(state);
+    /// Stores `state` under `id`, unless the id already has an entry: then the table keeps that
+    /// one, and `state` is dropped. The engine checks for an entry first.
+    pub fn store(&mut self, id: u64, state: T) {
+        self.table.entry(id).or_insert(state);
     }
 
+    /// Takes out the entry for `id`, if there is one.
+    pub fn take(&mut self, id: u64) -> Option<T> {
+        self.table.remove(&id)
+    }
+
+    /// The entry for `id`, left in place to be changed, if there is one.
+    pub fn get_mut(&mut self, id: u64) -> Option<&mut T> {
+        self.table.get_mut(&id)
+    }
+}
+
+impl WaitTable<WaitingState> {
     /// Takes out the entry for `wait_id`, or returns [`WaitingState::None`] if there's none.
     pub fn remove(&mut self, wait_id: u64) -> WaitingState {
         if let Some(state) = self.table.remove(&wait_id) {
             state
         } else {
             WaitingState::None
+        }
+    }
+
+    /// The entry for `wait_id`, left in place, or [`WaitingState::None`] if there's none.
+    pub fn get_as_ref(&self, wait_id: u64) -> &WaitingState {
+        if let Some(state) = self.table.get(&wait_id) {
+            state
+        } else {
+            &WaitingState::None
         }
     }
 
@@ -102,15 +141,6 @@ impl WaitTable {
         }
 
         (current_id, wait_state)
-    }
-
-    /// The entry for `wait_id`, left in place, or [`WaitingState::None`] if there's none.
-    pub fn get_as_ref(&self, wait_id: u64) -> &WaitingState {
-        if let Some(state) = self.table.get(&wait_id) {
-            state
-        } else {
-            &WaitingState::None
-        }
     }
 
     /// Remembers that the handle of the task `wait_id` was dropped before the task's result
@@ -167,7 +197,12 @@ impl WaitingState {
 
     /// Whether it's a link to the task forwarded to.
     pub fn is_link(&self) -> bool {
-        matches!(self, WaitingState::Link { next_id: _ })
+        matches!(self, WaitingState::Link { .. })
+    }
+
+    /// Whether it's a join's follower.
+    pub fn is_join_part_placeholder(&self) -> bool {
+        matches!(self, WaitingState::JoinPartPlaceHolder { .. })
     }
 
     /// Whether it's a remembered release.

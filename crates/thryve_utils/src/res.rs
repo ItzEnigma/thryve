@@ -27,15 +27,16 @@
 //! - Tasked results: Edges that chain to the next task
 //! - Handoff results: what an [`AdvTask`](crate::packets::task::AdvTask) or a follow-up returns.
 //!   They carry the task's `Result<T, E>`, sealed, which the engine hands to the task's follow-up
-//!   as a [`Handoff`], and no message. A forwarding task's carries the id of the task whose
-//!   outcome becomes its own instead.
+//!   as a [`Handoff`], and no message. A join gets its tasks' results together, as a
+//!   [`JoinHandoff`]. A forwarding task's carries the id of the task whose outcome becomes its own
+//!   instead.
 
 use std::any::Any;
 use std::fmt::Display;
 use std::panic::Location;
 use std::path::PathBuf;
 
-use crate::errors::{self, TaskError};
+use crate::errors::{self, JoinError, TaskError};
 use crate::extras::thread_local;
 use crate::graphs::callsite::TaskCallSite;
 use crate::packets::task::Task;
@@ -121,6 +122,18 @@ impl From<TaskError> for TaskResult {
     fn from(value: TaskError) -> Self {
         Self {
             result_type: String::from("TaskError"),
+            message: errors::get_err_oneline(&value),
+            log_msg_to_file: String::from("Error"),
+            next_task: None,
+            handoff: None,
+        }
+    }
+}
+
+impl From<JoinError> for TaskResult {
+    fn from(value: JoinError) -> Self {
+        Self {
+            result_type: String::from("JoinError"),
             message: errors::get_err_oneline(&value),
             log_msg_to_file: String::from("Error"),
             next_task: None,
@@ -379,6 +392,29 @@ pub enum Handoff<T: Send + 'static, E: std::error::Error + Send + 'static> {
     Value(T),
     /// The task returned `Err`: its own error.
     Error(E),
+}
+
+/// What a join's closure gets: every task's value, or the first task that failed.
+///
+/// A join is declared with [`join`](crate::packets::task::join) over the handles of tasks that
+/// each return `Result<T, E>`. `V` is the collection their values come in: `Vec<T>`, in the order
+/// the handles were given. A join fails fast: as soon as one task fails, its closure runs with that
+/// task's error, without waiting for the rest.
+#[derive(Debug)]
+pub enum JoinHandoff<V, E: std::error::Error + Send + 'static> {
+    /// Every task returned a value.
+    Filled {
+        /// The values, in the order the handles were given.
+        values: V,
+    },
+    /// A task failed: the first one whose error reached the join. Errors already waiting when the
+    /// join was declared reach it in the order the handles were given.
+    Error {
+        /// The failed task's place among the handles, counted from 0.
+        position: usize,
+        /// The failed task's own error.
+        error: E,
+    },
 }
 
 impl SealedHandoff {
