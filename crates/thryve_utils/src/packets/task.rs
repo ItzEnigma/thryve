@@ -29,8 +29,10 @@
 //! [`then`](AdvTaskHandle::then) on it declares a follow-up, a task of its own that gets the
 //! result as a [`Handoff`]. A task that creates its last step while it runs can forward to it
 //! with [`AdvTask::forward`] or [`then_forward`](AdvTaskHandle::then_forward), and whoever follows
-//! it gets that step's result. Several tasks of one type can share one follow-up with [`join`]: it
-//! runs once all of them have finished, with all their values, or as soon as one fails.
+//! it gets that step's result. Several tasks of one type can share one follow-up: the
+//! [`Joinable`](crate::traits::join::Joinable) trait lets a `Vec` of their handles
+//! [`join`](crate::traits::join::Joinable::join), and the follow-up runs once all of them have
+//! finished, with all their values, or as soon as one fails.
 //!
 //! # Unique Identification
 //!
@@ -390,10 +392,11 @@ impl Task {
     /// The engine calls it once every slot is full, or as soon as one of the join's tasks fails (a
     /// join fails fast), so some slots may still be empty; the job tells the two cases apart.
     ///
-    /// If its priority was inherited (it was declared with [`join`]), it's lowered to just below
-    /// realtime when it's realtime or higher, as a follow-up's is in
-    /// [`with_input`](Self::with_input). A priority given with [`join_with_priority`] is kept as
-    /// it is. A task that isn't a join comes back unchanged.
+    /// If its priority was inherited (it was declared with
+    /// [`join`](crate::traits::join::Joinable::join)), it's lowered to just below realtime when it's
+    /// realtime or higher, as a follow-up's is in [`with_input`](Self::with_input). A priority given
+    /// with [`join_with_priority`](crate::traits::join::Joinable::join_with_priority) is kept as it
+    /// is. A task that isn't a join comes back unchanged.
     ///
     /// For Thryve's engine. Not part of the public API.
     ///
@@ -585,8 +588,9 @@ pub struct AdvTask<T: Send + 'static, E: std::error::Error + Send + 'static> {
 /// can be chained. It doesn't hold the task's result: the result goes to the engine, which hands it
 /// to the follow-up. `then` uses the handle up, so a task has at most one follow-up. Returning the
 /// handle from a forwarding task (see [`AdvTask::forward`]) uses it up too: whoever follows the
-/// forwarding task gets this task's result. So does passing it to [`join`], whose follow-up
-/// waits for this task together with the others.
+/// forwarding task gets this task's result. So does joining it with others
+/// ([`join`](crate::traits::join::Joinable::join)), whose follow-up waits for this task together
+/// with them.
 ///
 /// The engine keeps the task's result for as long as the handle exists, so `then` works even
 /// after the task has finished. Dropping the handle without calling `then` tells the engine that
@@ -1047,108 +1051,10 @@ where
     Box::new(wrapper)
 }
 
-/// Declares a join: one follow-up for several tasks, which runs once all of them have finished,
-/// with all their values, or as soon as one of them fails, with its error.
-///
-/// `slots` holds the handles of the tasks to join, which each return `Result<T, E>`; each one
-/// fills a slot of the join, in order. The join is sent to the engine now, but it waits there
-/// until those tasks finish or one fails; then its closure runs on a worker with a
-/// [`JoinHandoff`]:
-///
-/// - [`Filled`](JoinHandoff::Filled) when every task returned a value: the values, in the order of
-///   `slots`;
-/// - [`Error`](JoinHandoff::Error) when one failed: its position in `slots`, counted from 0, and
-///   its own error. A join fails fast: it runs as soon as one task fails, without waiting for the
-///   rest. The other tasks still run, and nobody takes their results: an error is written to
-///   `Error.log`, and a value is dropped.
-///
-/// A task that forwards fills its slot with the result of the task it forwarded to, whether it
-/// forwarded before the join was declared or after.
-///
-/// It uses up the handles and returns the join's own handle, an ordinary [`AdvTaskHandle`], so the
-/// join can be followed with [`then`](AdvTaskHandle::then), or be one of the tasks of another join.
-/// It runs at the highest priority among the tasks it joins, capped just below realtime, so a join
-/// never runs as realtime by inheritance. To give it a priority of its own, use
-/// [`join_with_priority`].
-///
-/// Joins of joins split work and split it again, but every piece is a task of its own, with its
-/// own trip through the queue and its own slot, and every join is one more task. Splitting finer
-/// than the work needs adds that overhead without making anything faster: aim for enough pieces to
-/// keep the workers busy, each big enough to be worth a task.
-///
-/// # Errors
-///
-/// - [`ThryveError::Join`] if `slots` is empty;
-/// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character. The handles
-///   are then released, as if they had been dropped;
-/// - [`ThryveError::EngineNotRunning`] if the engine is gone.
-///
-/// # Example
-///
-/// ```no_run
-/// # use crossbeam::channel::{bounded, unbounded};
-/// # use thryve_utils::packets::packet_handle::PacketHandle;
-/// use thryve_utils::packets::task::{AdvTask, join};
-/// use thryve_utils::res::JoinHandoff;
-///
-/// # let (task_tx, _task_rx) = bounded(4);
-/// # let (notif_tx, _notif_rx) = bounded(1);
-/// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
-/// let mut sizes = Vec::new();
-/// for path in ["a.png", "b.png", "c.png"] {
-///     let file_size = AdvTask::new("FileSize", 2, move || {
-///         std::fs::metadata(path).map(|meta| meta.len())
-///     })?;
-///     sizes.push(handle.send_adv_task(file_size)?);
-/// }
-///
-/// join(sizes, "TotalSize", |joined| match joined {
-///     // Every file's size, in the order of `sizes`.
-///     JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
-///     // The first `FileSize` that failed, with its own `std::io::Error`.
-///     JoinHandoff::Error { error, .. } => Err(error),
-/// })?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[track_caller]
-pub fn join<T, E, U, E2>(
-    slots: Vec<AdvTaskHandle<T, E>>,
-    task_name: &str,
-    fn_to_exec: impl FnOnce(JoinHandoff<Vec<T>, E>) -> Result<U, E2> + Send + 'static,
-) -> Result<AdvTaskHandle<U, E2>, ThryveError>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    E: std::error::Error + Send + 'static,
-    E2: std::error::Error + Send + 'static,
-{
-    declare_join(slots, task_name, true, 0, fn_to_exec)
-}
-
-/// Like [`join`], but the join runs at `priority` instead of inheriting the highest priority among
-/// the tasks it joins. It's kept as given, so it can be realtime.
-///
-/// # Errors
-///
-/// The same as [`join`].
-#[track_caller]
-pub fn join_with_priority<T, E, U, E2>(
-    slots: Vec<AdvTaskHandle<T, E>>,
-    task_name: &str,
-    priority: u8,
-    fn_to_exec: impl FnOnce(JoinHandoff<Vec<T>, E>) -> Result<U, E2> + Send + 'static,
-) -> Result<AdvTaskHandle<U, E2>, ThryveError>
-where
-    T: Send + 'static,
-    U: Send + 'static,
-    E: std::error::Error + Send + 'static,
-    E2: std::error::Error + Send + 'static,
-{
-    declare_join(slots, task_name, false, priority, fn_to_exec)
-}
-
-/// What [`join`] and [`join_with_priority`] share: checks the handles and the name, builds the join
-/// as a task that waits on the handles' tasks, sends it, and returns its handle.
+/// What [`join`](crate::traits::join::Joinable::join) and
+/// [`join_with_priority`](crate::traits::join::Joinable::join_with_priority) share: checks the
+/// handles and the name, builds the join as a task that waits on the handles' tasks, sends it, and
+/// returns its handle.
 ///
 /// With `inherits_priority`, the join runs at the highest priority among the handles' tasks, and
 /// `priority` is only where the search starts; without it, the join runs at `priority`.
@@ -1159,7 +1065,7 @@ where
 ///
 /// `#[track_caller]`, like them, so graph mode records the plugin's line.
 #[track_caller]
-fn declare_join<T, E, U, E2>(
+pub(crate) fn declare_join<T, E, U, E2>(
     mut slots: Vec<AdvTaskHandle<T, E>>,
     task_name: &str,
     inherits_priority: bool,

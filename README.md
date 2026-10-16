@@ -24,7 +24,7 @@ Thryve is designed around three main pillars:
 ### Key Features
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
-- **Typed tasks with follow-ups and joins**: a task's value, or its own error, goes to the task declared after it with `then`, and several tasks can share one follow-up with `join`, so plugins combine without knowing each other
+- **Typed tasks with follow-ups, splits and joins**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, and several tasks share one follow-up with `join`, so plugins combine without knowing each other
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -119,12 +119,13 @@ Plain `Task`s and `chain` keep working for fire-and-forget work.
 
 ### Joins
 
-Several typed tasks of one type can share one follow-up with `join`. It uses their handles up, and its closure gets a `JoinHandoff`: every value, in the order of the handles, or the first error and the position of the task that failed:
+Several typed tasks of one type can share one follow-up: `join`, called on a `Vec` of their handles, uses the handles up, and its closure gets a `JoinHandoff`: every value, in the order of the handles, or the first error and the position of the task that failed. `join` comes from the `Joinable` trait, so import it; without it, `.join(…)` on a `Vec` finds Rust's own `join`, which joins strings:
 
 ```rust
 use thryve_utils::packets::packet_handle::PacketHandle;
-use thryve_utils::packets::task::{AdvTask, join};
+use thryve_utils::packets::task::AdvTask;
 use thryve_utils::res::JoinHandoff;
+use thryve_utils::traits::join::Joinable;
 
 fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
     let mut sizes = Vec::new();
@@ -135,7 +136,7 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
         sizes.push(handle.send_adv_task(file_size)?);
     }
 
-    join(sizes, "TotalSize", |joined| match joined {
+    sizes.join("TotalSize", |joined| match joined {
         // Every file's size, in the order of `sizes`.
         JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
         // The first `FileSize` that failed, with its own `std::io::Error`.
@@ -150,6 +151,37 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 - **A follow-up like any other:** `join` returns the join's own handle, so the join can be followed with `then`, or be one of the tasks of another join. It waits for each task whether that task finished before the join was declared or after, and a task that forwards fills its slot with the result of the task it forwarded to.
 - **Priority:** the join inherits the highest priority among its tasks, capped below realtime. `join_with_priority` gives it its own.
 - **Splitting has a cost:** joins of joins let work be split, and split again: ten images, each split into rows, and the rows' results archived into one zip. But every piece is a task of its own, with its own trip through the queue, its own result and its own slot, and every join adds one more task. Splitting finer than the work needs adds that overhead without making anything faster, so aim for a balance: enough pieces to keep the workers busy, each big enough to be worth a task.
+
+### Splitting Work
+
+`split_into` on the `PacketHandle` cuts a list into pieces and sends one typed task per piece, all with the same name, priority and closure. It returns their handles in order, ready to be joined:
+
+```rust
+use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::res::JoinHandoff;
+use thryve_utils::traits::join::Joinable;
+
+fn total(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let numbers: Vec<u64> = (1..=1_000).collect();
+
+    // Four pieces of 250 numbers, each adding up its own; then one total.
+    handle
+        .split_into(numbers, "PartialSum", 4, 2, |chunk, _start| {
+            Ok::<u64, std::io::Error>(chunk.iter().sum())
+        })?
+        .join("TotalSum", |joined| match joined {
+            JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
+            JoinHandoff::Error { error, .. } => Err(error),
+        })?;
+
+    Ok(())
+}
+```
+
+- **A balanced cut:** the pieces' sizes differ by at most one item, and no piece is empty: more pieces than items gives one piece per item. The items are moved into their pieces, never copied, and never padded.
+- **The closure** gets its chunk and where that chunk starts in the list, so a piece knows which items it holds. Since sizes can differ by one, it must handle any chunk size; if the work needs items in groups (rows in pairs), group them first, so that each group is one item.
+- **Your own cut:** `send_split_tasks` takes chunks you already cut, of any type (by size, at content boundaries, one file per piece), and its closure gets the piece's index.
+- **The count is yours,** and splitting has the cost described under Joins.
 
 ### Observers
 
@@ -206,7 +238,8 @@ Core utilities, data structures, and traits.
 |-----------|-------------|
 | `Task` | Unit of work with priority and unique ID |
 | `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) |
-| `join` / `join_with_priority` | One follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
+| `PacketHandle` | Sends tasks and notifications to the engine, and splits work over typed tasks (`split_into`, `send_split_tasks`) |
+| `Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
 | `Notif` | Notification structure for observer communication |
 | `Log` | Logging notification implementation |
 | `TaskResult` | Task execution outcome with chaining capability |

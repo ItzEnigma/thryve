@@ -9,8 +9,8 @@
 
 //! The gate of milestone T5, fan-in ("join all").
 //!
-//! Step 1, the join: `join` declares one follow-up for several tasks of one type, here Save over
-//! a few rows. Save waits with one slot per row, in the order of the handles. Once every slot is
+//! Step 1, the join: `join`, called on a `Vec` of handles through the `Joinable` trait, declares
+//! one follow-up for several tasks of one type, here Save over a few rows. Save waits with one slot per row, in the order of the handles. Once every slot is
 //! full, or as soon as a row fails, its closure gets a `JoinHandoff`: every value in order, or the
 //! failed row's position and its own error. These tests fill the slots by hand, with results from
 //! rows run the way a worker runs them.
@@ -68,6 +68,17 @@
 //!   given with `join_with_priority` is kept, even realtime; graph mode records the line that
 //!   called `join_with_priority`.
 //!
+//! Step 7, splitting work: `split_into` on the packet handle cuts a list into balanced pieces, in
+//! order, and sends one typed task per piece; `send_split_tasks` sends one per chunk the caller
+//! already cut. Both hand back the pieces' handles, ready to be joined.
+//!
+//! - the cut is balanced and in order, each piece knowing where its chunk starts, with the name
+//!   and priority given; more pieces than rows gives one piece per row; an empty list gives none;
+//! - zero pieces and a bad name are refused before anything is sent;
+//! - `send_split_tasks` sends one piece per chunk, of any type, each knowing its index;
+//! - graph mode records the plugin's line for every piece;
+//! - split work joins back through the engine, and a failing piece reaches the join at its index.
+//!
 //! The mailbox, worker and engine helpers are `gate_t4`'s and `gate_t2`'s. CI runs these tests on
 //! one thread (`--test-threads=1`), like the rest of the crate.
 
@@ -77,10 +88,13 @@ use std::time::{Duration, Instant};
 use crossbeam::channel::{Receiver, Sender, bounded, unbounded};
 
 use thryve_core::runtime::engine::Engine;
-use thryve_utils::errors::{EngineNotRunningError, JoinError, NamingError, ThryveError, get_err};
+use thryve_utils::errors::{
+    EngineNotRunningError, JoinError, NamingError, SplitError, ThryveError, get_err,
+};
 use thryve_utils::packets::packet_handle::{PacketHandle, StatusMsg};
-use thryve_utils::packets::task::{AdvTask, AdvTaskHandle, Task, join, join_with_priority};
+use thryve_utils::packets::task::{AdvTask, AdvTaskHandle, Task};
 use thryve_utils::res::{Handoff, JoinHandoff, SealedHandoff};
+use thryve_utils::traits::join::Joinable;
 use thryve_utils::traits::packets::Packet;
 
 use crate::gate_t2::{finalize_within, fresh_dir, read_log, started_engine, summary_line};
@@ -137,7 +151,7 @@ fn declared(rows: Vec<AdvTask<u32, RowError>>) -> (Task, Vec<u64>, Vec<SealedHan
         .map(|task| handle.send_adv_task(task).unwrap())
         .collect();
     let count = handles.len();
-    join(handles, "Save", save).unwrap();
+    handles.join("Save", save).unwrap();
 
     let mut ids = Vec::new();
     let mut results = Vec::new();
@@ -257,7 +271,8 @@ mod declaring {
     fn an_empty_list_is_refused() {
         let no_rows: Vec<AdvTaskHandle<u32, RowError>> = Vec::new();
 
-        let refused = join(no_rows, "Save", save)
+        let refused = no_rows
+            .join("Save", save)
             .err()
             .expect("an empty list is refused");
         assert!(matches!(
@@ -279,7 +294,7 @@ mod declaring {
         ];
 
         assert!(matches!(
-            join(rows, "", save).err(),
+            rows.join("", save).err(),
             Some(ThryveError::Naming(NamingError::NameEmpty { .. }))
         ));
 
@@ -304,7 +319,7 @@ mod declaring {
             handle.send_adv_task(row(20)).unwrap(),
         ];
 
-        let save_handle = join(rows, "Save", save).unwrap();
+        let save_handle = rows.join("Save", save).unwrap();
         assert!(status.try_recv().is_err(), "a row's handle sent a release");
 
         let save_id = mailbox.try_iter().last().unwrap().id;
@@ -320,7 +335,7 @@ mod declaring {
         let (handle, mailbox) = handle_and_mailbox(false);
         let rows = vec![handle.send_adv_task(row(10)).unwrap()];
 
-        join(rows, "Save", save)
+        rows.join("Save", save)
             .unwrap()
             .then("Upload", |_| Ok::<(), RowError>(()))
             .unwrap();
@@ -333,10 +348,16 @@ mod declaring {
     #[test]
     fn a_join_can_join_other_joins() {
         let (handle, mailbox) = handle_and_mailbox(false);
-        let first = join(vec![handle.send_adv_task(row(10)).unwrap()], "Save", save).unwrap();
-        let second = join(vec![handle.send_adv_task(row(20)).unwrap()], "Save", save).unwrap();
+        let first = vec![handle.send_adv_task(row(10)).unwrap()]
+            .join("Save", save)
+            .unwrap();
+        let second = vec![handle.send_adv_task(row(20)).unwrap()]
+            .join("Save", save)
+            .unwrap();
 
-        join(vec![first, second], "Archive", |_| Ok::<(), RowError>(())).unwrap();
+        vec![first, second]
+            .join("Archive", |_| Ok::<(), RowError>(()))
+            .unwrap();
 
         // Row, Save, Row, Save, Archive.
         let tasks: Vec<Task> = mailbox.try_iter().collect();
@@ -362,7 +383,7 @@ mod declaring {
         let rows = vec![handle.send_adv_task(row(10)).unwrap()];
 
         let line = line!() + 1;
-        join(rows, "Save", save).unwrap();
+        rows.join("Save", save).unwrap();
 
         let save = mailbox.try_iter().last().unwrap();
         let callsite = save.callsite.expect("graph mode records a call site");
@@ -382,7 +403,7 @@ mod declaring {
         drop(mailbox);
 
         assert!(matches!(
-            join(rows, "Save", save).err(),
+            rows.join("Save", save).err(),
             Some(ThryveError::EngineNotRunning(EngineNotRunningError::Task))
         ));
     }
@@ -541,7 +562,7 @@ mod engine {
                 .unwrap()
         }));
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // One follower per row, and Save itself.
         assert!(engine.check_tasks(), "the engine didn't get the tasks");
@@ -572,7 +593,7 @@ mod engine {
         run_until_the_wait_table_holds(&mut engine, 3);
 
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // Save took the kept results and was queued: no follower, and it isn't held.
         assert!(engine.check_tasks(), "the engine didn't get Save");
@@ -605,7 +626,7 @@ mod engine {
         run_until_the_wait_table_holds(&mut engine, 3);
 
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // Save took the two kept results, and left its follower at the end of the link.
         assert!(engine.check_tasks(), "the engine didn't get Save");
@@ -634,7 +655,7 @@ mod engine {
             packet_handle.send_adv_task(row(30)).unwrap(),
         ];
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         match run_until_received(&mut engine, &got_rx) {
             JoinHandoff::Error { position, error } => {
@@ -661,23 +682,23 @@ mod engine {
         let send = |value| packet_handle.send_adv_task(row(value)).unwrap();
 
         // Two sums, an archive of both, and an upload of the archive.
-        let first = join(vec![send(10), send(20)], "Save", sum).unwrap();
-        let second = join(vec![send(30), send(40)], "Save", sum).unwrap();
+        let first = vec![send(10), send(20)].join("Save", sum).unwrap();
+        let second = vec![send(30), send(40)].join("Save", sum).unwrap();
         let (got_tx, got_rx) = bounded(1);
-        join(
-            vec![first, second],
-            "Archive",
-            |sums: JoinHandoff<Vec<u32>, RowError>| match sums {
-                JoinHandoff::Filled { values } => Ok(values),
-                JoinHandoff::Error { error, .. } => Err(error),
-            },
-        )
-        .unwrap()
-        .then("Upload", move |handoff| {
-            let _ = got_tx.send(handoff);
-            Ok::<(), RowError>(())
-        })
-        .unwrap();
+        vec![first, second]
+            .join(
+                "Archive",
+                |sums: JoinHandoff<Vec<u32>, RowError>| match sums {
+                    JoinHandoff::Filled { values } => Ok(values),
+                    JoinHandoff::Error { error, .. } => Err(error),
+                },
+            )
+            .unwrap()
+            .then("Upload", move |handoff| {
+                let _ = got_tx.send(handoff);
+                Ok::<(), RowError>(())
+            })
+            .unwrap();
 
         match run_until_received(&mut engine, &got_rx) {
             Handoff::Value(sums) => assert_eq!(sums, [30, 70]),
@@ -705,11 +726,11 @@ mod engine {
         for round in 0..JOINS / ROUND {
             for save in round * ROUND..(round + 1) * ROUND {
                 let first = save as u32 * ROWS;
-                let rows = (first..first + ROWS)
+                let rows: Vec<_> = (first..first + ROWS)
                     .map(|value| packet_handle.send_adv_task(row(value)).unwrap())
                     .collect();
                 let got = got_tx.clone();
-                join(rows, "Save", move |joined: Joined| {
+                rows.join("Save", move |joined: Joined| {
                     let _ = got.send((first, joined));
                     Ok::<(), RowError>(())
                 })
@@ -763,7 +784,7 @@ mod failing {
             packet_handle.send_adv_task(gated_row(30, go_rx)).unwrap(),
         ];
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // `go` hasn't been sent, so Save ran with Rows 1 and 3 still running.
         let (position, error) = the_error(run_until_received(&mut engine, &got_rx));
@@ -801,7 +822,7 @@ mod failing {
             packet_handle.send_adv_task(failing_row(2)).unwrap(),
         ];
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         let (position, error) = the_error(run_until_received(&mut engine, &got_rx));
         assert_eq!(position, 1);
@@ -843,7 +864,7 @@ mod failing {
         run_until_the_wait_table_holds(&mut engine, 3);
 
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // Row 2's error triggered Save, which was queued, not held. The kept results of Rows 3
         // and 4 came after it, so they were let go; Rows 1 and 5 got a follower each, before the
@@ -887,7 +908,7 @@ mod failing {
         let second = packet_handle
             .send_adv_task(telling_row(20, ran_tx))
             .unwrap();
-        join(vec![first, second], "Save", sum).unwrap();
+        vec![first, second].join("Save", sum).unwrap();
         assert!(engine.check_tasks(), "the engine didn't get the tasks");
         assert_eq!(engine.wait_table_len(), 2);
         ran_rx
@@ -933,7 +954,7 @@ mod forwarding_after_declaration {
             packet_handle.send_adv_task(row(30)).unwrap(),
         ];
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         // Save is declared before the engine has handled any result, so every forward arrives
         // after it, at a row's follower.
@@ -971,7 +992,7 @@ mod forwarding_after_declaration {
         run_until_the_wait_table_holds(&mut engine, 2);
 
         let (got_tx, got_rx) = bounded(1);
-        join(vec![first, second], "Save", reporting(got_tx)).unwrap();
+        vec![first, second].join("Save", reporting(got_tx)).unwrap();
 
         // Row 1's value went into its slot. Decompress's value is still kept, Row 2 has a
         // follower, and Save waits.
@@ -1007,7 +1028,7 @@ mod forwarding_after_declaration {
                 .unwrap(),
         ];
         let (got_tx, got_rx) = bounded(1);
-        join(rows, "Save", reporting(got_tx)).unwrap();
+        rows.join("Save", reporting(got_tx)).unwrap();
 
         let (position, error) = the_error(run_until_received(&mut engine, &got_rx));
         assert_eq!(position, 0);
@@ -1044,8 +1065,8 @@ mod priority {
             .map(|&priority| handle.send_adv_task(row_at(0, priority)).unwrap())
             .collect();
         match given {
-            Some(priority) => join_with_priority(rows, "Save", priority, save).unwrap(),
-            None => join(rows, "Save", save).unwrap(),
+            Some(priority) => rows.join_with_priority("Save", priority, save).unwrap(),
+            None => rows.join("Save", save).unwrap(),
         };
 
         mailbox.try_iter().last().unwrap()
@@ -1103,7 +1124,7 @@ mod priority {
         let rows = vec![handle.send_adv_task(row(10)).unwrap()];
 
         let line = line!() + 1;
-        join_with_priority(rows, "Save", 2, save).unwrap();
+        rows.join_with_priority("Save", 2, save).unwrap();
 
         let save = mailbox.try_iter().last().unwrap();
         let callsite = save.callsite.expect("graph mode records a call site");
@@ -1112,6 +1133,225 @@ mod priority {
             callsite.file_path.ends_with("gate_t5.rs"),
             "{:?}",
             callsite.file_path
+        );
+    }
+}
+
+/// Step 7: splitting work. `split_into` cuts a list into balanced pieces, in order, and sends one
+/// typed task per piece; `send_split_tasks` sends one per chunk the caller already cut. Both return
+/// the pieces' handles, ready to be joined.
+mod splitting {
+    use super::*;
+
+    /// A piece's closure that hands back where its chunk starts, and the chunk.
+    fn report(chunk: Vec<u32>, start: usize) -> Result<(usize, Vec<u32>), RowError> {
+        Ok((start, chunk))
+    }
+
+    /// A piece's closure that adds up its rows.
+    fn add_up(chunk: Vec<u32>, _start: usize) -> Result<u32, RowError> {
+        Ok(chunk.iter().sum())
+    }
+
+    /// Runs the pieces the way a worker does, and opens what each handed back.
+    fn ran<T: 'static>(pieces: Vec<Task>) -> Vec<T> {
+        pieces
+            .into_iter()
+            .map(|piece| {
+                let (_, result) = piece.process().unwrap();
+                let (value, error_text) = open::<T, RowError>(result);
+                assert_eq!(error_text, None);
+                value.unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn split_into_cuts_a_list_into_balanced_pieces_in_order() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+        let rows: Vec<u32> = (0..10).collect();
+
+        let pieces = handle.split_into(rows, "Row", 4, 3, report).unwrap();
+        assert_eq!(pieces.len(), 4);
+
+        let sent: Vec<Task> = mailbox.try_iter().collect();
+        for piece in &sent {
+            assert_eq!(piece.task_name(), "Row");
+            assert_eq!(piece.base_priority, 3);
+        }
+        // Sizes differ by at most one, the larger pieces spread out, and each chunk knows where
+        // it starts.
+        assert_eq!(
+            ran::<(usize, Vec<u32>)>(sent),
+            [
+                (0, vec![0, 1]),
+                (2, vec![2, 3, 4]),
+                (5, vec![5, 6]),
+                (7, vec![7, 8, 9])
+            ]
+        );
+    }
+
+    #[test]
+    fn more_pieces_than_rows_gives_one_piece_per_row() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+
+        let pieces = handle
+            .split_into(vec![10, 20, 30], "Row", 5, 1, report)
+            .unwrap();
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(
+            ran::<(usize, Vec<u32>)>(mailbox.try_iter().collect()),
+            [(0, vec![10]), (1, vec![20]), (2, vec![30])]
+        );
+    }
+
+    #[test]
+    fn an_empty_list_gives_no_pieces() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+
+        let pieces = handle.split_into(Vec::new(), "Row", 4, 1, report).unwrap();
+        assert!(pieces.is_empty());
+        assert!(mailbox.try_recv().is_err(), "nothing was sent");
+    }
+
+    #[test]
+    fn zero_pieces_is_refused_before_anything_is_sent() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+
+        let refused = handle
+            .split_into(vec![10, 20], "Row", 0, 1, report)
+            .err()
+            .expect("zero pieces is refused");
+        assert!(matches!(
+            &refused,
+            ThryveError::Split(SplitError::ZeroPieces { split_name }) if split_name == "Row"
+        ));
+        assert_eq!(
+            get_err(&refused),
+            "split failed\n  caused by: cannot split 'Row' into 0 pieces"
+        );
+        assert!(mailbox.try_recv().is_err(), "nothing was sent");
+    }
+
+    #[test]
+    fn a_bad_name_is_refused_before_anything_is_sent() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+
+        assert!(matches!(
+            handle.split_into(vec![10, 20], "", 2, 1, report).err(),
+            Some(ThryveError::Naming(NamingError::NameEmpty { .. }))
+        ));
+        assert!(mailbox.try_recv().is_err(), "nothing was sent");
+    }
+
+    #[test]
+    fn send_split_tasks_sends_one_piece_per_chunk_with_its_index() {
+        let (handle, mailbox) = handle_and_mailbox(false);
+
+        // A chunk can be of any type: here, a file name each.
+        let files = vec!["a.png", "b.png", "c.png"];
+        let pieces = handle
+            .send_split_tasks(files, "FileSize", 2, |file, index| {
+                Ok::<(usize, String), RowError>((index, file.to_string()))
+            })
+            .unwrap();
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(
+            ran::<(usize, String)>(mailbox.try_iter().collect()),
+            [
+                (0, "a.png".to_string()),
+                (1, "b.png".to_string()),
+                (2, "c.png".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn graph_mode_records_the_line_that_split_the_work() {
+        let (handle, mailbox) = handle_and_mailbox(true);
+
+        // Each call stays on one line: for a method call, the line recorded is the method name's.
+        let (rows, chunks) = (vec![10, 20, 30], vec![vec![40]]);
+        let line = line!() + 1;
+        let split = handle.split_into(rows, "Row", 2, 1, report);
+        let other_line = line!() + 1;
+        let sent = handle.send_split_tasks(chunks, "Row", 1, report);
+        assert!(split.is_ok() && sent.is_ok());
+
+        let lines: Vec<u32> = mailbox
+            .try_iter()
+            .map(|piece| {
+                let callsite = piece.callsite.expect("graph mode records a call site");
+                assert!(
+                    callsite.file_path.ends_with("gate_t5.rs"),
+                    "{:?}",
+                    callsite.file_path
+                );
+                callsite.line_number
+            })
+            .collect();
+        assert_eq!(lines, [line, line, other_line]);
+    }
+
+    #[test]
+    fn split_work_joins_back_through_the_engine() {
+        let dir = fresh_dir("t5_split_join");
+        let (mut engine, packet_handle) = started_engine(&dir, 100, 2, 10);
+
+        // 1,000 rows in 7 pieces, each adding up its own; Save gets the 7 sums, in order.
+        let (got_tx, got_rx) = bounded(1);
+        packet_handle
+            .split_into((0..1_000).collect(), "Row", 7, 1, add_up)
+            .unwrap()
+            .join("Save", reporting(got_tx))
+            .unwrap();
+
+        match run_until_received(&mut engine, &got_rx) {
+            JoinHandoff::Filled { values } => {
+                assert_eq!(values.len(), 7);
+                // The first piece holds rows 0 to 141: the pieces start at 0, 142, 285, …
+                assert_eq!(values[0], (0..142).sum::<u32>());
+                assert_eq!(values.iter().sum::<u32>(), (0..1_000).sum::<u32>());
+            }
+            JoinHandoff::Error { error, .. } => panic!("expected the sums, got {error}"),
+        }
+        run_until_the_wait_table_is_empty(&mut engine);
+        assert!(
+            finalize_within(engine, Duration::from_secs(10)).is_some(),
+            "the shutdown hung"
+        );
+    }
+
+    #[test]
+    fn a_failing_piece_reaches_the_join_at_its_index() {
+        let dir = fresh_dir("t5_split_fail");
+        let (mut engine, packet_handle) = started_engine(&dir, 100, 2, 10);
+
+        // 10 rows in 5 pieces of 2: the piece holding row 7 is the fourth, at index 3.
+        let (got_tx, got_rx) = bounded(1);
+        packet_handle
+            .split_into(
+                (0..10).collect(),
+                "Row",
+                5,
+                1,
+                |chunk: Vec<u32>, _start| match chunk.iter().find(|&&row| row == 7) {
+                    Some(&row) => Err(RowError { row }),
+                    None => Ok(chunk.iter().sum::<u32>()),
+                },
+            )
+            .unwrap()
+            .join("Save", reporting(got_tx))
+            .unwrap();
+
+        let (position, error) = the_error(run_until_received(&mut engine, &got_rx));
+        assert_eq!(position, 3);
+        assert_eq!(error, RowError { row: 7 });
+        run_until_the_wait_table_is_empty(&mut engine);
+        assert!(
+            finalize_within(engine, Duration::from_secs(10)).is_some(),
+            "the shutdown hung"
         );
     }
 }

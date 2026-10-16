@@ -81,6 +81,10 @@ pub enum ThryveError {
     /// A join couldn't be declared: it was given no tasks to wait for. [`JoinError`] says so.
     #[error("join failed")]
     Join(#[from] JoinError),
+
+    /// Work couldn't be split: it was asked for 0 pieces. [`SplitError`] says so.
+    #[error("split failed")]
+    Split(#[from] SplitError),
 }
 
 /// Why starting Thryve failed.
@@ -338,8 +342,8 @@ pub enum TaskError {
 /// Why a join failed: it was given no tasks to wait for, or it ran with an input missing or of the
 /// wrong type.
 ///
-/// A join is declared with [`join`](crate::packets::task::join), which refuses an empty list by
-/// returning [`MonitorsZeroInputs`](Self::MonitorsZeroInputs) inside
+/// A join is declared with [`join`](crate::traits::join::Joinable::join), which refuses an empty
+/// list by returning [`MonitorsZeroInputs`](Self::MonitorsZeroInputs) inside
 /// [`ThryveError::Join`]. The other two cases come from the join's job, and only a bug in Thryve
 /// can cause them, since each input is tied to a task the join waits for. Like a follow-up's
 /// [`TaskError`], the job doesn't panic: it returns the error as its result, so the engine still
@@ -380,6 +384,22 @@ pub enum JoinError {
         task_name: String,
         /// The input whose result had the wrong type.
         position: usize,
+    },
+}
+
+/// Why work couldn't be split over typed tasks.
+///
+/// Returned by
+/// [`PacketHandle::split_into`](crate::packets::packet_handle::PacketHandle::split_into) inside
+/// [`ThryveError::Split`], before anything is sent.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SplitError {
+    /// The split was asked for 0 pieces.
+    #[error("cannot split '{split_name}' into 0 pieces")]
+    ZeroPieces {
+        /// The pieces' name.
+        split_name: String,
     },
 }
 

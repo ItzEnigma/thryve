@@ -31,7 +31,7 @@ Thryve is designed around three main pillars:
 ### Key Features
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
-- **Typed tasks with follow-ups and joins**: a task's value, or its own error, goes to the task declared after it with `then`, and several tasks can share one follow-up with `join`, so plugins combine without knowing each other
+- **Typed tasks with follow-ups, splits and joins**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, and several tasks share one follow-up with `join`, so plugins combine without knowing each other
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -127,12 +127,10 @@ Plain `Task`s and `chain` keep working for fire-and-forget work.
 
 ### Joins
 
-Several typed tasks of one type can share one follow-up with `join`. It uses their handles up, and its closure gets a `JoinHandoff`: every value, in the order of the handles, or the first error and the position of the task that failed:
+Several typed tasks of one type can share one follow-up: `join`, called on a `Vec` of their handles, uses the handles up, and its closure gets a `JoinHandoff`: every value, in the order of the handles, or the first error and the position of the task that failed. `join` comes from the `Joinable` trait, which `use thryve::prelude::*;` brings in with the rest of the typed-task items; without it, `.join(…)` on a `Vec` finds Rust's own `join`, which joins strings:
 
 ```rust
-use thryve::utils::packets::packet_handle::PacketHandle;
-use thryve::utils::packets::task::{AdvTask, join};
-use thryve::utils::res::JoinHandoff;
+use thryve::prelude::*;
 
 fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
     let mut sizes = Vec::new();
@@ -143,7 +141,7 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
         sizes.push(handle.send_adv_task(file_size)?);
     }
 
-    join(sizes, "TotalSize", |joined| match joined {
+    sizes.join("TotalSize", |joined| match joined {
         // Every file's size, in the order of `sizes`.
         JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
         // The first `FileSize` that failed, with its own `std::io::Error`.
@@ -158,6 +156,35 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 - **A follow-up like any other:** `join` returns the join's own handle, so the join can be followed with `then`, or be one of the tasks of another join. It waits for each task whether that task finished before the join was declared or after, and a task that forwards fills its slot with the result of the task it forwarded to.
 - **Priority:** the join inherits the highest priority among its tasks, capped below realtime. `join_with_priority` gives it its own.
 - **Splitting has a cost:** joins of joins let work be split, and split again: ten images, each split into rows, and the rows' results archived into one zip. But every piece is a task of its own, with its own trip through the queue, its own result and its own slot, and every join adds one more task. Splitting finer than the work needs adds that overhead without making anything faster, so aim for a balance: enough pieces to keep the workers busy, each big enough to be worth a task.
+
+### Splitting Work
+
+`split_into` on the `PacketHandle` cuts a list into pieces and sends one typed task per piece, all with the same name, priority and closure. It returns their handles in order, ready to be joined:
+
+```rust
+use thryve::prelude::*;
+
+fn total(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let numbers: Vec<u64> = (1..=1_000).collect();
+
+    // Four pieces of 250 numbers, each adding up its own; then one total.
+    handle
+        .split_into(numbers, "PartialSum", 4, 2, |chunk, _start| {
+            Ok::<u64, std::io::Error>(chunk.iter().sum())
+        })?
+        .join("TotalSum", |joined| match joined {
+            JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
+            JoinHandoff::Error { error, .. } => Err(error),
+        })?;
+
+    Ok(())
+}
+```
+
+- **A balanced cut:** the pieces' sizes differ by at most one item, and no piece is empty: more pieces than items gives one piece per item. The items are moved into their pieces, never copied, and never padded.
+- **The closure** gets its chunk and where that chunk starts in the list, so a piece knows which items it holds. Since sizes can differ by one, it must handle any chunk size; if the work needs items in groups (rows in pairs), group them first, so that each group is one item.
+- **Your own cut:** `send_split_tasks` takes chunks you already cut, of any type (by size, at content boundaries, one file per piece), and its closure gets the piece's index.
+- **The count is yours,** and splitting has the cost described under Joins.
 
 ### Observers
 
@@ -255,13 +282,14 @@ Everything usable from Rust is re-exported under `thryve::`:
 
 | Path | Description |
 |------|-------------|
+| `thryve::prelude` | One import for typed work: `AdvTask`, `AdvTaskHandle`, `Handoff`, `JoinHandoff`, `Joinable`, `PacketHandle`, `ThryveError` |
 | `thryve::run::run_interactive` | Interactive mode: `summon_requirements`, `run_interactive` |
 | `thryve::run::run_service` | Windows service mode: `create_service`, `try_run_as_service` |
 | `thryve::utils::cfg::Config` / `thryve::utils::cfg::ctx::Ctx` | Configuration and application context |
 | `thryve::utils::packets::task::Task` | Unit of work with priority and unique ID |
 | `thryve::utils::packets::task::{AdvTask, AdvTaskHandle}` | Typed task returning `Result<T, E>` (`AdvTask::new`, or `AdvTask::forward` to forward), and the handle its follow-ups are declared on: `then`, `then_with_priority`, `then_forward` |
-| `thryve::utils::packets::task::{join, join_with_priority}` | One follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
-| `thryve::utils::packets::packet_handle::PacketHandle` | Handle for sending tasks (`send_task`, `send_adv_task`) and notifications to the engine |
+| `thryve::utils::traits::Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
+| `thryve::utils::packets::packet_handle::PacketHandle` | Handle for sending tasks (`send_task`, `send_adv_task`) and notifications to the engine, and for splitting work (`split_into`, `send_split_tasks`) |
 | `thryve::utils::res::TaskResult` | Task execution outcome, with chaining via `.chain(task)` |
 | `thryve::utils::res::Handoff` | What a follow-up gets: the task's value, or its own error |
 | `thryve::utils::res::JoinHandoff` | What a join's follow-up gets: every task's value, in order, or the first error and the position of the task that failed |
@@ -269,7 +297,7 @@ Everything usable from Rust is re-exported under `thryve::`:
 | `thryve::utils::bases::observer::Observer` / `thryve::utils::traits::ObsLogic` | Observer structure and the trait your observer logic implements |
 | `thryve::utils::bases::notif::Notif` / `thryve::utils::traits::NotifLogic` | Notification structure and its logic trait |
 | `thryve::utils::jobs::ObsJob` | Closure wrapper expected by `Observer::new` (`Task::new` and `Plugin::new` take a plain closure) |
-| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError, TaskError, JoinError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
+| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError, TaskError, JoinError, SplitError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
 | `thryve::utils::impl_as_any!` | Macro that implements the `as_any` downcasting method required by `NotifLogic`/`ObsLogic` |
 Names are checked when a task, plugin, observer or notification is created: they must not be empty or contain control characters, and each constructor returns a `NamingError` otherwise. Log-file names (in the config) may contain only ASCII letters and digits, are compared ignoring case, and can't be `Main`, `Error`, `Debug` or a Windows device name such as `CON`.
 

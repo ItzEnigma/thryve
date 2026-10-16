@@ -10,6 +10,7 @@
 //! The traits user logic implements ([`plugin_logic`], [`observer_logic`], [`notif_logic`]), and the
 //! traits behind Thryve's packets and queues ([`packets`], [`queue`]).
 
+pub mod join;
 pub mod notif_logic;
 pub mod observer_logic;
 pub mod packets;

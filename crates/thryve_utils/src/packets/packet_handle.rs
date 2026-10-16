@@ -14,7 +14,10 @@
 //! engine. It encapsulates the sender ends of crossbeam channels for
 //! tasks, notifications and Thryve's own status messages. Typed tasks are
 //! sent with [`PacketHandle::send_adv_task`], which returns the handle
-//! their follow-ups are declared on.
+//! their follow-ups are declared on. Work is split over several typed
+//! tasks with [`PacketHandle::split_into`] (a balanced cut of a list) or
+//! [`PacketHandle::send_split_tasks`] (chunks the caller already cut), which
+//! return the pieces' handles, ready to be joined.
 //!
 //! # Architecture
 //!
@@ -37,7 +40,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::bases::notif::Notif;
-use crate::errors::{EngineNotRunningError, ThryveError};
+use crate::errors::{EngineNotRunningError, SplitError, ThryveError};
 use crate::extras::thread_local;
 use crate::graphs::callsite::TaskCallSite;
 use crate::packets::task::{AdvTask, AdvTaskHandle, Task};
@@ -368,6 +371,170 @@ impl PacketHandle {
         self.send_task(task)?;
 
         Ok(handle)
+    }
+}
+
+impl PacketHandle {
+    /// Splits work over several typed tasks: cuts `items_to_split` into at most
+    /// `number_of_pieces` chunks, in order, and sends one task per chunk, each running
+    /// `fn_to_run` on its own. Returns the pieces' handles, in order, ready to be joined with
+    /// [`join`](crate::traits::join::Joinable::join), followed one by one, or kept.
+    ///
+    /// The cut is balanced: the pieces' sizes differ by at most one item, the larger pieces spread
+    /// among the smaller ones (6 items into 4 pieces gives 1, 2, 1, 2). No piece is ever empty:
+    /// more pieces than items gives one piece per item, and an empty list gives no pieces. The
+    /// items are moved into their chunks, never copied, and never changed: nothing is padded.
+    ///
+    /// Every piece has the same name and priority, and they share the one closure. It's called
+    /// with the piece's chunk and where that chunk starts in `items_to_split`, so a piece knows
+    /// which items it holds (to report "row 4,173 is corrupt", say). Since the sizes can differ,
+    /// the closure must handle a chunk of any size. If the work needs items in groups (rows in
+    /// pairs, say), group them first, so that each group is one item and no cut falls inside it.
+    ///
+    /// How many pieces is the caller's choice. Every piece is a task of its own, with its own trip
+    /// through the queue, so splitting finer than the work needs adds overhead without making
+    /// anything faster: aim for enough pieces to keep the workers busy, each big enough to be
+    /// worth a task.
+    ///
+    /// It cuts the list, then sends the chunks through
+    /// [`send_split_tasks`](Self::send_split_tasks). `#[track_caller]`, like it, so graph mode
+    /// records the plugin's line for every piece.
+    ///
+    /// # Errors
+    ///
+    /// - [`ThryveError::Split`] with [`SplitError::ZeroPieces`] if `number_of_pieces` is 0;
+    /// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character.
+    ///
+    /// Either way, nothing is sent. [`ThryveError::EngineNotRunning`] if the engine is gone.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crossbeam::channel::{bounded, unbounded};
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// use thryve_utils::res::JoinHandoff;
+    /// use thryve_utils::traits::join::Joinable;
+    ///
+    /// # let (task_tx, _task_rx) = bounded(8);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
+    /// let numbers: Vec<u64> = (1..=1_000).collect();
+    ///
+    /// // Four pieces of 250 numbers, each adding up its own; then one total.
+    /// let pieces = handle.split_into(numbers, "PartialSum", 4, 2, |chunk, _start| {
+    ///     Ok::<u64, std::io::Error>(chunk.iter().sum())
+    /// })?;
+    /// pieces.join("TotalSum", |joined| match joined {
+    ///     JoinHandoff::Filled { values } => Ok(values.iter().sum::<u64>()),
+    ///     JoinHandoff::Error { error, .. } => Err(error),
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn split_into<T, U, E>(
+        &self,
+        items_to_split: Vec<U>,
+        task_name: &str,
+        number_of_pieces: usize,
+        priority: u8,
+        fn_to_run: impl Fn(Vec<U>, usize) -> Result<T, E> + Send + Sync + 'static,
+    ) -> Result<Vec<AdvTaskHandle<T, E>>, ThryveError>
+    where
+        U: Send + 'static,
+        T: Send + 'static,
+        E: std::error::Error + Send + 'static,
+    {
+        if number_of_pieces == 0 {
+            return Err(SplitError::ZeroPieces {
+                split_name: String::from(task_name),
+            }
+            .into());
+        }
+
+        let number_of_items = items_to_split.len();
+        let max_possible_pieces = std::cmp::min(number_of_items, number_of_pieces);
+        let mut chunks = Vec::new();
+        let mut items_iter = items_to_split.into_iter();
+
+        for i in 0..max_possible_pieces {
+            let start_idx = (i * number_of_items) / max_possible_pieces;
+            let end_idx = ((i + 1) * number_of_items) / max_possible_pieces;
+            let chunk_size = end_idx - start_idx;
+
+            let items_per_task: Vec<U> = items_iter.by_ref().take(chunk_size).collect();
+
+            chunks.push((items_per_task, start_idx));
+        }
+
+        self.send_split_tasks(
+            chunks,
+            task_name,
+            priority,
+            move |(chunk, start), _index| fn_to_run(chunk, start),
+        )
+    }
+
+    /// Sends one typed task per chunk of work the caller already cut, each running `fn_to_run` on
+    /// its own chunk, and returns their handles, in order, ready to be joined with
+    /// [`join`](crate::traits::join::Joinable::join), followed one by one, or kept.
+    ///
+    /// It's for a cut of your own: by size, at content boundaries, with overlaps, or over things
+    /// that aren't a list's items, since a chunk can be of any type (a file's path, a range of
+    /// rows). [`split_into`](Self::split_into) is the balanced cut of a list, sent through here.
+    ///
+    /// Every piece has the same name and priority, and they share the one closure. It's called
+    /// with the piece's chunk and the piece's index in `chunks`, counted from 0, which is also its
+    /// position in a join of the handles. An empty `chunks` sends nothing and gives no handles.
+    ///
+    /// `#[track_caller]`, so graph mode records the plugin's line for every piece.
+    ///
+    /// # Errors
+    ///
+    /// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character; nothing
+    ///   is sent;
+    /// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crossbeam::channel::{bounded, unbounded};
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// # let (task_tx, _task_rx) = bounded(4);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
+    /// // One piece per file: here the chunks are the paths themselves.
+    /// let paths = vec!["a.png", "b.png", "c.png"];
+    /// let sizes = handle.send_split_tasks(paths, "FileSize", 2, |path, _index| {
+    ///     std::fs::metadata(path).map(|meta| meta.len())
+    /// })?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[track_caller]
+    pub fn send_split_tasks<T, U, E>(
+        &self,
+        mut chunks: Vec<U>,
+        task_name: &str,
+        priority: u8,
+        fn_to_run: impl Fn(U, usize) -> Result<T, E> + Send + Sync + 'static,
+    ) -> Result<Vec<AdvTaskHandle<T, E>>, ThryveError>
+    where
+        U: Send + 'static,
+        T: Send + 'static,
+        E: std::error::Error + Send + 'static,
+    {
+        let fn_to_run = Arc::new(fn_to_run);
+        let mut handles: Vec<AdvTaskHandle<T, E>> = Vec::with_capacity(chunks.len());
+
+        for (i, chunk) in chunks.drain(..).enumerate() {
+            let fn_to_run_clone = fn_to_run.clone();
+            let task = AdvTask::new(task_name, priority, move || fn_to_run_clone(chunk, i))?;
+
+            let handle = self.send_adv_task(task)?;
+
+            handles.push(handle);
+        }
+
+        Ok(handles)
     }
 }
 

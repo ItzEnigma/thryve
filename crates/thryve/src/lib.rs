@@ -12,11 +12,26 @@
 // re-export all crates to be used by the devs.
 pub use thryve_run::run;
 
+/// What nearly every plugin needs, in one import: `use thryve::prelude::*;`.
+///
+/// Typed tasks and their handles, what a follow-up and a join receive, the handle that sends
+/// tasks, Thryve's error type, and the [`Joinable`](utils::traits::Joinable) trait. A trait's
+/// methods only work where the trait is in scope, so the prelude also makes `.join(…)` on a `Vec`
+/// of handles find Thryve's join, not the standard library's `join` for strings.
+pub mod prelude {
+    pub use thryve_utils::errors::ThryveError;
+    pub use thryve_utils::packets::packet_handle::PacketHandle;
+    pub use thryve_utils::packets::task::{AdvTask, AdvTaskHandle};
+    pub use thryve_utils::res::{Handoff, JoinHandoff};
+    pub use thryve_utils::traits::join::Joinable;
+}
+
 /// Everything an application uses from Rust: base types, packets, configuration, errors and
 /// helpers.
 pub mod utils {
     /// The traits your plugin, observer and notification logic implement, and the queue trait.
     pub mod traits {
+        pub use thryve_utils::traits::join::Joinable;
         pub use thryve_utils::traits::notif_logic::NotifLogic;
         pub use thryve_utils::traits::observer_logic::ObsLogic;
         pub use thryve_utils::traits::plugin_logic::PlgLogic;
@@ -49,6 +64,7 @@ pub mod utils {
         pub use thryve_utils::errors::NameInputType;
         pub use thryve_utils::errors::NamingError;
         pub use thryve_utils::errors::RuleError;
+        pub use thryve_utils::errors::SplitError;
         pub use thryve_utils::errors::StartupError;
         pub use thryve_utils::errors::TaskError;
         pub use thryve_utils::errors::ThryveError;

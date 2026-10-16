@@ -396,8 +396,8 @@ pub enum Handoff<T: Send + 'static, E: std::error::Error + Send + 'static> {
 
 /// What a join's closure gets: every task's value, or the first task that failed.
 ///
-/// A join is declared with [`join`](crate::packets::task::join) over the handles of tasks that
-/// each return `Result<T, E>`. `V` is the collection their values come in: `Vec<T>`, in the order
+/// A join is declared with [`join`](crate::traits::join::Joinable::join) on the handles of tasks
+/// that each return `Result<T, E>`. `V` is the collection their values come in: `Vec<T>`, in the order
 /// the handles were given. A join fails fast: as soon as one task fails, its closure runs with that
 /// task's error, without waiting for the rest.
 #[derive(Debug)]
