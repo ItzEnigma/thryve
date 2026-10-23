@@ -28,12 +28,14 @@ use std::collections::HashMap;
 
 use thryve_utils::{packets::task::Task, res::SealedHandoff};
 
-/// A store keyed by task id, used twice by the engine.
+/// A store keyed by task id, used three times by the engine.
 ///
 /// As `WaitTable<WaitingState>`, the wait table: one entry per typed task whose follow-up or
 /// result is waiting for the other side, whose forward hasn't been followed yet, or whose result
 /// a join waits for. As `WaitTable<Task>`, the joins still waiting for some of their tasks, by the
-/// join's id. An entry goes once both sides have arrived, so neither table grows.
+/// join's id. As `WaitTable<String>`, the error texts kept for tasks queued with an error as their
+/// input, by the id of the task that carries it, until that task reports. An entry goes once both
+/// sides have arrived, so no table grows.
 pub struct WaitTable<T> {
     /// The entries, by task id. The shutdown empties it directly.
     pub table: HashMap<u64, T>,

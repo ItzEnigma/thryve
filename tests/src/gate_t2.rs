@@ -116,10 +116,11 @@ fn started_engine_with(
     let (mut engine, packet_handle) = loaded_engine(dir, capacity, workers, grace_period, load);
     engine.obs_manager.init_obs_sorter_thread().unwrap();
     let res_tx = engine.plugin_manager.res_tx.clone();
+    let cancelled_tasks = engine.cancelled_tasks.clone();
     engine
         .plugin_manager
         .threadpool
-        .run_threads_plugins(res_tx)
+        .run_threads_plugins(res_tx, cancelled_tasks)
         .unwrap();
     engine.resume(true);
 

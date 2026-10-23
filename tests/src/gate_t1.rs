@@ -45,6 +45,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use crossbeam::channel::bounded;
+use crossbeam_skiplist::SkipSet;
 
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
@@ -1014,7 +1015,8 @@ mod shutdown {
         let (res_tx, _res_rx) = bounded::<(u64, TaskResult)>(10);
 
         let finished = with_silent_panics(|| {
-            pool.run_threads_plugins(Arc::new(res_tx)).unwrap();
+            pool.run_threads_plugins(Arc::new(res_tx), Arc::new(SkipSet::new()))
+                .unwrap();
             pool.submit_task(Task::new("Boom", 0, || panic!("the task panics")).unwrap());
 
             // One worker dies with the task's panic...

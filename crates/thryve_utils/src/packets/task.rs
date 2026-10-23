@@ -386,6 +386,21 @@ impl Task {
         Err(sealed)
     }
 
+    /// Changes the id in a join's slot at `position` to `new_input_id`: the task that will now fill
+    /// it, once the task first given forwarded to it. A cancel of the join then finds the task it
+    /// still waits for.
+    ///
+    /// For Thryve's engine. Not part of the public API. A task that isn't a join, or a `position`
+    /// past its last slot, is left as it is; only a bug in Thryve can cause either.
+    #[doc(hidden)]
+    pub fn join_new_input_id(&mut self, new_input_id: u64, position: usize) {
+        if let Job::JoinWait { slots, .. } = &mut self.job
+            && let Some(input) = slots.get_mut(position)
+        {
+            input.0 = new_input_id
+        }
+    }
+
     /// Makes a join ready: hands its slots' handoffs, in order, to its job, which then runs like any
     /// ready task's.
     ///
@@ -595,7 +610,7 @@ pub struct AdvTask<T: Send + 'static, E: std::error::Error + Send + 'static> {
 /// The engine keeps the task's result for as long as the handle exists, so `then` works even
 /// after the task has finished. Dropping the handle without calling `then` tells the engine that
 /// nobody will follow up: the result is let go, and an error is written to `Error.log`. Dropping
-/// it never cancels the task, which still runs.
+/// it never cancels the task, which still runs; [`cancel`](Self::cancel) does.
 pub struct AdvTaskHandle<T: Send + 'static, E: std::error::Error + Send + 'static> {
     /// The task's id. The engine holds the follow-up, or the task's kept result, under it.
     task_id: u64,
@@ -616,8 +631,8 @@ where
     T: Send + 'static,
     E: std::error::Error + Send + 'static,
 {
-    /// Tells the engine that nobody will follow up on the task, unless the handle was used, by
-    /// `then` or by a forward.
+    /// Tells the engine that nobody will follow up on the task, unless the handle was used: by
+    /// `then`, by a forward, by a join, or by [`cancel`](Self::cancel).
     ///
     /// The release goes through the status mailbox, which never makes a sender wait, so a handle
     /// can be dropped anywhere, even on the engine thread.
@@ -919,6 +934,48 @@ where
     {
         let priority = self.base_priority;
         self.follow_up(task_name, priority, true, fn_to_exec, seal_forward)
+    }
+
+    /// Cancels the task, and uses the handle up.
+    ///
+    /// A task that hasn't started yet never runs: the worker that takes it skips it. A task that's
+    /// already running can't be stopped, so it finishes, and its result is let go: an error is
+    /// still written to `Error.log`, and a value is dropped. The same goes for a task that has
+    /// already finished. If the task forwarded, the cancel goes on to the task it forwarded to.
+    /// Cancelling a follow-up doesn't stop the task it follows, which still runs.
+    ///
+    /// Cancelling a join that's still waiting for its tasks also cancels the ones it waits for,
+    /// and the joins among them, all the way in; the values already in it are dropped. If a
+    /// follow-up or a join had already been given an error by the task before it, that error is
+    /// still written to `Error.log`, since nobody takes it now.
+    ///
+    /// Like dropping the handle, it never fails and writes nothing to the logs: if the engine is
+    /// already gone, nothing will run anyway.
+    ///
+    /// To cancel several tasks at once, such as the pieces that
+    /// [`split_into`](crate::packets::packet_handle::PacketHandle::split_into) gave back, see
+    /// [`cancel_all`](crate::traits::join::Joinable::cancel_all).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crossbeam::channel::{bounded, unbounded};
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// use thryve_utils::packets::task::AdvTask;
+    ///
+    /// # let (task_tx, _task_rx) = bounded(1);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
+    /// let thumbnail = AdvTask::new("Thumbnail", 2, || Ok::<u64, std::io::Error>(64))?;
+    /// let thumbnail = handle.send_adv_task(thumbnail)?;
+    ///
+    /// // The photo was closed: the thumbnail isn't needed any more.
+    /// thumbnail.cancel();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn cancel(mut self) {
+        self.is_used = true;
+        self.tx.send_status_cancel(self.task_id);
     }
 }
 

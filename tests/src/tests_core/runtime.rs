@@ -1500,6 +1500,9 @@ mod tests_observer_manager_init {
                 StatusMsg::HandleRelease(id) => {
                     panic!("expected a status line, got a release of {id}")
                 }
+                StatusMsg::Cancel(id) => {
+                    panic!("expected a status line, got a cancel of {id}")
+                }
             })
             .collect();
         assert_eq!(
@@ -2198,6 +2201,9 @@ mod tests_plugin_manager {
                 StatusMsg::LogLine(line) => line,
                 StatusMsg::HandleRelease(id) => {
                     panic!("expected a status line, got a release of {id}")
+                }
+                StatusMsg::Cancel(id) => {
+                    panic!("expected a status line, got a cancel of {id}")
                 }
             })
             .collect();

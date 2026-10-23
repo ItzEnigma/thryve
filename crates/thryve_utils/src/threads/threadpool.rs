@@ -31,6 +31,7 @@
 
 use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::Sender;
+use crossbeam_skiplist::SkipSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +45,7 @@ use crate::packets::task::Task;
 use crate::packets::{notif_log::Log, packet_handle::PacketHandle};
 use crate::queues::priority_queue::PQChild;
 use crate::queues::seg_queue::QChild;
-use crate::res::TaskResult;
+use crate::res::{SealedHandoff, TaskResult};
 use crate::traits::{packets::Packet, queue::Queue};
 
 /// A thread's slot for the name of what it's working on, empty when it's idle.
@@ -80,15 +81,16 @@ pub type TaskSlot = Arc<AtomicCell<Option<Box<String>>>>;
 /// - `main_queue`: The queue being processed
 /// - `packet_handle`: Handle for sending notifications
 ///
-/// The plugin pool's workers need a sender for task results and the observer pool's don't, so
-/// the pool doesn't store one: [`run_threads_plugins`](Self::run_threads_plugins) takes it.
+/// The plugin pool's workers need a sender for task results and the set of cancelled tasks, and
+/// the observer pool's don't, so the pool stores neither:
+/// [`run_threads_plugins`](ThreadPool::run_threads_plugins) takes them.
 ///
 /// # Example
 ///
 /// ```ignore
 /// // Thread pools are typically created by the engine
 /// let mut pool = ThreadPool::new(worker_count, queue, packet_handle);
-/// pool.run_threads_plugins(result_sender)?; // For plugin tasks
+/// pool.run_threads_plugins(result_sender, cancelled_tasks)?; // For plugin tasks
 /// // or
 /// pool.run_thread_obs(observer)?; // For observers
 /// ```
@@ -169,99 +171,6 @@ where
     /// ```
     pub fn submit_task(&self, obj: P) {
         self.main_queue.push(obj);
-    }
-
-    /// Starts worker threads for processing plugin tasks.
-    ///
-    /// Spawns worker threads that continuously pop tasks from the
-    /// main queue and process them. Each task's result is sent
-    /// back through the result channel. A worker stops once the pool exit flag is set, after
-    /// finishing the task it's running, and sends a "Plugin Thread Exiting..." status line.
-    ///
-    /// # Arguments
-    ///
-    /// * `res_tx` - Sender for the task results, which the engine reads. Every worker gets a
-    ///   clone.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StartupError::ThreadInit`] if a worker thread can't be started. Workers
-    /// started before the failing one keep running.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// pool.run_threads_plugins(result_sender)?;
-    /// // Worker threads now processing tasks
-    /// ```
-    pub fn run_threads_plugins(
-        &mut self,
-        res_tx: Arc<Sender<(u64, TaskResult)>>,
-    ) -> Result<(), StartupError> {
-        for i in 0..self.num_workers {
-            let queue = Arc::clone(&self.main_queue);
-            let exit_flag = Arc::clone(&self.pool_exit_flag);
-            let tx = self.packet_handle.clone();
-            let res_tx = res_tx.clone();
-            let task_slot = Arc::new(AtomicCell::new(None));
-            let task_slot_clone = task_slot.clone();
-
-            let thread_name = format!("plugin-worker-{}", i);
-            let handle = thread::Builder::new()
-                .name(thread_name.clone())
-                .spawn(move || {
-                    thread_local::tl_set_worker_park_idx(i);
-                    loop {
-                        // The pool's exit flag is the queue's own; the shutdown sets it.
-                        if exit_flag.load(Ordering::SeqCst) {
-                            break;
-                        }
-
-                        // Waits for a task. `None` once the queue is finalized, even with tasks
-                        // still in it: the engine takes those back, and they never run.
-                        let obj_opt = queue.pop();
-
-                        if let Some(obj) = obj_opt {
-                            tl_set_current_task_fingerprint(
-                                obj.get_callsite().this_callsite_fingerprint,
-                            );
-
-                            // The slot holds the task's name while it runs, so if the shutdown
-                            // gives up waiting for this worker, `Error.log` can name the task.
-                            if let Some(task_name) = obj.get_task_name() {
-                                task_slot_clone.swap(Some(Box::new(task_name)));
-                            }
-
-                            if let Some(res_container) = obj.process() {
-                                let _ = task_slot_clone.take();
-                                // Waits while the result mailbox is full. At shutdown the engine
-                                // keeps reading it until this worker has finished.
-                                // Non-fatal: if result send fails, log it and continue
-                                if let Err(e) = res_tx.send(res_container) {
-                                    let notif =
-                                        Log::log(format!("Failed to send result: {}", e), "Error");
-                                    tx.send_status_log(notif);
-                                }
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // The engine reads the status mailbox until the worker has finished, and once
-                    // more after joining it, so this line isn't lost.
-                    let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
-                    tx.send_status_log(notif);
-                })
-                .map_err(|e| StartupError::ThreadInit {
-                    thread_name,
-                    source: e,
-                })?;
-
-            self.workers.push((handle, task_slot));
-        }
-
-        Ok(())
     }
 
     /// Starts a worker thread for processing an observer.
@@ -405,6 +314,127 @@ where
 }
 
 impl ThreadPool<PQChild<Task>, Task> {
+    /// Starts worker threads for processing plugin tasks.
+    ///
+    /// Spawns worker threads that continuously pop tasks from the
+    /// main queue and process them. Each task's result is sent
+    /// back through the result channel. A worker stops once the pool exit flag is set, after
+    /// finishing the task it's running, and sends a "Plugin Thread Exiting..." status line.
+    ///
+    /// A task cancelled before it started isn't run. After each pop, a worker looks the task's id
+    /// up in `cancelled_tasks`, unless the set is empty, as it almost always is. If the id is
+    /// there, the worker sends a [`SealedHandoff::Cancelled`] in place of the task's result and
+    /// drops the task. It leaves the id where it is: the engine takes it out when the report
+    /// arrives.
+    ///
+    /// # Arguments
+    ///
+    /// * `res_tx` - Sender for the task results, which the engine reads. Every worker gets a
+    ///   clone.
+    /// * `cancelled_tasks` - The ids of the tasks cancelled before they started. The engine
+    ///   writes to it; every worker gets a clone, and only reads it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StartupError::ThreadInit`] if a worker thread can't be started. Workers
+    /// started before the failing one keep running.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// pool.run_threads_plugins(result_sender, cancelled_tasks)?;
+    /// // Worker threads now processing tasks, skipping the cancelled ones
+    /// ```
+    pub fn run_threads_plugins(
+        &mut self,
+        res_tx: Arc<Sender<(u64, TaskResult)>>,
+        cancelled_tasks: Arc<SkipSet<u64>>,
+    ) -> Result<(), StartupError> {
+        for i in 0..self.num_workers {
+            let queue = Arc::clone(&self.main_queue);
+            let exit_flag = Arc::clone(&self.pool_exit_flag);
+            let tx = self.packet_handle.clone();
+            let res_tx = res_tx.clone();
+            let task_slot = Arc::new(AtomicCell::new(None));
+            let task_slot_clone = task_slot.clone();
+            let cancelled_tasks_clone = cancelled_tasks.clone();
+
+            let thread_name = format!("plugin-worker-{}", i);
+            let handle = thread::Builder::new()
+                .name(thread_name.clone())
+                .spawn(move || {
+                    thread_local::tl_set_worker_park_idx(i);
+                    loop {
+                        // The pool's exit flag is the queue's own; the shutdown sets it.
+                        if exit_flag.load(Ordering::SeqCst) {
+                            break;
+                        }
+
+                        // Waits for a task. `None` once the queue is finalized, even with tasks
+                        // still in it: the engine takes those back, and they never run.
+                        let task_opt = queue.pop();
+
+                        if let Some(task) = task_opt {
+                            if !cancelled_tasks_clone.is_empty()
+                                && cancelled_tasks_clone.contains(&task.id)
+                            {
+                                // Cancelled before it started: it never runs. This report stands
+                                // in for its result, so whoever waits for it still hears once.
+                                if let Err(e) = res_tx.send((
+                                    task.id,
+                                    TaskResult::new_handoff(SealedHandoff::Cancelled),
+                                )) {
+                                    let notif = Log::log(
+                                        format!("Failed to send cancelled result: {}", e),
+                                        "Error",
+                                    );
+                                    tx.send_status_log(notif);
+                                }
+                            } else {
+                                tl_set_current_task_fingerprint(
+                                    task.get_callsite().this_callsite_fingerprint,
+                                );
+
+                                // The slot holds the task's name while it runs, so if the shutdown
+                                // gives up waiting for this worker, `Error.log` can name the task.
+                                task_slot_clone
+                                    .swap(Some(Box::new(String::from(task.task_name()))));
+
+                                if let Some(res_container) = task.process() {
+                                    let _ = task_slot_clone.take();
+                                    // Waits while the result mailbox is full. At shutdown the engine
+                                    // keeps reading it until this worker has finished.
+                                    // Non-fatal: if result send fails, log it and continue
+                                    if let Err(e) = res_tx.send(res_container) {
+                                        let notif = Log::log(
+                                            format!("Failed to send result: {}", e),
+                                            "Error",
+                                        );
+                                        tx.send_status_log(notif);
+                                    }
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // The engine reads the status mailbox until the worker has finished, and once
+                    // more after joining it, so this line isn't lost.
+                    let notif = Log::log("Plugin Thread Exiting...".to_string(), "Main");
+                    tx.send_status_log(notif);
+                })
+                .map_err(|e| StartupError::ThreadInit {
+                    thread_name,
+                    source: e,
+                })?;
+
+            self.workers.push((handle, task_slot));
+        }
+
+        Ok(())
+    }
+
     /// Stops the plugin thread pool.
     ///
     /// Sets the exit flag and finalizes the task queue, which wakes every parked worker and hands

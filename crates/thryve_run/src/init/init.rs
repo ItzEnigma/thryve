@@ -250,9 +250,10 @@ fn init_sequence(eng: &mut Engine, ctx: &mut Ctx) -> Result<(), ThryveError> {
 
     // Start the thread pool for the plugin manager to allow plugins to run
     // their threads and perform their tasks.
-    eng.plugin_manager
-        .threadpool
-        .run_threads_plugins(eng.plugin_manager.res_tx.clone())?;
+    eng.plugin_manager.threadpool.run_threads_plugins(
+        eng.plugin_manager.res_tx.clone(),
+        eng.cancelled_tasks.clone(),
+    )?;
 
     // Initialize the logger observer with the specified log file names.
     init_logger(ctx, eng)?;

@@ -25,6 +25,7 @@ Thryve is designed around three main pillars:
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
 - **Typed tasks with follow-ups, splits and joins**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, and several tasks share one follow-up with `join`, so plugins combine without knowing each other
+- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and cancelling a join cancels the tasks it still waits for
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -147,7 +148,7 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **Fails fast:** the join runs as soon as one task fails. The other tasks still run, and nobody takes their results: an error is written to `Error.log`.
+- **Fails fast:** the join runs as soon as one task fails, and the tasks it was still waiting for are cancelled (see [Cancelling](#cancelling)): those that haven't started by then never run, and those already running finish with nobody to take their results, so an error is written to `Error.log`.
 - **A follow-up like any other:** `join` returns the join's own handle, so the join can be followed with `then`, or be one of the tasks of another join. It waits for each task whether that task finished before the join was declared or after, and a task that forwards fills its slot with the result of the task it forwarded to.
 - **Priority:** the join inherits the highest priority among its tasks, capped below realtime. `join_with_priority` gives it its own.
 - **Splitting has a cost:** joins of joins let work be split, and split again: ten images, each split into rows, and the rows' results archived into one zip. But every piece is a task of its own, with its own trip through the queue, its own result and its own slot, and every join adds one more task. Splitting finer than the work needs adds that overhead without making anything faster, so aim for a balance: enough pieces to keep the workers busy, each big enough to be worth a task.
@@ -182,6 +183,38 @@ fn total(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 - **The closure** gets its chunk and where that chunk starts in the list, so a piece knows which items it holds. Since sizes can differ by one, it must handle any chunk size; if the work needs items in groups (rows in pairs), group them first, so that each group is one item.
 - **Your own cut:** `send_split_tasks` takes chunks you already cut, of any type (by size, at content boundaries, one file per piece), and its closure gets the piece's index.
 - **The count is yours,** and splitting has the cost described under Joins.
+
+### Cancelling
+
+`cancel` on a typed task's handle cancels the task and uses the handle up; `cancel_all`, from the `Joinable` trait, cancels every task in a `Vec` of handles, such as the pieces `split_into` gave back:
+
+```rust
+use thryve_utils::packets::packet_handle::PacketHandle;
+use thryve_utils::packets::task::AdvTask;
+use thryve_utils::traits::join::Joinable;
+
+fn photo_closed(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let thumbnail = AdvTask::new("Thumbnail", 2, || Ok::<u64, std::io::Error>(64))?;
+    let thumbnail = handle.send_adv_task(thumbnail)?;
+
+    let rows: Vec<u32> = (0..1_000).collect();
+    let pieces = handle.split_into(rows, "Row", 8, 2, |chunk, _start| {
+        Ok::<u32, std::io::Error>(chunk.iter().sum())
+    })?;
+
+    // The photo was closed: neither the thumbnail nor the rows are needed any more.
+    thumbnail.cancel();
+    pieces.cancel_all();
+
+    Ok(())
+}
+```
+
+- **Before it starts:** a task that hasn't started never runs: the worker that takes it skips it. A follow-up still waiting for its task, and a join still waiting for its tasks, never run either.
+- **Too late:** a task that's already running can't be stopped. It finishes, and its result is let go: an error is still written to `Error.log`, and a value is dropped. The same goes for a task that has already finished.
+- **Through forwards and joins:** if the task forwarded, the cancel goes on to the task it forwarded to. Cancelling a join that's still waiting also cancels the tasks it waits for, and the joins among them, all the way in. Cancelling a follow-up doesn't stop the task it follows, which still runs.
+- **No error is lost:** if a follow-up or a join had already been given an error by the task before it, that error is still written to `Error.log`, since nobody takes it now.
+- **Quiet:** cancelling never fails and writes nothing to the logs, even once the engine is gone. At shutdown, a cancelled task isn't counted as lost work.
 
 ### Observers
 
@@ -237,9 +270,9 @@ Core utilities, data structures, and traits.
 | Component | Description |
 |-----------|-------------|
 | `Task` | Unit of work with priority and unique ID |
-| `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) |
+| `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) and that cancels it (`cancel`) |
 | `PacketHandle` | Sends tasks and notifications to the engine, and splits work over typed tasks (`split_into`, `send_split_tasks`) |
-| `Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails |
+| `Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails; `cancel_all` cancels them all |
 | `Notif` | Notification structure for observer communication |
 | `Log` | Logging notification implementation |
 | `TaskResult` | Task execution outcome with chaining capability |
@@ -728,7 +761,7 @@ If a shutdown cuts work short, one line says how much:
 thryve exited leaving 3 things not done: 1 lost tasks, 0 lost notifications, 1 lost task results, 1 still running
 ```
 
-It counts the tasks that never ran, the results that carried something (a message, or a task, plugin or observer to start), the notifications that were never delivered, and the threads still running when the grace period ran out. It goes to `Error.log`, or to `Main.log` when the Windows service was stopped, since stopping mid-work is expected there. With debugging on, `Debug.log` lists what was lost. A shutdown that lost nothing writes no line.
+It counts the tasks that never ran, the results that carried something (a message, a task, plugin or observer to start, or an error nobody took, including one handed to a follow-up or a join that never ran), the notifications that were never delivered, and the threads still running when the grace period ran out. A task that was cancelled isn't lost work, so it isn't counted; a cancel that arrives once the shutdown has started is dropped, though, so its task still counts. The line goes to `Error.log`, or to `Main.log` when the Windows service was stopped, since stopping mid-work is expected there. With debugging on, `Debug.log` lists what was lost. A shutdown that lost nothing writes no line.
 
 ## License
 

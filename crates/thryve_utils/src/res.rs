@@ -110,6 +110,7 @@ impl Display for TaskResult {
                         self.handoff_error_text().unwrap_or(String::from("a value"))
                     }
                     SealedHandoff::Forward { to } => format!("forwarded to task {to}"),
+                    SealedHandoff::Cancelled => String::from("cancelled"),
                 }
             } else {
                 String::from("None")
@@ -346,6 +347,23 @@ impl TaskResult {
 
         None
     }
+
+    /// Whether the handoff is a cancelled task's report, without taking the handoff out: the task
+    /// was skipped, so it never ran.
+    ///
+    /// `false` when there's no handoff, and when it carries a value, an error or a forward. The
+    /// shutdown uses it to tell a task that never took the error it was given from one that ran.
+    /// For Thryve's own crates. Not part of the public API.
+    #[doc(hidden)]
+    pub fn is_handoff_cancelled(&self) -> bool {
+        if let Some(handoff) = self.handoff.as_ref()
+            && handoff.is_cancelled()
+        {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// What an [`AdvTask`](crate::packets::task::AdvTask) hands over when it finishes: its result,
@@ -358,6 +376,9 @@ impl TaskResult {
 /// A forwarding task hands over a [`Forward`](Self::Forward) instead: not a result, but the id of
 /// the task whose outcome becomes its own. Nothing in it is sealed; the engine reads the id and
 /// links the two tasks, so a follow-up never gets a forward.
+///
+/// A task cancelled before it started hands over [`Cancelled`](Self::Cancelled): the worker sends
+/// it in place of running the task, and it carries nothing.
 ///
 /// For Thryve's own crates. Not part of the public API.
 #[doc(hidden)]
@@ -377,6 +398,10 @@ pub enum SealedHandoff {
         /// The id of the task forwarded to.
         to: u64,
     },
+
+    /// The task was cancelled before it started: a worker found its id among the cancelled tasks
+    /// and reported this instead of running it. Wherever it lands, it's let go without a line.
+    Cancelled,
 }
 
 /// What a follow-up gets: the result of the task it follows, as the task's value or its own error.
@@ -428,6 +453,11 @@ impl SealedHandoff {
         matches!(self, SealedHandoff::Forward { .. })
     }
 
+    /// Whether the task was cancelled before it started, so it never ran.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, SealedHandoff::Cancelled)
+    }
+
     /// The id of the task forwarded to, or `None` if the task's code returned instead.
     pub fn read_forward_id(&self) -> Option<u64> {
         match self {
@@ -450,7 +480,8 @@ impl SealedHandoff {
 
     /// Opens the handoff as the [`Handoff`] a follow-up gets. `None` if it doesn't hold a
     /// `Result<T, E>`, which only a bug in Thryve can cause: `then` ties a follow-up's types to the
-    /// task's, and the engine follows a forward instead of handing it over.
+    /// task's, the engine follows a forward instead of handing it over, and it lets a cancelled
+    /// task's report go.
     pub(crate) fn open<T, E>(self) -> Option<Handoff<T, E>>
     where
         T: Send + 'static,

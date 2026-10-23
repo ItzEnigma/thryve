@@ -2,6 +2,7 @@
 .cargo
 .claude
 .roo
+.git-private
 
 todo
 log

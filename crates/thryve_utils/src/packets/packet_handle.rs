@@ -316,6 +316,24 @@ impl PacketHandle {
         self.send_status_helper(StatusMsg::HandleRelease(handle_id));
     }
 
+    /// Tells the engine that the task `handle_id` was cancelled through its handle: a release, as
+    /// for a dropped handle, and if the task hasn't reported yet, its id goes into the engine's
+    /// cancelled set, so no worker runs it.
+    ///
+    /// [`AdvTaskHandle::cancel`] sends it. It goes through the status mailbox for the same reason
+    /// as a release: its sender never waits. A failed send is dropped without an error: the engine
+    /// is gone, and nothing will run.
+    ///
+    /// For Thryve's own crates. Not part of the public API.
+    ///
+    /// # Arguments
+    ///
+    /// * `handle_id` - The id of the task cancelled
+    #[doc(hidden)]
+    pub fn send_status_cancel(&self, handle_id: u64) {
+        self.send_status_helper(StatusMsg::Cancel(handle_id));
+    }
+
     /// Sends on the status mailbox. A failed send means the engine is gone, so it's dropped.
     fn send_status_helper(&self, status_msg: StatusMsg) {
         let _ = self.status_tx.send(status_msg);
@@ -549,4 +567,7 @@ pub enum StatusMsg {
     /// The handle of the task with this id was dropped without a follow-up, so nobody will take
     /// the task's result.
     HandleRelease(u64),
+    /// The task with this id was cancelled through its handle: a release, plus a cancel if the
+    /// task hasn't reported yet.
+    Cancel(u64),
 }

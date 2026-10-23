@@ -33,6 +33,7 @@ use crate::runtime::engine_wait_table::{WaitTable, WaitingState};
 use crate::runtime::observer_manager::ObserverManager;
 use crate::runtime::plugin_manager::PluginManager;
 
+use crossbeam_skiplist::SkipSet;
 use thryve_utils::bases::notif::Notif;
 use thryve_utils::bases::observer::Observer;
 use thryve_utils::cfg::config::Config;
@@ -111,6 +112,23 @@ pub struct Engine {
     /// follower, in `waiting_tasks`, leads here; the join is taken out and queued when the last
     /// one's result arrives.
     waiting_joins: WaitTable<Task>,
+    /// The error texts kept for tasks queued with an error as their input: a follow-up given the
+    /// error of the task it followed, or a join queued early by one of its tasks' errors. Each is
+    /// kept under the id of the task that carries it, since a worker that skips a cancelled task
+    /// can't open its input. The task's report takes it out: a cancelled report means the task
+    /// never ran, so nobody took the error, and the text is written to `Error.log` then; any other
+    /// report means the task took it. Errors are rare, so it's usually empty, and a report only
+    /// checks that.
+    sealed_handoff_errors: WaitTable<String>,
+    /// The ids of the tasks cancelled before they started. Each plugin worker has a clone, and
+    /// looks up every task it pops: a task whose id is there isn't run, and the worker reports it
+    /// as cancelled instead. An id leaves when any report for its task arrives: that one, or the
+    /// task's own result if it was already running when it was cancelled (see
+    /// [`handle_result`](Self::handle_result)).
+    ///
+    /// Only the engine writes to it. Don't add an id yourself: the engine wouldn't know the task
+    /// was cancelled, and whoever waits for it could be left without an outcome.
+    pub cancelled_tasks: Arc<SkipSet<u64>>,
     /// Set by [`finalize`](Self::finalize) as it starts; the engine's loops stop once it's set.
     /// Don't set it yourself: `finalize` would then take the engine for finalized already, return
     /// at once, and shut nothing down.
@@ -158,6 +176,8 @@ impl Engine {
             status_rx: ctx.status_rx.clone(),
             waiting_tasks: WaitTable::new(),
             waiting_joins: WaitTable::new(),
+            sealed_handoff_errors: WaitTable::new(),
+            cancelled_tasks: Arc::new(SkipSet::new()),
             exit_flag: false,
             pause_flag: false,
         };
@@ -237,15 +257,20 @@ impl Engine {
         }
     }
 
-    /// Checks for Thryve's own messages: status lines and releases.
+    /// Checks for Thryve's own messages: status lines, releases and cancels.
     ///
     /// Takes up to 500 messages from the status channel, stopping early once it's empty. A
     /// status line goes to the observer manager, which routes it to the logger. A release means
     /// a typed task's handle was dropped without a follow-up: if the task's result was kept,
     /// nobody will take it now, so its error is written to `Error.log`; if the result hasn't
     /// arrived yet, the release is remembered until it does. If the task forwarded, the release
-    /// follows the links and applies to the task at their end. Messages past the 500 wait for the
-    /// next turn.
+    /// follows the links and applies to the task at their end. A cancel is a release that also
+    /// cancels the task at the end of the links, unless that task has already reported (its result
+    /// was kept): then there's nothing left to cancel. A join still waiting for its tasks is taken
+    /// out and cancelled at once, with the tasks it waits for (see `cancel_join_task`). Any other
+    /// task's id goes into [`cancelled_tasks`](Self::cancelled_tasks), where the worker that pops
+    /// the task finds it, or the engine does when a follow-up's input arrives. Messages past the
+    /// 500 wait for the next turn.
     ///
     /// # Returns
     ///
@@ -264,6 +289,15 @@ impl Engine {
                     }
                     StatusMsg::HandleRelease(wait_id) => {
                         self.release(wait_id);
+                    }
+                    StatusMsg::Cancel(task_id) => {
+                        if let Some(last_id) = self.release(task_id) {
+                            if let Some(join_task) = self.waiting_joins.take(last_id) {
+                                self.cancel_join_task(join_task);
+                            } else {
+                                self.cancelled_tasks.insert(last_id);
+                            }
+                        }
                     }
                 }
             } else {
@@ -487,12 +521,12 @@ impl Engine {
     ///    worker that's running a task finishes it;
     /// 3. waits for every worker to finish while it keeps emptying its mailboxes, because a
     ///    worker can be blocked on a full one. Notifications are forwarded to the observers,
-    ///    which still run; tasks, results and status lines are collected. Then it joins the
-    ///    workers. A worker still running at the deadline is left behind, and `Error.log` names
-    ///    it and its task. Then the wait table is emptied, since results are only collected now:
-    ///    a follow-up still waiting never gets its input and never runs, nor does a join still
-    ///    waiting for some of its tasks, and a result kept for a handle that still exists is
-    ///    counted with the late results;
+    ///    which still run; tasks, results and status lines are collected, and releases and
+    ///    cancels are dropped. Then it joins the workers. A worker still running at the deadline
+    ///    is left behind, and `Error.log` names it and its task. Then the wait table is emptied,
+    ///    since results are only collected now: a follow-up still waiting never gets its input
+    ///    and never runs, nor does a join still waiting for some of its tasks, and a result kept
+    ///    for a handle that still exists is counted with the late results;
     /// 4. cleans up the plugins on a thread of its own, emptying the mailboxes the same way while
     ///    it runs, until the same deadline. A failed cleanup goes to `Error.log`. The cleanups are
     ///    skipped, and `Error.log` says so, if a worker was left behind (its plugin may still be
@@ -506,10 +540,11 @@ impl Engine {
     ///    thread. An observer whose turn comes after the deadline isn't cleaned up, only stopped,
     ///    and a thread still running at the end is left behind and named in `Error.log`;
     /// 6. sums up the work the shutdown lost, now that nothing more can arrive: the tasks that
-    ///    never ran, the results that carried something, the notifications never delivered, and
-    ///    the threads left running. If anything was lost, one line counts each kind, in
-    ///    `Main.log` after the service's Stop and in `Error.log` otherwise; with debugging on,
-    ///    `Debug.log` gets the details;
+    ///    never ran (except those cancelled before the shutdown, which weren't meant to run), the
+    ///    results that carried something (an error handed to a task that never took it counts as
+    ///    one), the notifications never delivered, and the threads left running. If anything was
+    ///    lost, one line counts each kind, in `Main.log` after the service's Stop and in
+    ///    `Error.log` otherwise; with debugging on, `Debug.log` gets the details;
     /// 7. hands the collected status lines, "Engine Finalized" and the metrics (when enabled) to
     ///    the logger. It pushes them into the logger's queue, which wakes the logger's thread if
     ///    it's waiting, then joins that thread (it writes at most one line, sees its exit flag and
@@ -611,6 +646,10 @@ impl Engine {
         for (_, join_task) in self.waiting_joins.table.drain() {
             fc.tasks.push(join_task);
         }
+
+        // The cancelled set and the error texts kept for queued tasks stay as they are: the
+        // summary leaves out the cancelled tasks, and counts a text as a lost result unless its
+        // task ran and took it, which only the results arriving until the end can tell.
 
         // The plugins' cleanups run on a thread of their own, for the same reason: a `clean_up`
         // may send to a full mailbox. They're skipped, with a line saying why, if a worker was
@@ -786,33 +825,61 @@ impl Engine {
     /// Handles a task execution result.
     ///
     /// Processes the result of a task execution, which may include:
+    /// - Taking the task's id out of [`cancelled_tasks`](Self::cancelled_tasks) if it's there.
+    ///   Any report for a cancelled task takes it out, whether a worker skipped the task or the
+    ///   task was already running when it was cancelled. Either way, the report then goes on like
+    ///   any other
+    /// - Taking out the error text kept for the task, if it was queued with an error as its
+    ///   input: a cancelled report writes it to `Error.log`, since the task never ran to take the
+    ///   error, and any other report means it did (see `sealed_handoff_errors`)
     /// - Handing an `AdvTask`'s handoff to the follow-up waiting for it, which is then queued.
     ///   A follow-up that inherited its priority gets it capped below realtime here, since only
     ///   the engine knows `max_priority`. With no follow-up waiting, the handoff is kept while
     ///   the task's handle exists, for a `then` that may still come. If the handle is already
     ///   gone, an error is written to `Error.log` and a value is dropped. The handoff is taken
-    ///   out first, before anything else, and the engine never opens it
+    ///   out first, before anything else, and the engine never opens it. A follow-up that was
+    ///   cancelled while it waited isn't queued: the handoff is let go, and the engine reports
+    ///   the follow-up as cancelled itself, through this same function
     /// - Following a forward: the task's outcome becomes the forwarded-to task's. A follow-up
     ///   already waiting moves on to that task, and a remembered release applies to it; with
     ///   neither, a link is stored for the follow-up or release still to come
     /// - Handing a handoff to the join whose follower waits for it: it goes into the join's slot
     ///   at the follower's position, and the join is queued once none of its slots is empty, or
-    ///   at once if the handoff is an error, since a join fails fast. If the join has already
-    ///   run (another of its tasks failed first), nobody will take the handoff: an error is
+    ///   at once if the handoff is an error, since a join fails fast; the tasks it still waits
+    ///   for are then cancelled. If the join has already run (another of its tasks failed
+    ///   first) or was cancelled, nobody will take the handoff: an error is
     ///   written to `Error.log`, and a value is dropped. A forward never goes into a slot: the
     ///   follower moves on to the task forwarded to, even when the join has already run, so that
     ///   task's result finds it (see `attach_follower`)
     /// - Submitting the task chained to the result
     /// - Logging completion messages
     /// - Triggering shutdown on "Fin" or "FinErr" results
+    /// - Letting a cancelled task's report go: it carries nothing, so wherever it lands (a
+    ///   release remembered for the task, or a follower whose join has already run) it goes
+    ///   without a line, and with task logging on, no "Finished Task ID" line is written for it
     ///
     /// # Arguments
     ///
     /// * `task_result` - Tuple of task ID and result
     pub fn handle_result(&mut self, task_result: (u64, TaskResult)) {
         let (id, mut result) = task_result;
+        let mut is_cancelled = false;
+
+        let _ = !self.cancelled_tasks.is_empty() && self.cancelled_tasks.remove(&id).is_some();
 
         if let Some(sealed_handoff) = result.take_handoff() {
+            if sealed_handoff.is_cancelled() {
+                is_cancelled = true;
+            }
+
+            if !self.sealed_handoff_errors.table.is_empty()
+                && let Some(sealed_error_text) = self.sealed_handoff_errors.take(id)
+                && is_cancelled
+            {
+                let notif = Log::err(sealed_error_text);
+                self.obs_manager.forward_notif(notif);
+            }
+
             let wait_state = self.waiting_tasks.get_as_ref(id);
 
             if wait_state.is_none() {
@@ -853,8 +920,22 @@ impl Engine {
                 {
                     self.attach(task, next_id);
                 } else if let Some(task) = self.waiting_tasks.take_task(id) {
-                    let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
-                    self.plugin_manager.threadpool.submit_task(task);
+                    if !self.cancelled_tasks.is_empty()
+                        && self.cancelled_tasks.remove(&task.id).is_some()
+                    {
+                        self.handle_result((
+                            task.id,
+                            TaskResult::new_handoff(SealedHandoff::Cancelled),
+                        ));
+                        self.drop_unclaimed_handoff(sealed_handoff);
+                    } else {
+                        if let Some(sealed_error_text) = sealed_handoff.error_text() {
+                            self.sealed_handoff_errors.store(task.id, sealed_error_text);
+                        }
+
+                        let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
+                        self.plugin_manager.threadpool.submit_task(task);
+                    }
                 }
             }
         }
@@ -863,7 +944,7 @@ impl Engine {
             self.accept_task(next_task);
         }
 
-        if self.config.debugging.is_debugging && self.config.debugging.log_tasks {
+        if self.config.debugging.is_debugging && self.config.debugging.log_tasks && !is_cancelled {
             let notif = Log::log(format!("Finished Task ID: {}.", task_result.0), "Main");
 
             if self.config.debugging.calculate_metrics {
@@ -912,7 +993,8 @@ impl Engine {
     /// handle is gone. An error is written to `Error.log`, with the text the worker wrote while
     /// the error's type was still known; a value is just dropped. The engine never opens it.
     ///
-    /// Only a finished task's handoff gets here: the engine follows a forward instead.
+    /// A cancelled task's handoff carries nothing, so it goes without a line. A forward never gets
+    /// here: the engine follows it instead.
     ///
     /// # Arguments
     ///
@@ -931,8 +1013,15 @@ impl Engine {
     /// forwarded, the follow-up goes to the task forwarded to, and so on to the end of the links.
     /// Each link passed is removed, since only one follow-up or release ever comes through it.
     ///
-    /// At the end, if that task's result was kept, the follow-up gets it and is queued. If
-    /// nothing is there yet, the follow-up waits there for the result.
+    /// At the end, if that task's result was kept, the follow-up gets it and is queued, and if
+    /// the result is an error, its text is kept until the follow-up reports (see
+    /// `sealed_handoff_errors`). If nothing is there yet, the follow-up waits there for the
+    /// result.
+    ///
+    /// A follow-up can be cancelled before it gets here: its cancel is read first when it comes
+    /// right after `then`, since each turn reads the status mailbox before the task mailbox, and
+    /// after a forward, the result it moves on to may already be kept. Such a follow-up isn't
+    /// queued: the kept result is let go, and the follow-up is reported as cancelled.
     ///
     /// # Arguments
     ///
@@ -944,8 +1033,17 @@ impl Engine {
         if let WaitingState::None = wait_state {
             self.waiting_tasks.insert_follow_up(last_id, task);
         } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
-            let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
-            self.plugin_manager.threadpool.submit_task(task);
+            if self.cancelled_tasks.is_empty() || self.cancelled_tasks.remove(&task.id).is_none() {
+                if let Some(sealed_error_text) = sealed_handoff.error_text() {
+                    self.sealed_handoff_errors.store(task.id, sealed_error_text);
+                }
+
+                let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
+                self.plugin_manager.threadpool.submit_task(task);
+            } else {
+                self.handle_result((task.id, TaskResult::new_handoff(SealedHandoff::Cancelled)));
+                self.drop_unclaimed_handoff(sealed_handoff);
+            }
         }
     }
 
@@ -956,7 +1054,9 @@ impl Engine {
     /// At the end, if that task's result was kept (it can arrive before the forward, since the
     /// two travel separately), the join gets it now through
     /// [`fill_join_slot`](Self::fill_join_slot), or it's let go if the join has already run. If
-    /// nothing is there yet, the follower waits there for the result.
+    /// nothing is there yet, the follower waits there for the result, and if the join is still
+    /// waiting, its slot takes that task's id, so that a cancel of the join finds the task it
+    /// still waits for.
     ///
     /// Nothing else can be there, since the handle of the task forwarded to went into the
     /// forward. If something is (only a bug in Thryve could cause it), it's dropped with a line in
@@ -978,6 +1078,10 @@ impl Engine {
                     position,
                 },
             );
+
+            if let Some(join_task) = self.waiting_joins.get_mut(join_task_id) {
+                join_task.join_new_input_id(last_id, position)
+            }
         } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
             if self.waiting_joins.get_mut(join_task_id).is_some() {
                 self.fill_join_slot(sealed_handoff, join_task_id, position);
@@ -1010,14 +1114,23 @@ impl Engine {
     /// # Arguments
     ///
     /// * `list_starts_from_id` - The id of the task released
-    fn release(&mut self, list_starts_from_id: u64) {
+    ///
+    /// # Returns
+    ///
+    /// The id of the task at the end of the links if the release was remembered: that task hasn't
+    /// reported yet, so a cancel can still stop it. `None` if its result was let go, or if
+    /// something else was found there.
+    fn release(&mut self, list_starts_from_id: u64) -> Option<u64> {
         let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
 
         if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
             self.drop_unclaimed_handoff(sealed_handoff);
         } else if wait_state.is_none() {
             self.waiting_tasks.release(last_id);
+            return Some(last_id);
         }
+
+        None
     }
 
     /// Declares a join that has just arrived: for each of its tasks, in order, finds where that
@@ -1029,23 +1142,35 @@ impl Engine {
     ///   first kept error triggers it, and every kept result after that one is late: nobody will
     ///   take it, so an error is written to `Error.log`, and a value is dropped;
     /// - with nothing there yet, the join leaves its follower, with the join's id and the slot's
-    ///   position, for [`handle_result`](Self::handle_result) to find when the result arrives.
-    ///   That's the same before and after an error: once the join has run, the result the
-    ///   follower waits for is late too.
+    ///   position, for [`handle_result`](Self::handle_result) to find when the result arrives,
+    ///   and the slot takes the id at the end of the links, so that a cancel finds the task the
+    ///   join still waits for. That's the same before and after an error: once the join has run,
+    ///   the result the follower waits for is late too.
     ///
     /// Nothing else can be there, since the task's handle went into the join. If something is
     /// (only a bug in Thryve could cause it), it's dropped with a line in `Error.log`, and unless
     /// another of its tasks fails, the join waits for that task until the shutdown.
     ///
     /// After the walk, the join is queued if an error triggered it or no slot is left empty;
-    /// otherwise it waits in `waiting_joins`.
+    /// otherwise it waits in `waiting_joins`. When an error triggers it, the tasks it still waits
+    /// for are cancelled first (see [`set_empty_inputs_to_cancel`](Self::set_empty_inputs_to_cancel)),
+    /// and the error's text is kept until the join reports (see `sealed_handoff_errors`).
+    ///
+    /// A join whose cancel was read before it (its id is already in
+    /// [`cancelled_tasks`](Self::cancelled_tasks)) is never held or queued. Its walk still leaves
+    /// the followers, so that the results of its tasks find it gone and are let go, but a kept
+    /// result is let go at once instead of filling a slot, and after the walk,
+    /// [`cancel_join_task`](Self::cancel_join_task) cancels the tasks it waits for and reports it.
     ///
     /// # Arguments
     ///
     /// * `join_task` - The join, as declared with `join`
     fn add_join_to_waiting(&mut self, mut join_task: Task) {
+        let is_cancelled =
+            !self.cancelled_tasks.is_empty() && self.cancelled_tasks.contains(&join_task.id);
+
         if let Some(input_ids) = join_task.join_get_ids() {
-            let mut has_save_been_triggered = false;
+            let mut has_save_been_error_triggered = false;
             for (i, current_id) in input_ids.into_iter().enumerate() {
                 let (id, wait_state) = self.waiting_tasks.remove_while_is_link(current_id);
 
@@ -1058,18 +1183,23 @@ impl Engine {
                                 position: i,
                             },
                         );
+
+                        join_task.join_new_input_id(id, i);
                     }
                     WaitingState::HandoffKept(sealed_handoff) => {
-                        if has_save_been_triggered {
+                        if has_save_been_error_triggered || is_cancelled {
                             self.drop_unclaimed_handoff(sealed_handoff);
-                        } else if sealed_handoff.error_text().is_some() {
+                        } else if let Some(sealed_error_text) = sealed_handoff.error_text() {
+                            self.sealed_handoff_errors
+                                .store(join_task.id, sealed_error_text);
+
                             if let Err(sealed_handoff_err) =
                                 join_task.join_insert(sealed_handoff, i)
                             {
                                 self.drop_unclaimed_handoff(sealed_handoff_err);
                             }
 
-                            has_save_been_triggered = true;
+                            has_save_been_error_triggered = true;
                         } else if let Err(sealed_handoff_err) =
                             join_task.join_insert(sealed_handoff, i)
                         {
@@ -1096,10 +1226,16 @@ impl Engine {
             }
 
             if let Some(remaining_inputs) = join_task.waiting_on_join() {
-                if remaining_inputs == 0 || has_save_been_triggered {
+                if has_save_been_error_triggered {
+                    self.set_empty_inputs_to_cancel(&join_task);
+                }
+
+                if remaining_inputs == 0 || has_save_been_error_triggered {
                     let join_task_ready =
                         join_task.with_join_inputs(self.config.tasks.max_priority);
                     self.plugin_manager.threadpool.submit_task(join_task_ready);
+                } else if is_cancelled {
+                    self.cancel_join_task(join_task);
                 } else {
                     self.waiting_joins.store(join_task.id, join_task);
                 }
@@ -1110,6 +1246,11 @@ impl Engine {
     /// Puts one of a join's results into its slot, at `position`, and queues the join once none
     /// of its slots is empty, or at once if the result is an error, since a join fails fast. If
     /// the join's priority was inherited, it's capped below realtime as it becomes ready.
+    ///
+    /// When an error queues the join early, the tasks it still waits for are cancelled first (see
+    /// [`set_empty_inputs_to_cancel`](Self::set_empty_inputs_to_cancel)), once the join has left
+    /// `waiting_joins`: a join among them is reported at once, and its report has to find this one
+    /// gone. The error's text is kept until the join reports (see `sealed_handoff_errors`).
     ///
     /// Only for a join still waiting in `waiting_joins`: both callers check first, and let the
     /// result go if the join has already run. Here, a join that isn't there drops the result
@@ -1126,7 +1267,8 @@ impl Engine {
         join_task_id: u64,
         position: usize,
     ) {
-        let is_sealed_handoff_an_error = sealed_handoff.error_text().is_some();
+        let sealed_error_text_opt: Option<String> = sealed_handoff.error_text();
+        let is_sealed_handoff_an_error = sealed_error_text_opt.is_some();
 
         if let Some(join_task) = self.waiting_joins.get_mut(join_task_id) {
             let inserted_result = join_task.join_insert(sealed_handoff, position);
@@ -1138,8 +1280,69 @@ impl Engine {
                 && (remaining_inputs == 0 || is_sealed_handoff_an_error)
                 && let Some(join_task) = self.waiting_joins.take(join_task_id)
             {
+                if is_sealed_handoff_an_error {
+                    self.set_empty_inputs_to_cancel(&join_task);
+                }
+
+                if let Some(sealed_error_text) = sealed_error_text_opt {
+                    self.sealed_handoff_errors
+                        .store(join_task_id, sealed_error_text);
+                }
+
                 let join_task_ready = join_task.with_join_inputs(self.config.tasks.max_priority);
                 self.plugin_manager.threadpool.submit_task(join_task_ready);
+            }
+        }
+    }
+
+    /// Cancels a join that will never run: one a cancel took out of `waiting_joins`, or one whose
+    /// cancel was read before the join itself. The tasks it still waits for are cancelled (see
+    /// [`set_empty_inputs_to_cancel`](Self::set_empty_inputs_to_cancel)), and then the engine
+    /// reports the join as cancelled itself, through [`handle_result`](Self::handle_result), which
+    /// takes its id out of [`cancelled_tasks`](Self::cancelled_tasks) and lets go of whatever
+    /// waits on it. The values already in its slots go with it, without a line: a join that's
+    /// still waiting holds no error, or it would have run.
+    ///
+    /// The join must already be out of `waiting_joins`: a join among its tasks is reported at
+    /// once, and that report has to find this one gone, or it would land in its slot.
+    ///
+    /// # Arguments
+    ///
+    /// * `join_task` - The join, out of `waiting_joins`
+    fn cancel_join_task(&mut self, join_task: Task) {
+        self.set_empty_inputs_to_cancel(&join_task);
+
+        self.handle_result((
+            join_task.id,
+            TaskResult::new_handoff(SealedHandoff::Cancelled),
+        ));
+    }
+
+    /// Cancels the tasks a join still waits for: those whose slots are empty. A slot is empty while
+    /// the join's follower waits under its id, and slots learn the id at the end of a forward's
+    /// links, so that's the task still to report. A join among them that's still waiting is taken
+    /// out and cancelled the same way, all the way in; any other task's id goes into
+    /// [`cancelled_tasks`](Self::cancelled_tasks). The followers stay, so that the results of
+    /// tasks already running find the join gone and are let go.
+    ///
+    /// Used when a join is cancelled, and when an error runs it early, since it won't wait for the
+    /// rest.
+    ///
+    /// # Arguments
+    ///
+    /// * `join_task` - The join whose empty slots are cancelled
+    fn set_empty_inputs_to_cancel(&mut self, join_task: &Task) {
+        if let Some(mut input_ids) = join_task.join_get_ids() {
+            for id in input_ids.drain(..) {
+                let task = self.waiting_tasks.get_as_ref(id);
+
+                if task.is_join_part_placeholder() {
+                    if let Some(join_task) = self.waiting_joins.take(id) {
+                        self.cancel_join_task(join_task);
+                    } else {
+                        self.cancelled_tasks.insert(id);
+                    }
+                }
             }
         }
     }
@@ -1300,7 +1503,10 @@ impl Engine {
     /// (`logger` is set), a log line goes straight into the logger's queue, and any other
     /// notification goes into `notifs`: its observer is stopped or stopping, and the engine no
     /// longer holds it. Status lines are collected for the logger, which writes them at the end.
-    /// Releases are dropped: the wait table they're for is emptied once the workers have stopped.
+    /// Releases and cancels are dropped. The wait table a release is for is emptied once the
+    /// workers have stopped, and no task starts any more, so a cancel has nothing left to stop.
+    /// Its task, if it never ran, still counts as lost work in the summary: only a task cancelled
+    /// before the shutdown doesn't.
     ///
     /// What arrives while it reads waits for the next call. Reading until the mailboxes are
     /// empty could go on forever while threads keep sending, and the callers check their
@@ -1363,17 +1569,21 @@ impl Engine {
         received
     }
 
-    /// How many entries the wait table holds, plus the joins still waiting: follow-ups waiting,
-    /// handoffs kept, releases remembered, forward links, joins' followers, and the joins
-    /// themselves. Each entry goes once both sides have spoken (a link once a follow-up or a
-    /// release has followed it, a join once its last task's result has arrived or one of its tasks
-    /// has failed, a follower once its task's result has arrived, even after its join has run),
-    /// so this is zero once every task has finished and every handle has been used or dropped.
+    /// How many entries the wait table holds, plus the joins still waiting and the error texts
+    /// kept for queued tasks: follow-ups waiting, handoffs kept, releases remembered, forward
+    /// links, joins' followers, the joins themselves, and the texts. Each entry goes once both
+    /// sides have spoken (a link once a follow-up or a release has followed it, a join once its
+    /// last task's result has arrived, one of its tasks has failed or it was cancelled, a follower
+    /// once its task's result has arrived, even after its join has run, a text once its task has
+    /// reported), so this is zero once every task has finished and every handle has been used or
+    /// dropped.
     ///
     /// For Thryve's tests. Not part of the public API.
     #[doc(hidden)]
     pub fn wait_table_len(&self) -> usize {
-        self.waiting_tasks.table.len() + self.waiting_joins.table.len()
+        self.waiting_tasks.table.len()
+            + self.waiting_joins.table.len()
+            + self.sealed_handoff_errors.table.len()
     }
 }
 
@@ -1382,6 +1592,7 @@ impl Engine {
 struct FinalizeCollection {
     /// Tasks that never ran: still queued when the workers were stopped, follow-ups still waiting
     /// for a result, joins still waiting for some of their tasks, or sent during the shutdown.
+    /// The cancelled ones among them aren't lost work, and the summary leaves them out.
     tasks: Vec<Task>,
     /// Notifications that were never delivered: left in the sorter's queue, or sent after the
     /// sorter had stopped to an observer other than the logger.
@@ -1414,14 +1625,27 @@ impl FinalizeCollection {
     /// Counted as lost: the tasks that never ran, the results that carried something (a message,
     /// a follow-up task, or an `AdvTask`'s error that would have been logged; an empty one isn't
     /// lost work), the notifications that were never delivered, and the threads left running at a
-    /// deadline. One line gives the total and each count. It goes to `Main.log` after the
-    /// service's Stop, and to `Error.log` after any other shutdown. If nothing was lost, there's no
-    /// line at all.
+    /// deadline. An error never taken (below) counts as one lost task result. One line gives the
+    /// total and each count. It goes to `Main.log` after the service's Stop, and to `Error.log`
+    /// after any other shutdown. If nothing was lost, there's no line at all.
+    ///
+    /// A cancelled task (its id is in the cancelled set) isn't lost work, wherever it was: it
+    /// wasn't meant to run, and it didn't. It's neither counted nor listed.
+    ///
+    /// An error never taken is a text the engine kept for a task queued with an error as its
+    /// input, which never reported while the engine ran. It's handled like a kept error: it counts
+    /// as one lost task result, and it never gets a line of its own in `Error.log`. One exception:
+    /// if the task's own result is among the late ones, the task ran and took its error, so the
+    /// text is dropped, and the result goes through the usual check. A Cancelled result is the
+    /// opposite case: the task was skipped, so its text counts. Which way it goes depends on
+    /// timing, so two runs can count differently.
     ///
     /// With debugging on, `Debug.log` also gets the details, one entry per line: for each kind,
     /// its count, then each group (tasks by name, notifications by receiver, results by type)
-    /// with its size and its items. An item is a notification's type, receiver and creation
-    /// time, a result in full, or, with task logging on, the call site of a task that has one.
+    /// with its size and its items, indented one, two and four spaces. An item is a
+    /// notification's type, receiver and creation time, a result in full, or, with task logging
+    /// on, the call site of a task that has one. The errors never taken, if there are any, come
+    /// last among the results, as one group with a text per item.
     ///
     /// It empties `tasks`, `notifs` and `results`. The engine calls it after the last read of the
     /// mailboxes, so nothing more can arrive, and before the status lines go to the logger, so
@@ -1429,9 +1653,10 @@ impl FinalizeCollection {
     ///
     /// # Arguments
     ///
-    /// * `eng` - The engine, for its debugging flags
+    /// * `eng` - The engine, for its debugging flags, its cancelled set and the error texts it
+    ///   kept
     /// * `is_service_normal_shutdown` - Whether the service's Stop is shutting the engine down
-    fn summarize(&mut self, eng: &Engine, is_service_normal_shutdown: bool) {
+    fn summarize(&mut self, eng: &mut Engine, is_service_normal_shutdown: bool) {
         let mut s = String::from("");
 
         let mut count_tasks = 0;
@@ -1444,6 +1669,10 @@ impl FinalizeCollection {
 
         while !self.tasks.is_empty() || !self.notifs.is_empty() || !self.results.is_empty() {
             if let Some(task) = self.tasks.pop() {
+                if !eng.cancelled_tasks.is_empty() && eng.cancelled_tasks.contains(&task.id) {
+                    continue;
+                }
+
                 task_map
                     .entry(task.task_name().to_string())
                     .or_default()
@@ -1459,19 +1688,29 @@ impl FinalizeCollection {
 
                 count_notifs += 1;
             }
-            if let Some((_, result)) = self.results.pop()
-                && (result.next_task.is_some()
-                    || !result.message.is_empty()
-                    || result.handoff_error_text().is_some())
-            {
-                result_map
-                    .entry(result.result_type().to_string())
-                    .or_default()
-                    .push(result);
+            if let Some((id, result)) = self.results.pop() {
+                if !eng.sealed_handoff_errors.table.is_empty()
+                    && !result.is_handoff_cancelled()
+                    && let Some(sealed_error_text) = eng.sealed_handoff_errors.take(id)
+                {
+                    drop(sealed_error_text);
+                }
 
-                count_results += 1
+                if result.next_task.is_some()
+                    || !result.message.is_empty()
+                    || result.handoff_error_text().is_some()
+                {
+                    result_map
+                        .entry(result.result_type().to_string())
+                        .or_default()
+                        .push(result);
+
+                    count_results += 1
+                }
             }
         }
+
+        count_results += eng.sealed_handoff_errors.table.len();
 
         let total = count_tasks + count_notifs + count_results + self.still_running;
 
@@ -1491,13 +1730,11 @@ impl FinalizeCollection {
         }
 
         if eng.config.debugging.is_debugging {
-            self.status_reps.push(Log::log(
-                format!("  tasks: {count_tasks} not done"),
-                "Debug",
-            ));
+            self.status_reps
+                .push(Log::log(format!(" tasks: {count_tasks} not done"), "Debug"));
             for (task_name, mut tasks) in task_map.drain() {
                 self.status_reps.push(Log::log(
-                    format!(" {}: {}", task_name, tasks.len()),
+                    format!("  {}: {}", task_name, tasks.len()),
                     "Debug",
                 ));
 
@@ -1512,12 +1749,12 @@ impl FinalizeCollection {
             }
 
             self.status_reps.push(Log::log(
-                format!("  notifs: {count_notifs} not done"),
+                format!(" notifs: {count_notifs} not done"),
                 "Debug",
             ));
             for (notif_receiver, mut notifs) in notif_map.drain() {
                 self.status_reps.push(Log::log(
-                    format!(" {}: {}", notif_receiver, notifs.len()),
+                    format!("  {}: {}", notif_receiver, notifs.len()),
                     "Debug",
                 ));
 
@@ -1528,18 +1765,32 @@ impl FinalizeCollection {
             }
 
             self.status_reps.push(Log::log(
-                format!("  task results: {count_results} not done"),
+                format!(" task results: {count_results} not done"),
                 "Debug",
             ));
             for (result_type, mut results) in result_map.drain() {
                 self.status_reps.push(Log::log(
-                    format!(" {}: {}", result_type, results.len()),
+                    format!("  {}: {}", result_type, results.len()),
                     "Debug",
                 ));
 
                 for result in results.drain(..) {
                     self.status_reps
                         .push(Log::log(format!("    {}", result), "Debug"));
+                }
+            }
+
+            if !eng.sealed_handoff_errors.table.is_empty() {
+                self.status_reps.push(Log::log(
+                    format!(
+                        "  errors never taken: {}",
+                        eng.sealed_handoff_errors.table.len()
+                    ),
+                    "Debug",
+                ));
+                for (_, error_text) in eng.sealed_handoff_errors.table.drain() {
+                    self.status_reps
+                        .push(Log::log(format!("    {error_text}"), "Debug"));
                 }
             }
         }

@@ -12,13 +12,14 @@
 //! [`Joinable`] gives a `Vec` of typed tasks' handles its [`join`](Joinable::join) and
 //! [`join_with_priority`](Joinable::join_with_priority), so the handles that splitting work gave
 //! back, or that a plugin collected itself, are joined where they are, and the join's handle goes
-//! on with [`then`](AdvTaskHandle::then) like any other.
+//! on with [`then`](AdvTaskHandle::then) like any other. [`cancel_all`](Joinable::cancel_all)
+//! cancels them all instead.
 
 use crate::errors::ThryveError;
 use crate::packets::task::{AdvTaskHandle, declare_join};
 use crate::res::JoinHandoff;
 
-/// Handles of typed tasks that can share one follow-up, a join.
+/// Handles of typed tasks that can share one follow-up, a join, or be cancelled together.
 ///
 /// Implemented for `Vec<AdvTaskHandle<T, E>>`: the tasks all return `Result<T, E>`, and the join's
 /// closure gets their values, or the first error, as a [`JoinHandoff`]. Bring the trait into scope
@@ -40,8 +41,9 @@ where
     ///   the handles;
     /// - [`Error`](JoinHandoff::Error) when one failed: its position among the handles, counted from
     ///   0, and its own error. A join fails fast: it runs as soon as one task fails, without waiting for the
-    ///   rest. The other tasks still run, and nobody takes their results: an error is written to
-    ///   `Error.log`, and a value is dropped.
+    ///   rest. The tasks it was still waiting for are cancelled: those that haven't started never
+    ///   run, and those already running finish, with nobody to take their results: an error is
+    ///   written to `Error.log`, and a value is dropped.
     ///
     /// A task that forwards fills its slot with the result of the task it forwarded to, whether it
     /// forwarded before the join was declared or after.
@@ -118,6 +120,34 @@ where
     where
         U: Send + 'static,
         E2: std::error::Error + Send + 'static;
+
+    /// Cancels every task, and uses the handles up: the same as calling
+    /// [`cancel`](AdvTaskHandle::cancel) on each one, in order.
+    ///
+    /// Tasks that haven't started never run. Tasks already running finish, and their results are
+    /// let go: an error is still written to `Error.log`, and a value is dropped. Like `cancel`, it
+    /// never fails and writes nothing to the logs.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crossbeam::channel::{bounded, unbounded};
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// use thryve_utils::traits::join::Joinable;
+    ///
+    /// # let (task_tx, _task_rx) = bounded(8);
+    /// # let (notif_tx, _notif_rx) = bounded(1);
+    /// # let handle = PacketHandle::new(task_tx, notif_tx, unbounded().0, false);
+    /// let rows: Vec<u32> = (0..1_000).collect();
+    /// let pieces = handle.split_into(rows, "Row", 8, 2, |chunk, _start| {
+    ///     Ok::<u32, std::io::Error>(chunk.iter().sum())
+    /// })?;
+    ///
+    /// // The photo was closed before the rows were processed.
+    /// pieces.cancel_all();
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    fn cancel_all(self);
 }
 
 impl<T, E> Joinable<T, E> for Vec<AdvTaskHandle<T, E>>
@@ -148,5 +178,11 @@ where
         E2: std::error::Error + Send + 'static,
     {
         declare_join(self, task_name, false, priority, fn_to_exec)
+    }
+
+    fn cancel_all(mut self) {
+        for handle in self.drain(..) {
+            handle.cancel();
+        }
     }
 }

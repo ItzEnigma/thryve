@@ -227,6 +227,7 @@ pub(crate) fn open<T: 'static, E: 'static>(
         SealedHandoff::Forward { to } => {
             panic!("expected a finished handoff, got a forward to task {to}")
         }
+        SealedHandoff::Cancelled => panic!("expected a finished handoff, got a cancelled one"),
     }
 }
 
