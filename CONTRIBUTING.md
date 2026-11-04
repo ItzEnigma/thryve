@@ -30,7 +30,7 @@ Thank you for your interest in contributing to Thryve! This document provides gu
 
 ### Prerequisites
 
-- **Rust 1.85+** - [Install Rust](https://rustup.rs/)
+- **Rust, latest stable** - [Install Rust](https://rustup.rs/). The code uses Rust 2024's let chains, so nothing older than 1.88 can build it.
 - **Git** - Version control
 - **GitHub account** - For submitting pull requests
 
@@ -47,12 +47,12 @@ cd Thryve
 # Build the project
 cargo build
 
-# Run tests
-cargo test
+# Run tests (on one thread: some tests share files and global state)
+cargo test --workspace -- --test-threads=1
 
 # Check code style
-cargo fmt --check
-cargo clippy
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ---
@@ -110,28 +110,28 @@ Follow the code style guidelines below.
 
 ```bash
 # Run all tests
-cargo test
+cargo test --workspace -- --test-threads=1
 
-# Run tests for specific package
-cargo test -p thryve_core
+# Run the tests whose names contain a word
+cargo test -p thryve_tests cancel -- --test-threads=1
 
-# Run with verbose output
-cargo test -- --nocapture
+# Show what the tests print
+cargo test --workspace -- --test-threads=1 --nocapture
 ```
 
 ### 5. Format and Lint
 
 ```bash
 # Auto-format code
-cargo fmt
+cargo fmt --all
 
 # Run clippy linter
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 
-# Verify everything passes
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
+# Verify everything passes, as CI does
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace -- --test-threads=1
 ```
 
 ### 6. Commit Your Changes
@@ -190,29 +190,33 @@ pub fn create_task(name: &str, priority: u8) -> Task {
 
 ### Documentation
 
-Document all public items:
+Document all public items: what the item does, then `# Arguments`, `# Errors` and `# Example` where they apply:
 
 ```rust
-/// Creates a new task with the specified name and priority.
+/// Creates a task that adds up `numbers` when a worker runs it.
 ///
 /// # Arguments
 ///
-/// * `name` - Human-readable task identifier
-/// * `priority` - Task priority (0-14, higher = more urgent)
+/// * `numbers` - The numbers to add up
+/// * `priority` - Task priority (higher = more urgent, up to `tasks.max_priority`)
 ///
-/// # Returns
+/// # Errors
 ///
-/// A new `Task` instance ready for execution.
+/// Returns a `NamingError` if the task's name isn't valid.
 ///
 /// # Example
 ///
 /// ```
-/// let task = Task::new("MyTask", 5);
+/// let task = sum_task(vec![1, 2, 3], 2)?;
 /// ```
-pub fn new(name: &str, priority: u8) -> Self {
+pub fn sum_task(numbers: Vec<u64>, priority: u8) -> Result<Task, NamingError> {
     // Implementation
 }
 ```
+
+Inside a function with several cases (branches, loops, early returns), start each block with a brief comment that says what that block handles and why, in a line or two, so a reader can follow the function without working out every condition. Simple functions don't need them.
+
+Comments and docs describe the code as it is. Don't refer to issue numbers, milestones or design notes a reader can't see; say what the code does and why.
 
 ---
 
@@ -220,36 +224,40 @@ pub fn new(name: &str, priority: u8) -> Self {
 
 ### Writing Tests
 
-Add tests in the same file or in `tests/` directory:
+Tests live in their own crate, `thryve_tests`, in the [`tests/`](tests/) folder, not next to the code:
+
+- `tests/src/tests_utils`, `tests_core`, `tests_observers`, `tests_run` and `tests_ffi` hold unit tests, grouped by the crate they cover;
+- `tests/src/integration` holds end-to-end tests;
+- the other files each test one feature through a running engine, such as typed tasks, joins, cancelling or fan-out.
+
+Name a test after what it shows, as a sentence:
 
 ```rust
-#[cfg(test)]
-pmod tests {
-    use super::*;
+use thryve_utils::packets::task::Task;
+use thryve_utils::res::TaskResult;
 
-    #[test]
-    fn test_task_creation() {
-        let task = Task::new("Test", 5);
-        assert_eq!(task.name, "Test");
-        assert_eq!(task.priority, 5);
-    }
+#[test]
+fn a_task_with_an_empty_name_is_refused() {
+    let task = Task::new("", 1, || TaskResult::new("", String::new(), ""));
+
+    assert!(task.is_err());
 }
 ```
 
 ### Running Tests
 
 ```bash
-# All tests
-cargo test
+# All tests, on one thread, as CI runs them
+cargo test --workspace -- --test-threads=1
 
-# Specific test
-cargo test test_task_creation
+# One test, by name
+cargo test -p thryve_tests a_task_with_an_empty_name_is_refused -- --test-threads=1
 
 # With output
-cargo test -- --nocapture
+cargo test --workspace -- --test-threads=1 --nocapture
 
-# Coverage (if configured)
-cargo tarpaulin
+# Coverage (optional, with cargo-llvm-cov installed)
+cargo llvm-cov --workspace -- --test-threads=1
 ```
 
 ---

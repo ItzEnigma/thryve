@@ -17,8 +17,9 @@
 //! # Architecture
 //!
 //! The logger observer:
-//! - Creates a log directory with a timestamp on initialization
-//! - Maintains a hashmap of log files keyed by module type
+//! - Writes to the log files that startup (`init_directories`, in `thryve_run`) opened, in a
+//!   folder named after the time the run started
+//! - Maintains a hashmap of log files keyed by log-file name
 //! - Processes notifications in a continuous loop
 //! - Writes formatted log entries with timestamps
 //!
@@ -26,10 +27,11 @@
 //!
 //! ```text
 //! log/
-//!   2024_01_15_10_30/
+//!   <timestamp>/
 //!     Main.log          - General log messages
 //!     Error.log         - Error messages
-//!     <Module>.log      - Module-specific logs
+//!     Debug.log         - Debug messages (debug mode only)
+//!     <Module>.log      - One per log-file name in the config
 //! ```
 //!
 //! # Usage
@@ -65,14 +67,14 @@ use thryve_utils::{errors::StartupError, extras::jobs::ObsJob};
 ///
 /// The `LoggerObserver` struct implements the [`ObsLogic`] trait and provides
 /// file-based logging functionality for the Thryve system. It maintains a
-/// hashmap of log files keyed by module type and processes incoming
+/// hashmap of log files keyed by log-file name and processes incoming
 /// notifications by writing them to the appropriate files.
 ///
 /// # Fields
 ///
 /// - `_currentdir`: The current executable directory (unused, kept for potential future use)
 /// - `error_log_file`: `Error.log`, where redirected lines and notes go
-/// - `files`: HashMap mapping module types to their log file handles
+/// - `files`: HashMap mapping log-file names to their log file handles
 ///
 /// # Example
 ///
@@ -89,7 +91,7 @@ pub struct LoggerObserver {
     /// that lines sent to the log file `Error` find it there.
     error_log_file: Arc<File>,
 
-    /// HashMap mapping module types to their log file handles.
+    /// HashMap mapping log-file names, in upper case, to their log file handles.
     files: HashMap<LogFileNamedInput, Arc<File>>,
 }
 

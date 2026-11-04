@@ -9,7 +9,8 @@
 
 //! The Thryve engine.
 //!
-//! [`runtime::engine::Engine`] runs the main loop. It takes tasks, results and notifications from its
-//! channels, hands tasks to the plugin manager's worker pool and notifications to the observer
-//! manager. Applications don't use this crate directly: `thryve_run` builds and starts the engine.
+//! [`runtime::engine::Engine`] runs the main loop. It takes tasks, results, notifications and
+//! Thryve's own status messages from its channels, hands tasks to the plugin manager's worker pool
+//! and notifications to the observer manager, and connects typed tasks to what follows them.
+//! Applications don't use this crate directly: `thryve_run` builds and starts the engine.
 pub mod runtime;

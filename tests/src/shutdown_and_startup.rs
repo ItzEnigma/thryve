@@ -7,11 +7,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T2, "engine robustness".
+//! Shutdown and startup: neither one ever hangs.
 //!
 //! The engine is the only reader of its mailboxes, so it must never wait on a thread that may be
 //! waiting for the engine to read. These tests shut down real engines (a real logger, the
-//! notification sorter and plugin workers) in the situations that used to hang:
+//! notification sorter and plugin workers) in the situations that could hang:
 //!
 //! - draining shutdown: a `Fin` while another task is in the middle of a burst of `send_task`
 //!   through a mailbox that holds one task, and a worker blocked on a full result mailbox;
@@ -37,7 +37,7 @@
 //!   service's loop ends after an in-band `Fin`, and on `Stop`;
 //! - the workers: `resume` wakes the workers a pause parked, a task chained after the workers went
 //!   idle still runs, and a shutdown during a pause doesn't wait for them (a failed startup is one
-//!   too, since the engine stays paused until it starts; T1's gate checks that it leaves no
+//!   too, since the engine stays paused until it starts; `graceful_failures` checks that it leaves no
 //!   thread behind);
 //! - status lines never wait, even when the notification mailbox is full;
 //! - graph mode: a plugin's init task has a node of its own.
@@ -84,7 +84,7 @@ use thryve_utils::traits::queue::Queue;
 
 /// A fresh, empty folder for one test's files.
 pub(crate) fn fresh_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("thryve_gate_t2").join(name);
+    let dir = std::env::temp_dir().join("thryve_engine_tests").join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

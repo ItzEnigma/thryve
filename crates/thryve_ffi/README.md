@@ -288,7 +288,7 @@ extern "C" void my_observer_job(ThryveObserver obs) {
 ### Notification Callbacks
 
 ```c
-// Notification logic — called when the notification needs to be processed
+// Notification logic — currently unused: no function takes one, so Thryve never calls it
 // Takes a pointer to the notification's core data (notif_core_ptr)
 typedef void (*ThryveNotifLogic)(const void* core_ptr);
 ```

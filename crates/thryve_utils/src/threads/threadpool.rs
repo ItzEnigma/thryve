@@ -22,6 +22,7 @@
 //! - Pause/resume functionality
 //! - Graceful shutdown via exit flags
 //! - Result channel for task completion reporting
+//! - Skipping the tasks cancelled before they started
 //!
 //! # Usage
 //!
@@ -79,7 +80,7 @@ pub type TaskSlot = Arc<AtomicCell<Option<Box<String>>>>;
 /// - `pool_exit_flag`: Flag for graceful shutdown
 /// - `pool_pause_flag`: Flag for pause/resume
 /// - `main_queue`: The queue being processed
-/// - `packet_handle`: Handle for sending notifications
+/// - `packet_handle`: Handle for sending the pool's status lines
 ///
 /// The plugin pool's workers need a sender for task results and the set of cancelled tasks, and
 /// the observer pool's don't, so the pool stores neither:
@@ -106,7 +107,8 @@ pub struct ThreadPool<Q, P> {
     pub pool_pause_flag: Arc<AtomicBool>,
     /// The queue being processed.
     pub main_queue: Arc<Q>,
-    /// Handle for sending tasks and notifications.
+    /// Handle for sending the status lines of the pool's threads, such as "Plugin Thread
+    /// Exiting...", to the engine.
     pub packet_handle: PacketHandle,
     /// Phantom data for the packet type.
     _marker: PhantomData<fn() -> P>,
@@ -119,14 +121,16 @@ where
     /// Creates a new thread pool.
     ///
     /// Initializes a new thread pool with the specified number of
-    /// worker threads, queue and packet handle. If `num_workers` is 0,
-    /// no thread pool is created.
+    /// worker threads, queue and packet handle. No thread starts here: the
+    /// plugin pool's workers start with
+    /// [`run_threads_plugins`](ThreadPool::run_threads_plugins), and the
+    /// observer pool starts its threads one at a time, so it's created with 0.
     ///
     /// # Arguments
     ///
-    /// * `num_workers` - Number of worker threads (0 disables the pool)
+    /// * `num_workers` - Number of plugin worker threads to start (0 starts none)
     /// * `queue` - The queue to process
-    /// * `packet_handle` - Handle for sending notifications
+    /// * `packet_handle` - Handle for sending the pool's status lines
     ///
     /// # Returns
     ///
@@ -391,6 +395,8 @@ impl ThreadPool<PQChild<Task>, Task> {
                                     tx.send_status_log(notif);
                                 }
                             } else {
+                                // Graph mode: the tasks this one sends while it runs record it
+                                // as their parent.
                                 tl_set_current_task_fingerprint(
                                     task.get_callsite().this_callsite_fingerprint,
                                 );

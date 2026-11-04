@@ -69,7 +69,7 @@ use std::{collections::HashMap, sync::Arc};
 ///
 /// - `plugins`: Mapping of plugin types to instances
 /// - `threadpool`: Thread pool for processing tasks
-/// - `packet_handle`: Handle for sending tasks and notifications
+/// - `res_tx`: Where the workers send each task's result, for the engine
 ///
 /// # Thread Pool Configuration
 ///
@@ -80,8 +80,8 @@ use std::{collections::HashMap, sync::Arc};
 /// # Example
 ///
 /// ```ignore
-/// let manager = PluginManager::new(&ctx, result_sender);
-/// manager.load_plugin(my_plugin);
+/// let mut manager = PluginManager::new(&ctx, result_sender);
+/// let task_init = manager.load_plugin(&ctx.config, my_plugin, false)?;
 /// ```
 pub struct PluginManager {
     /// Mapping of plugin types to instances.
@@ -194,6 +194,8 @@ impl PluginManager {
             plugin.plg_entry_point(),
         );
 
+        // Graph mode: the init task gets a call site of its own, so it has a node in the graph,
+        // and what it sends links to it.
         if is_graph_mode_on {
             let caller = Location::caller();
             let file_path = PathBuf::from(caller.file().to_string());
@@ -211,6 +213,7 @@ impl PluginManager {
             task_init.set_callsite(callsite.clone());
         }
 
+        // One plugin per type.
         if self.plugins.contains_key(&plg_type) {
             return Err(StartupError::RegisterDuplicate {
                 name: plg_type.inner().to_string(),

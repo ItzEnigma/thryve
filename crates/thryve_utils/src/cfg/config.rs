@@ -61,7 +61,7 @@
 //! # Configuration Hierarchy
 //!
 //! - [`Config`]: Root configuration structure
-//! - [`SerivceConfig`]: Service behavior (pause/stop capabilities)
+//! - [`ServiceConfig`]: Service behavior (pause/stop capabilities)
 //! - [`EngineConfig`]: Engine tick rate and sleep behavior
 //! - [`ThreadConfig`]: Worker thread count
 //! - [`PipeConfig`]: Channel capacities for inter-component communication
@@ -110,7 +110,7 @@ use crate::errors::{ConfigError, ConfigViolations, RuleError, ThryveError};
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Service behavior configuration.
-    pub service: SerivceConfig,
+    pub service: ServiceConfig,
     /// Engine execution parameters.
     pub engine: EngineConfig,
     /// Thread pool configuration.
@@ -199,11 +199,14 @@ impl Config {
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     pub fn load_config_from_file(path: impl AsRef<Path>) -> Result<Config, ThryveError> {
+        // Reading and parsing: a missing, unknown or mistyped key fails here.
         let path: PathBuf = path.as_ref().to_path_buf();
         let config = read_config_file(path.clone())?;
 
         let mut violations = Vec::new();
 
+        // Each value as read, then its limit: at least 1 for each, and below 15 for
+        // `max_priority`.
         let idle_wait_is = config.engine.idle_wait;
         let shutdown_grace_period_is = config.engine.shutdown_grace_period;
         let worker_count_is = config.threads.worker_count;
@@ -228,6 +231,9 @@ impl Config {
         let max_priority_should_be: usize = 15;
         let aging_interval_should_be: usize = 1;
 
+        // Every check runs, so that all the failing values are reported together.
+
+        // The engine's waits.
         if idle_wait_is < idle_wait_should_be as u64 {
             violations.push(RuleError::IdleWait(idle_wait_is, idle_wait_should_be));
         }
@@ -239,6 +245,7 @@ impl Config {
             ));
         }
 
+        // The plugin workers.
         if worker_count_is < worker_count_should_be {
             violations.push(RuleError::WorkerCount(
                 worker_count_is,
@@ -246,6 +253,7 @@ impl Config {
             ));
         }
 
+        // The three bounded mailboxes: each one's capacity and per-turn limit.
         if task_pipe_cap_is < task_pipe_cap_should_be {
             violations.push(RuleError::TaskPipeCap(
                 task_pipe_cap_is,
@@ -287,6 +295,7 @@ impl Config {
             ));
         }
 
+        // The task queue: its priorities and its ageing.
         if max_priority_is >= max_priority_should_be as u8 {
             violations.push(RuleError::MaxPriority(
                 max_priority_is,
@@ -301,6 +310,7 @@ impl Config {
             ));
         }
 
+        // Any failure rejects the whole file, with the list.
         if !violations.is_empty() {
             return Err(ConfigError::ConfigViolation {
                 path,
@@ -325,7 +335,7 @@ impl Config {
 /// - `can_pause`: Whether the service accepts pause/resume commands
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-pub struct SerivceConfig {
+pub struct ServiceConfig {
     /// Whether the service accepts stop commands.
     ///
     /// Default: `true`
@@ -336,10 +346,10 @@ pub struct SerivceConfig {
     pub can_pause: bool,
 }
 
-impl Default for SerivceConfig {
+impl Default for ServiceConfig {
     /// Provides default service behavior configuration.
     ///
-    /// Returns a `SerivceConfig` with both stop and pause capabilities enabled.
+    /// Returns a `ServiceConfig` with both stop and pause capabilities enabled.
     fn default() -> Self {
         Self {
             can_stop: true,

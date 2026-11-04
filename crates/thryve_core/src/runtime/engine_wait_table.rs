@@ -13,9 +13,11 @@
 //! different mailboxes, so they can arrive in any order. Under the task's id, the table remembers
 //! whichever came first until the other side arrives. A task that forwarded leaves a link to the
 //! task forwarded to; links can chain into a list, which the follow-up or the release follows to
-//! its end. A join waits on several tasks: each of them gets the join's follower, which leads to
-//! the join in a second table of the same kind, keyed by the join's own id, and which moves along
-//! a forward like a follow-up does. A fan-out group is several followers sharing one task's
+//! its end. A follow-up waiting in a slot also leaves a record of that slot under its own id, in
+//! a second table of the same kind, so that a cancel of the follow-up can find the task it waits
+//! for. A join waits on several tasks: each of them gets the join's follower, which leads to
+//! the join in the second table, keyed by the join's own id, and which moves along a forward like
+//! a follow-up does. A fan-out group is several followers sharing one task's
 //! result: the group waits in that task's slot, and its followers that arrive before the share
 //! is there wait in the second table, under their own ids. If the task forwarded, a note at the
 //! end of the links leads the result back to the group, and moves along a forward like a join's
@@ -41,10 +43,10 @@ use crate::runtime::engine_task_states::{TrackedState, WaitingState};
 /// result is waiting for the other side, whose forward hasn't been followed yet, or whose result
 /// a join or a fan-out group waits for. As `WaitTable<TrackedState>`, what the engine keeps about
 /// a task under the task's own id: the joins still waiting for some of their tasks, the fan-out
-/// followers held until their share is there, and the error texts kept for tasks queued with an
-/// error as their input, under the id of the task that produced it, with a pointer under the id
-/// of each task that carries it until that task reports. An entry goes once both sides have
-/// arrived, so no table grows.
+/// followers held until their share is there, the slot each waiting follow-up waits in, and the
+/// error texts kept for tasks queued with an error as their input, under the id of the task that
+/// produced it, with a pointer under the id of each task that carries it until that task reports.
+/// An entry goes once both sides have arrived, so no table grows.
 pub struct WaitTable<T> {
     /// The entries, by task id. The shutdown empties it directly.
     pub table: HashMap<u64, T>,
@@ -138,6 +140,7 @@ impl WaitTable<WaitingState> {
     ) -> WaitingState {
         let (last_id, waiting_state) = self.remove_while_is_link(forwarded_id);
 
+        // Still running: the note waits in its slot, and the group now waits for it.
         if waiting_state.is_none() {
             self.store(last_id, WaitingState::BackwardsLink { pre_fanout_task_id });
 

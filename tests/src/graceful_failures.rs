@@ -7,11 +7,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T1, "errors instead of panics".
+//! Graceful failures: what Thryve does with a developer's mistake or a failing environment.
 //!
-//! Every place that used to panic on a developer mistake or a failing environment now returns an
-//! error or degrades and says so. Each section below covers one group of former panic sites and
-//! proves that the process keeps running and that the error is returned or logged:
+//! It doesn't panic on them: it returns an error, or degrades and says so in the logs. Each
+//! section below covers one group of such cases and proves that the process keeps running and
+//! that the error is returned or logged:
 //!
 //! - names: empty names, control characters, log-file names that are not ASCII, reserved, one of
 //!   Thryve's own, or registered twice ignoring case;
@@ -25,14 +25,14 @@
 //! - shutdown: a worker that panicked doesn't stop the others from being joined;
 //! - protections: aging can't overflow.
 //!
-//! Some former panic sites can't be reached from a unit test: the Windows service receiving
+//! Some of these cases can't be reached from a unit test: the Windows service receiving
 //! `Start` twice and its poisoned locks (both need the service manager; the admin-only
 //! end-to-end test in `integration::windows_service_e2e` starts a real service), and a viewer
 //! that fails to spawn. Their code logs instead of panicking.
 //!
-//! A call site can no longer go missing: the compiler passes it to `send_task` and `chain`
-//! (`#[track_caller]`) instead of Thryve reading it from a backtrace, so that former degrade path
-//! is gone, and the tests of the exact lines are with the packet-handle and result tests.
+//! A call site can't go missing: the compiler passes it to `send_task` and `chain`
+//! (`#[track_caller]`), so there's no degrade path to test here. The tests of the exact lines are
+//! with the packet-handle and result tests.
 //!
 //! Tests that replace the panic hook restore the previous one, and CI runs these tests on one
 //! thread (`--test-threads=1`), like the rest of the crate.
@@ -80,7 +80,9 @@ impl NotifLogic for ForeignCore {
 
 /// A fresh, empty folder for one test's files.
 fn fresh_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join("thryve_gate_t1").join(name);
+    let dir = std::env::temp_dir()
+        .join("thryve_graceful_failures")
+        .join(name);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -528,7 +530,7 @@ mod startup {
         let (ready_tx, ready_rx) = bounded::<()>(1);
         let (release_tx, release_rx) = bounded::<()>(1);
         let probe = std::thread::Builder::new()
-            .name("gate-t1-probe".to_string())
+            .name("graceful-failures-probe".to_string())
             .spawn(move || {
                 ready_tx.send(()).unwrap();
                 let _ = release_rx.recv();
@@ -537,7 +539,7 @@ mod startup {
         ready_rx.recv().unwrap();
         let can_read_names = os_threads::named_threads()
             .iter()
-            .any(|(_, name)| name == "gate-t1-probe");
+            .any(|(_, name)| name == "graceful-failures-probe");
         release_tx.send(()).unwrap();
         probe.join().unwrap();
         assert!(can_read_names, "this system doesn't report thread names");
@@ -961,7 +963,7 @@ mod topology {
         // Point cargo somewhere that doesn't exist, as in a deployed program.
         let saved = std::env::var("CARGO").ok();
         // SAFETY: the tests run on one thread, so nothing reads the environment meanwhile.
-        unsafe { std::env::set_var("CARGO", "thryve-gate-no-such-cargo.exe") };
+        unsafe { std::env::set_var("CARGO", "thryve-tests-no-such-cargo.exe") };
         let root = get_workspace_root();
         handler.handle_entry(TopologyModifier::add_node(with_path("one")));
         handler.handle_entry(TopologyModifier::add_node(with_path("two")));

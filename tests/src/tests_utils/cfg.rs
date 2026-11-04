@@ -753,11 +753,11 @@ mod tests_cfg {
         assert_eq!(config1.engine.idle_wait, config2.engine.idle_wait);
     }
 
-    // Tests for SerivceConfig
+    // Tests for ServiceConfig
     #[test]
     fn test_service_config_default() {
         // Arrange & Act
-        let config = SerivceConfig::default();
+        let config = ServiceConfig::default();
 
         // Assert
         assert!(config.can_stop);
@@ -767,7 +767,7 @@ mod tests_cfg {
     #[test]
     fn test_service_config_clone() {
         // Arrange
-        let config1 = SerivceConfig {
+        let config1 = ServiceConfig {
             can_stop: false,
             can_pause: true,
         };

@@ -130,21 +130,23 @@
 //! ## Notification Callbacks
 //!
 //! - **`ThryveNotifLogic`**: A function pointer that takes a `*const u8` (the notification's core pointer).
-//!   Called when the notification needs to be processed.
+//!   **Currently unused**: no FFI function takes one, so Thryve never calls it.
 //!
 //! ## Threading Model
 //!
 //! Callbacks run on different threads depending on the context:
 //!
-//! - **`ThryveTaskJob` / `ThryvePluginEntryPoint`**: Runs on the thread that schedules the task.
-//!   If the task is scheduled from the main thread, the callback runs on the main thread.
-//! - **`ThryveObsJob`**: Runs on a **separate thread spawned by the observer's main loop**.
-//!   The Rust side clones the `Arc<Observer>`, converts to raw pointer, and calls the callback.
-//!   The callback must be thread-safe — it cannot assume the calling thread.
+//! - **`ThryveTaskJob` / `ThryvePluginEntryPoint`**: Runs on one of Thryve's plugin worker
+//!   threads, never on the thread that sent the task. Several tasks can run at the same time, on
+//!   different workers.
+//! - **`ThryveObsJob`**: Runs on the observer's own thread, which Thryve starts when the engine
+//!   loads the observer. It's called once and is the observer's whole loop: when it returns, the
+//!   observer's thread ends. The Rust side clones the `Arc<Observer>`, converts it to a raw
+//!   pointer, and calls the callback with it.
 //! - **`ThryvePluginCleanUp`**: Runs on Thryve's plugin clean-up thread during shutdown, after every
 //!   task has stopped. The plugins are cleaned up one after another on that thread.
-//! - **`ThryveObserverCleanUp`**: Runs on the thread that frees the object.
-//! - **`ThryveNotifLogic`**: Runs on the thread that processes the notification.
+//! - **`ThryveObserverCleanUp`**: Runs once during shutdown, on Thryve's observer clean-up thread.
+//!   The observers are cleaned up one after another on that thread.
 //!
 //! **Critical for `ThryveObsJob`**: Because this callback runs on a separate thread, the FFI
 //! implementation must ensure any shared data accessed within the callback is protected by
@@ -594,8 +596,8 @@ pub type ThryvePluginEntryPoint = extern "C" fn() -> ThryveTaskResult;
 
 /// FFI-safe function pointer for observer cleanup — takes a pointer to the observer's core data.
 ///
-/// Called when the observer is being freed. The `core_ptr` is the same pointer that was passed
-/// to `thryve_observer_create` as `obs_core_ptr`.
+/// Called once during shutdown, on Thryve's observer clean-up thread. The `core_ptr` is the same
+/// pointer that was passed to `thryve_observer_create` as `obs_core_ptr`.
 pub type ThryveObserverCleanUp = extern "C" fn(*const u8);
 
 /// FFI-safe function pointer for observer main loop — takes a pointer to the observer's core data.
@@ -616,8 +618,8 @@ pub type ThryveObsJob = extern "C" fn(ThryveObserver);
 
 /// FFI-safe function pointer for notification logic — takes a pointer to the notification's core data.
 ///
-/// Called when a notification needs to be processed. The `core_ptr` is the same pointer that was
-/// passed to `thryve_notification_create` as `notif_core_ptr`.
+/// **Currently unused**: no FFI function takes one, so Thryve never calls it. A notification's
+/// core data is passed to `thryve_notification_create` as `notif_core_ptr`.
 pub type ThryveNotifLogic = extern "C" fn(*const u8);
 
 // ============================================================================

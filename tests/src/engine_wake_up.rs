@@ -7,21 +7,21 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T3, "instant engine wake-up".
+//! The engine wakes the moment it has work.
 //!
-//! The engine used to nap a fixed 4 ms whenever a turn found nothing, so every hop through it
-//! could wait out a nap, and an idle engine still woke 250 times a second. Now it waits on its
-//! four mailboxes at once and wakes the moment one of them gets something; the wait's limit
-//! (`idle_wait`) only runs out when nothing arrives. Each turn also takes at most a set number of
+//! When a turn finds nothing, the engine waits on its four mailboxes at once and wakes the moment
+//! one of them gets something; the wait's limit (`idle_wait`) only runs out when nothing arrives.
+//! A fixed nap instead (say 4 ms) would make every hop through the engine wait out a nap, and wake
+//! an idle engine 250 times a second. Each turn also takes at most a set number of
 //! items from each mailbox, so a busy mailbox can't keep the others waiting.
 //!
 //! - a chain of 1,000 tasks, each passing through the engine, finishes far faster than 1,000 naps
-//!   of the old 4 ms;
+//!   of 4 ms would allow;
 //! - an idle engine wakes only when its wait runs out, so it uses no CPU, and a paused one too;
 //! - each turn takes at most its limit from each mailbox;
-//! - the new settings must be at least 1, like the others.
+//! - the per-turn settings must be at least 1, like the others.
 //!
-//! The helpers are T2's (see `gate_t2`). CI runs these tests on one thread
+//! The helpers are `shutdown_and_startup`'s. CI runs these tests on one thread
 //! (`--test-threads=1`), like the rest of the crate.
 
 use std::sync::Arc;
@@ -37,7 +37,7 @@ use thryve_utils::packets::notif_log::Log;
 use thryve_utils::packets::task::Task;
 use thryve_utils::res::TaskResult;
 
-use crate::gate_t2::{
+use crate::shutdown_and_startup::{
     QuietPlugin, finalize_within, fresh_dir, idle_task, loaded_engine, run_real_engine,
     started_engine,
 };
@@ -105,7 +105,7 @@ mod wake_up {
 
     #[test]
     fn an_idle_engine_wakes_only_when_its_wait_runs_out() {
-        let dir = fresh_dir("t3_idle");
+        let dir = fresh_dir("engine_wake_up_idle");
         let (mut engine, _packet_handle) = started_engine(&dir, 10, 1, 10);
         assert_eq!(engine.config.engine.idle_wait, 100);
 
@@ -136,7 +136,7 @@ mod bounded_turns {
     #[test]
     fn each_turn_takes_at_most_its_limit_from_each_mailbox() {
         // No workers and no sorter: the tasks stay queued, and nothing else fills the mailboxes.
-        let dir = fresh_dir("t3_bounded");
+        let dir = fresh_dir("engine_wake_up_bounded");
         let (mut engine, packet_handle) = loaded_engine(&dir, 10, 1, 10, |_, _| {});
         engine.config.pipes.tasks_processed_per_turn = 2;
         engine.config.pipes.notifs_processed_per_turn = 2;
@@ -196,7 +196,7 @@ mod settings {
 
     #[test]
     fn the_new_settings_must_be_at_least_one() {
-        let dir = fresh_dir("t3_config");
+        let dir = fresh_dir("engine_wake_up_config");
         let path = dir.join("config.toml");
         std::fs::write(
             &path,

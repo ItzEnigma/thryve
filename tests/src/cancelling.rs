@@ -7,14 +7,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T6, cancelling.
+//! Cancelling.
 //!
-//! Piece 1, the set and the skip: the engine keeps the ids of the tasks cancelled before they
-//! started, and every plugin worker looks each task it pops up in that set. A task whose id is
-//! there never runs: the worker reports it as cancelled instead, and the engine takes the id out
-//! when that report, or any other report for the task, arrives. Nothing in Thryve's API puts an id
-//! in the set yet (that's piece 2's `cancel()`), so these tests add it by hand, after the engine
-//! has remembered the release that a cancel leaves behind.
+//! The set and the skip: the engine keeps the ids of the tasks cancelled before they started,
+//! and every plugin worker looks each task it pops up in that set. A task whose id is there never
+//! runs: the worker reports it as cancelled instead, and the engine takes the id out when that
+//! report, or any other report for the task, arrives. These tests put the id in the set by hand,
+//! after the engine has remembered the release that a cancel leaves behind, so they check the
+//! skip on its own, without `cancel()`.
 //!
 //! - a worker skips a task whose id is in the set and reports it as cancelled, runs the others,
 //!   and leaves the id for the engine to take out;
@@ -25,7 +25,7 @@
 //! - end to end, a task cancelled before a worker takes it never runs, and nothing is left in the
 //!   wait table or the set.
 //!
-//! Piece 2, `cancel()` and `cancel_all()`: a handle's `cancel` uses it up and sends one message.
+//! `cancel()` and `cancel_all()`: a handle's `cancel` uses it up and sends one message.
 //! The engine releases the task the way it does for a dropped handle, following its forwards, and
 //! if the task at their end hasn't reported yet, puts that task's id in the set. These tests drive
 //! the engine's mailboxes one at a time, so each cancel lands at a known moment.
@@ -40,7 +40,7 @@
 //! Each of these ends with an empty set and an empty wait table, and nothing about a cancel in
 //! `Error.log`.
 //!
-//! Piece 3, the tasks the engine holds: a follow-up waiting for its input, and a join waiting for
+//! The tasks the engine holds: a follow-up waiting for its input, and a join waiting for
 //! its tasks. No worker ever sees them, so the engine catches them itself and reports them as
 //! cancelled.
 //!
@@ -59,7 +59,7 @@
 //! These end with an empty set and an empty wait table, which also counts the error texts kept
 //! for queued tasks, and nothing about a cancel in `Error.log`.
 //!
-//! Piece 4, the shutdown: a cancelled task isn't lost work, and an error that nobody took is.
+//! The shutdown: a cancelled task isn't lost work, and an error that nobody took is.
 //!
 //! - a cancelled task the shutdown finds is neither counted nor listed, while one nobody cancelled
 //!   is a lost task;
@@ -87,8 +87,10 @@ use thryve_utils::res::{Handoff, JoinHandoff, SealedHandoff, TaskResult};
 use thryve_utils::threads::threadpool::ThreadPool;
 use thryve_utils::traits::join::Joinable;
 
-use crate::gate_t2::{finalize_within, fresh_dir, read_log, started_engine, summary_line};
-use crate::gate_t4::{
+use crate::shutdown_and_startup::{
+    finalize_within, fresh_dir, read_log, started_engine, summary_line,
+};
+use crate::typed_tasks::{
     forwarding, handle_and_mailbox, handle_mailbox_and_status, run_like_a_worker,
     run_until_received, run_until_the_wait_table_is_empty,
 };
@@ -282,7 +284,7 @@ mod reports {
 
     #[test]
     fn a_cancelled_report_lets_the_release_go_and_takes_only_its_own_id_out() {
-        let dir = fresh_dir("t6_a_cancelled_report_lets_the_release_go");
+        let dir = fresh_dir("cancelling_a_cancelled_report_lets_the_release_go");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (row_600, row_601) = (u64::MAX - 600, u64::MAX - 601);
 
@@ -306,7 +308,7 @@ mod reports {
 
     #[test]
     fn a_task_cancelled_too_late_still_has_its_error_logged_and_takes_its_id_out() {
-        let dir = fresh_dir("t6_a_task_cancelled_too_late_still_has_its_error_logged");
+        let dir = fresh_dir("cancelling_a_task_cancelled_too_late_still_has_its_error_logged");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
 
         // Row 601 was already running when it was cancelled, and it fails anyway.
@@ -336,7 +338,7 @@ mod end_to_end {
 
     #[test]
     fn a_task_cancelled_before_a_worker_takes_it_never_runs_and_leaves_nothing_behind() {
-        let dir = fresh_dir("t6_a_task_cancelled_before_a_worker_takes_it");
+        let dir = fresh_dir("cancelling_a_task_cancelled_before_a_worker_takes_it");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
 
         // Row 600 is sent from somewhere else, so the test holds it before the engine does.
@@ -368,7 +370,7 @@ mod end_to_end {
     }
 }
 
-mod cancelling {
+mod handles {
     use super::*;
 
     #[test]
@@ -394,7 +396,7 @@ mod cancelling {
 
     #[test]
     fn a_task_cancelled_before_the_engine_takes_it_in_never_runs() {
-        let dir = fresh_dir("t6_cancelled_before_the_engine_takes_it_in");
+        let dir = fresh_dir("cancelling_cancelled_before_the_engine_takes_it_in");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -416,7 +418,7 @@ mod cancelling {
 
     #[test]
     fn a_task_cancelled_while_it_waits_in_the_queue_never_runs() {
-        let dir = fresh_dir("t6_cancelled_while_it_waits_in_the_queue");
+        let dir = fresh_dir("cancelling_cancelled_while_it_waits_in_the_queue");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -447,7 +449,7 @@ mod cancelling {
 
     #[test]
     fn a_task_cancelled_while_it_runs_finishes_and_its_error_is_still_logged() {
-        let dir = fresh_dir("t6_cancelled_while_it_runs");
+        let dir = fresh_dir("cancelling_cancelled_while_it_runs");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
 
         let (started_tx, started_rx) = unbounded();
@@ -476,7 +478,7 @@ mod cancelling {
 
     #[test]
     fn a_cancel_after_the_task_finished_lets_the_kept_result_go_and_adds_no_id() {
-        let dir = fresh_dir("t6_cancel_after_the_task_finished");
+        let dir = fresh_dir("cancelling_cancel_after_the_task_finished");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
 
         let hash = AdvTask::new("Hash", 2, || {
@@ -506,7 +508,7 @@ mod cancelling {
 
     #[test]
     fn a_cancel_after_a_forward_cancels_the_task_forwarded_to() {
-        let dir = fresh_dir("t6_cancel_after_a_forward");
+        let dir = fresh_dir("cancelling_cancel_after_a_forward");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -532,7 +534,7 @@ mod cancelling {
 
     #[test]
     fn cancel_all_cancels_every_piece_of_split_work() {
-        let dir = fresh_dir("t6_cancel_all_cancels_every_piece");
+        let dir = fresh_dir("cancelling_cancel_all_cancels_every_piece");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded::<usize>();
 
@@ -563,7 +565,7 @@ mod follow_ups {
 
     #[test]
     fn a_follow_up_cancelled_while_it_waits_never_runs_and_the_error_it_waited_for_is_logged() {
-        let dir = fresh_dir("t6_follow_up_cancelled_while_it_waits");
+        let dir = fresh_dir("cancelling_follow_up_cancelled_while_it_waits");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -598,7 +600,7 @@ mod follow_ups {
 
     #[test]
     fn a_follow_up_cancelled_before_the_engine_takes_it_in_lets_the_kept_error_go() {
-        let dir = fresh_dir("t6_follow_up_cancelled_before_the_engine_takes_it_in");
+        let dir = fresh_dir("cancelling_follow_up_cancelled_before_the_engine_takes_it_in");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -630,7 +632,7 @@ mod follow_ups {
 
     #[test]
     fn a_follow_up_queued_with_an_error_and_then_cancelled_still_has_the_error_logged_once() {
-        let dir = fresh_dir("t6_follow_up_queued_with_an_error");
+        let dir = fresh_dir("cancelling_follow_up_queued_with_an_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -671,7 +673,7 @@ mod follow_ups {
 
     #[test]
     fn a_follow_up_that_runs_with_an_error_takes_it_and_leaves_no_text_behind() {
-        let dir = fresh_dir("t6_follow_up_that_runs_with_an_error");
+        let dir = fresh_dir("cancelling_follow_up_that_runs_with_an_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (got_tx, got_rx) = unbounded();
 
@@ -701,7 +703,7 @@ mod joins {
 
     #[test]
     fn cancelling_a_held_join_cancels_the_rows_it_still_waits_for() {
-        let dir = fresh_dir("t6_cancelling_a_held_join");
+        let dir = fresh_dir("cancelling_cancelling_a_held_join");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
         let (joins_ran_tx, joins_ran_rx) = unbounded();
@@ -752,7 +754,7 @@ mod joins {
 
     #[test]
     fn cancelling_a_join_cancels_a_held_join_inside_it_all_the_way_in() {
-        let dir = fresh_dir("t6_cancelling_a_join_of_joins");
+        let dir = fresh_dir("cancelling_cancelling_a_join_of_joins");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
         let (joins_ran_tx, joins_ran_rx) = unbounded();
@@ -805,7 +807,7 @@ mod joins {
     #[test]
     fn a_join_cancelled_before_the_engine_takes_it_in_lets_its_kept_error_go_and_cancels_the_rest()
     {
-        let dir = fresh_dir("t6_join_cancelled_before_the_engine_takes_it_in");
+        let dir = fresh_dir("cancelling_join_cancelled_before_the_engine_takes_it_in");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
         let (joins_ran_tx, joins_ran_rx) = unbounded();
@@ -856,7 +858,7 @@ mod joins {
     #[test]
     fn when_a_row_fails_the_join_runs_with_its_error_and_the_rows_it_still_waited_for_are_cancelled()
      {
-        let dir = fresh_dir("t6_fail_fast_cancels_the_rest");
+        let dir = fresh_dir("cancelling_fail_fast_cancels_the_rest");
         // Two workers: one for Load, which Row 418 follows, and one for Row 417.
         let (mut engine, packet_handle) = started_engine(&dir, 10, 2, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
@@ -912,7 +914,7 @@ mod joins {
 
     #[test]
     fn a_join_queued_by_a_kept_error_and_then_cancelled_still_has_the_error_logged_once() {
-        let dir = fresh_dir("t6_join_queued_by_a_kept_error");
+        let dir = fresh_dir("cancelling_join_queued_by_a_kept_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
         let (joins_ran_tx, joins_ran_rx) = unbounded();
@@ -961,7 +963,7 @@ mod joins {
 
     #[test]
     fn cancelling_a_join_after_a_row_forwarded_cancels_the_task_it_forwarded_to() {
-        let dir = fresh_dir("t6_join_cancelled_after_a_forward");
+        let dir = fresh_dir("cancelling_join_cancelled_after_a_forward");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (rows_ran_tx, rows_ran_rx) = unbounded();
         let (joins_ran_tx, joins_ran_rx) = unbounded();
@@ -999,7 +1001,7 @@ mod joins {
 
     #[test]
     fn cancelling_a_join_declared_after_a_row_forwarded_cancels_the_task_it_forwarded_to() {
-        let dir = fresh_dir("t6_join_declared_after_a_forward");
+        let dir = fresh_dir("cancelling_join_declared_after_a_forward");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (joins_ran_tx, joins_ran_rx) = unbounded();
 
@@ -1056,7 +1058,7 @@ mod shutdown {
 
     #[test]
     fn a_cancelled_task_is_not_lost_work_but_one_nobody_cancelled_is() {
-        let dir = fresh_dir("t6_shutdown_a_cancelled_task_is_not_lost");
+        let dir = fresh_dir("cancelling_shutdown_a_cancelled_task_is_not_lost");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         engine.config.debugging.is_debugging = true;
         let (ran_tx, ran_rx) = unbounded();
@@ -1087,7 +1089,7 @@ mod shutdown {
 
     #[test]
     fn errors_given_to_tasks_that_never_ran_are_lost_results_listed_in_debug_log() {
-        let dir = fresh_dir("t6_shutdown_errors_given_to_tasks_that_never_ran");
+        let dir = fresh_dir("cancelling_shutdown_errors_given_to_tasks_that_never_ran");
         // Row 1 holds the only worker through the shutdown, which gives up on it after a second.
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         engine.config.debugging.is_debugging = true;
@@ -1141,7 +1143,7 @@ mod shutdown {
 
     #[test]
     fn an_error_given_to_a_task_skipped_just_before_the_shutdown_is_a_lost_result() {
-        let dir = fresh_dir("t6_shutdown_error_given_to_a_skipped_task");
+        let dir = fresh_dir("cancelling_shutdown_error_given_to_a_skipped_task");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
@@ -1182,7 +1184,7 @@ mod shutdown {
 
     #[test]
     fn an_error_taken_by_a_task_whose_result_arrives_during_the_shutdown_is_not_counted() {
-        let dir = fresh_dir("t6_shutdown_error_taken_by_a_task_that_ran");
+        let dir = fresh_dir("cancelling_shutdown_error_taken_by_a_task_that_ran");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (got_tx, got_rx) = unbounded();
 

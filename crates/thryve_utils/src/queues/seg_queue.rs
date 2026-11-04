@@ -23,7 +23,7 @@
 //! # Features
 //!
 //! - Lock-free concurrent access via SegQueue
-//! - Pause/resume support for controlled shutdown
+//! - Pause/resume support, and a finalize for the shutdown
 //! - Integration with the observer logging system
 //!
 //! # Thread Safety
@@ -86,16 +86,17 @@ impl Queue<Notif> for QChild {
                 break;
             }
 
-            // Try to pop a notification.
+            // Fast path: take the oldest notification, if there is one.
             let notif = self.main_queue.pop();
 
             if notif.is_some() {
                 return notif;
             }
 
+            // Registered as idle before it looks again, so a push from now on wakes it.
             self.worker_registry.set_idle(idx);
 
-            // 2. Medium Path: Spin backoff before committing to sleep
+            // Medium path: spin with backoff before committing to sleep.
             let backoff = Backoff::new();
 
             while !backoff.is_completed() {
@@ -112,8 +113,8 @@ impl Queue<Notif> for QChild {
                 backoff.snooze();
             }
 
-            // Check for shutdown.
-            // Wait for notification.
+            // Slow path: unless the queue is shutting down, park until a push, a resume or the
+            // shutdown wakes this thread, then look again.
             if !self.exit_flag.load(Ordering::SeqCst) {
                 thread::park();
                 self.worker_registry.clear_idle(idx);
@@ -201,7 +202,10 @@ impl QChild {
     ///
     /// # Arguments
     ///
-    /// * `packet_handle` - Handle for sending notifications
+    /// * `q_size` - How many threads call `pop` on this queue, which sizes its worker registry:
+    ///   1 for the sorter's queue and for an observer's own queue
+    /// * `packet_handle` - Handle for sending the queue's status lines ("Obs Queue Paused", and
+    ///   so on)
     ///
     /// # Returns
     ///

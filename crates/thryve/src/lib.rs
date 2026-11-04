@@ -14,10 +14,11 @@ pub use thryve_run::run;
 
 /// What nearly every plugin needs, in one import: `use thryve::prelude::*;`.
 ///
-/// Typed tasks and their handles, what a follow-up and a join receive, the handle that sends
-/// tasks, Thryve's error type, and the [`Joinable`](utils::traits::Joinable) trait. A trait's
-/// methods only work where the trait is in scope, so the prelude also makes `.join(…)` on a `Vec`
-/// of handles find Thryve's join, not the standard library's `join` for strings.
+/// Typed tasks and their handles, the fan-out group, what a follow-up and a join receive, the
+/// handle that sends tasks, Thryve's error type, and the [`Joinable`](utils::traits::Joinable)
+/// trait. A trait's methods only work where the trait is in scope, so the prelude also makes
+/// `.join(…)` on a `Vec` of handles find Thryve's join, not the standard library's `join` for
+/// strings.
 pub mod prelude {
     pub use thryve_utils::errors::ThryveError;
     pub use thryve_utils::packets::packet_handle::PacketHandle;

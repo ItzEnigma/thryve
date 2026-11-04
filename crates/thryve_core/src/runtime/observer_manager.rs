@@ -153,11 +153,13 @@ impl ObserverManager {
         let handle = thread::Builder::new()
             .name(thread_name.clone())
             .spawn(move || {
+                // Routes each notification to its receiver's queue until the exit flag is set.
                 loop {
                     if exit_flag.load(Ordering::SeqCst) {
                         break;
                     }
 
+                    // Waits for a notification; `None` once the exit flag is set.
                     let obj_opt = queue.pop();
 
                     if let Some(obj) = obj_opt {
@@ -292,6 +294,7 @@ impl ObserverManager {
         let x = Arc::new(observer);
         let obs_type = x.obs_type_input().clone();
 
+        // One observer per type.
         if self.observers.contains_key(&obs_type) {
             return Err(StartupError::RegisterDuplicate {
                 name: obs_type.inner().to_string(),
@@ -302,6 +305,7 @@ impl ObserverManager {
 
         self.observers.insert(obs_type.clone(), x.clone());
 
+        // A thread that can't start takes the observer back out.
         let thread_spawn_res = self.threadpool.run_thread_obs(x.clone());
         if let Err(e) = thread_spawn_res {
             self.observers.remove(&obs_type);

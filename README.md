@@ -25,7 +25,7 @@ Thryve is designed around three main pillars:
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
 - **Typed tasks with follow-ups, splits, joins and fan-out**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, several tasks share one follow-up with `join`, and several follow-ups share one result with `fan_out`, so plugins combine without knowing each other
-- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and the work that only it needed stops too: the tasks a join still waits for, and the tasks a follow-up's chain was waiting on
+- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and the work that only it needed stops too: the tasks a join still waits for, the tasks a follow-up's chain was waiting on, and the task a fan-out group follows once every follower is cancelled
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -40,9 +40,10 @@ Thryve is designed around three main pillars:
 ### Data Flow
 
 1. **Tasks** enter through the task channel and are queued by priority
-2. **Worker threads** execute tasks from the priority queue
-3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, or into its join
+2. **Worker threads** execute tasks from the priority queue, and skip the ones that were cancelled
+3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, into its join, or to a fan-out group's followers
 4. **Notifications** flow through the observer system for logging and monitoring
+5. **Status messages**, Thryve's own, travel on a fourth channel that never makes a sender wait: status lines for the logger, the releases of dropped task handles, cancels, and fan-out groups' data
 
 ## Core Concepts
 
@@ -110,7 +111,7 @@ fn size_in_kb(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **Chains:** `then` returns the follow-up's handle, so steps chain. A task has one follow-up: `then` uses its handle up.
+- **Chains:** `then` returns the follow-up's handle, so steps chain. A task has one follow-up: `then` uses its handle up. To give one result to several follow-ups, see [Fan-out](#fan-out).
 - **Timing:** `then` works before or after the task finishes, since the engine keeps the result while the handle exists. Dropping a handle without `then` lets the result go, and an error is written to `Error.log`.
 - **Priority:** a follow-up inherits its task's priority, capped below realtime. `then_with_priority` gives it its own.
 - **Forwarding:** a task that creates its last step while it runs can forward to it with `AdvTask::forward` (or `then_forward`). It returns that step's handle, and whoever follows the task gets the step's result.
@@ -260,9 +261,13 @@ use thryve_observers::logger::LoggerObserver;
 use thryve_utils::cfg::config::Config;
 use thryve_run::run::run_interactive::summon_requirements;
 
+// Thryve starts its own logger; this only shows the shape. The logger writes to the log files
+// that startup opens, so before startup this returns an error.
 let ctx = summon_requirements(Config::load_def_config());
 let logger = LoggerObserver::new(&ctx);
 ```
+
+Your own observers follow the pattern in [Creating an Observer](#creating-an-observer).
 
 ### Plugins
 
@@ -305,7 +310,8 @@ Core utilities, data structures, and traits.
 | Component | Description |
 |-----------|-------------|
 | `Task` | Unit of work with priority and unique ID |
-| `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) and that cancels it (`cancel`) |
+| `AdvTask` / `AdvTaskHandle` | Typed task returning `Result<T, E>`, and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`, `fan_out`) and that cancels it (`cancel`) |
+| `FanoutGroup` | What `fan_out` returns: several followers declared on one task's result with `then`, which share it, sent with `send_fanout` |
 | `PacketHandle` | Sends tasks and notifications to the engine, and splits work over typed tasks (`split_into`, `send_split_tasks`) |
 | `Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails; `cancel_all` cancels them all |
 | `Notif` | Notification structure for observer communication |
@@ -328,6 +334,7 @@ Built-in observer implementations.
 | Component | Description |
 |-----------|-------------|
 | `LoggerObserver` | File-based logging with timestamped output |
+| `TopologyHandlerObserver` | Records the task graph in graph mode, and exports it at shutdown |
 
 ### thryve_run
 
@@ -335,8 +342,18 @@ Service initialization and execution.
 
 | Component | Description |
 |-----------|-------------|
-| `Service` | Windows service wrapper |
-| `RunInteractive` | Interactive mode execution |
+| `run_service` | Runs Thryve as a Windows service: `create_service`, then `try_run_as_service` |
+| `run_interactive` | Runs Thryve in the foreground: `summon_requirements`, then `run_interactive` |
+| `service::Thryve` | The Windows service itself, driven by the service manager's Stop, Pause and Resume |
+| `init` | Startup: the log folders (`init_directories`), the built-in observers, and the engine's thread |
+
+### thryve
+
+The crate applications depend on: it re-exports the public parts of the crates above, with a `prelude` of what nearly every plugin needs.
+
+### thryve_ffi
+
+C and C++ bindings, built as a library with a generated header. See [`crates/thryve_ffi/README.md`](crates/thryve_ffi/README.md).
 
 ## Configuration
 
@@ -396,7 +413,7 @@ log_tasks= false
 | `pipes` | `res_pipe_capacity` | usize | 1024 | Result channel buffer size |
 | `pipes` | `res_processed_per_turn` | usize | 500 | Most results the engine takes per turn |
 | `tasks` | `max_priority` | u8 | 4 | Maximum task priority (0-14) |
-| `tasks` | `aging_interval` | u64 | 3 | Seconds before priority boost |
+| `tasks` | `aging_interval` | u64 | 3 | Seconds a task waits for each one-level priority boost |
 | `debugging` | `is_debugging` | bool | false | Enable debug mode |
 | `debugging` | `wait_before_execution` | u64 | 10 | Debug wait time (seconds) |
 | `debugging` | `visual_graph` | bool | false | Enable task topology graph visualization |
@@ -739,7 +756,7 @@ The graph visualization system consists of:
 
 ### Prerequisites
 
-- Rust 1.85+ 
+- Rust: the latest stable release. The code uses Rust 2024's let chains, so nothing older than 1.88 can build it.
 - Cargo
 
 ### Build Commands
@@ -748,8 +765,8 @@ The graph visualization system consists of:
 # Build in release mode
 cargo build --release
 
-# Run tests
-cargo test
+# Run tests (some tests share process-wide state, so they run on one thread, as in CI)
+cargo test --workspace -- --test-threads=1
 
 # Build documentation
 cargo doc --open
@@ -760,10 +777,13 @@ cargo doc --open
 Key dependencies:
 
 - `crossbeam` - Lock-free concurrent data structures
+- `crossbeam-skiplist` - Priority queue implementation, and the set of cancelled tasks
 - `chrono` - Date/time formatting
 - `serde` - Configuration deserialization
 - `toml` - TOML parsing
-- `crossbeam-skiplist` - Priority queue implementation
+- `thiserror` - Error types
+- `petgraph` and `ron` - The task graph, and its export (graph mode)
+- `windows-services` - Running as a Windows service
 
 ## Priority Queue Details
 
@@ -773,7 +793,7 @@ The priority queue uses an aging mechanism to prevent starvation:
 effective_priority = min(base_priority + aging_boost, max_priority)
 ```
 
-Where `aging_boost` increases based on wait time. Tasks inserted with a priority of more than 80% of max priority are treated as "realtime" and prioritized over newer tasks.
+Where `aging_boost` grows by one for every `aging_interval` seconds a task waits, so a low-priority task that has waited long enough comes before newer tasks with a higher priority. A task whose base priority is at least 80% of `max_priority` is *realtime*: realtime tasks always come before the others, and ageing never makes a task realtime. A follow-up that inherits its priority is capped just below realtime, so a chain never runs as realtime by inheritance.
 
 ## Log Output Format
 
@@ -781,13 +801,14 @@ Where `aging_boost` increases based on wait time. Tasks inserted with a priority
 Log_Creation: 2024-01-15 10:30:45, [ LOGGING ], Event_Type: Log, Message: Hello
 ```
 
-Logs are organized by module:
+Each run gets a folder named after the time it started, with one file per log:
 ```text
 log/
   2024_01_15_10_30/
     Main.log
     Error.log
-    <Module>.log
+    Debug.log       (debug mode only)
+    <Name>.log      (one per name in `ctx.logging_file_names`)
 ```
 
 If a shutdown cuts work short, one line says how much:
@@ -796,7 +817,7 @@ If a shutdown cuts work short, one line says how much:
 thryve exited leaving 3 things not done: 1 lost tasks, 0 lost notifications, 1 lost task results, 1 still running
 ```
 
-It counts the tasks that never ran, the results that carried something (a message, a task, plugin or observer to start, or an error nobody took, including one handed to a follow-up or a join that never ran), the notifications that were never delivered, and the threads still running when the grace period ran out. A task that was cancelled isn't lost work, so it isn't counted; a cancel that arrives once the shutdown has started is dropped, though, so its task still counts. The line goes to `Error.log`, or to `Main.log` when the Windows service was stopped, since stopping mid-work is expected there. With debugging on, `Debug.log` lists what was lost. A shutdown that lost nothing writes no line.
+It counts the tasks that never ran, the results that carried something (a message, a chained task to start, or an error nobody took, including one handed to a follow-up, a join or a fan-out group's followers that never ran, counted once however many followers shared it), the notifications that were never delivered, and the threads still running when the grace period ran out. A task that was cancelled isn't lost work, so it isn't counted; a cancel that arrives once the shutdown has started is dropped, though, so its task still counts. The line goes to `Error.log`, or to `Main.log` when the Windows service was stopped, since stopping mid-work is expected there. With debugging on, `Debug.log` lists what was lost. A shutdown that lost nothing writes no line.
 
 ## License
 
@@ -870,18 +891,17 @@ git checkout -b fix/your-bug-fix
 Follow Rust best practices:
 - Write clear, idiomatic Rust code
 - Add documentation comments (`///`) for public APIs
-- Ensure code is formatted: `cargo fmt`
-- Run clippy: `cargo clippy -- -D warnings`
+- Ensure code is formatted: `cargo fmt --all`
+- Run clippy: `cargo clippy --workspace --all-targets -- -D warnings`
 
 #### 4. Test Your Changes
 
 ```bash
-# Run all tests
-cargo test
-
-# Run tests with coverage (if configured)
-cargo test --all-features
+# Run all tests, on one thread, as CI does
+cargo test --workspace -- --test-threads=1
 ```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for where tests go.
 
 #### 5. Submit a Pull Request
 

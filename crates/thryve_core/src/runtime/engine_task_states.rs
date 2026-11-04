@@ -15,7 +15,8 @@
 //! it, and so do a fan-out group and the result its followers share. The other holds
 //! [`TrackedState`]s under a task's own id: what the engine keeps about that task itself, such as
 //! a join still waiting for some of its tasks, a group's follower that arrived before its share,
-//! or the error the task produced, kept for the tasks queued with it.
+//! the slot a follow-up waits in, or the error the task produced, kept for the tasks queued with
+//! it.
 //!
 //! Only the engine thread uses them.
 

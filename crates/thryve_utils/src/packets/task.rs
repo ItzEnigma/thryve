@@ -32,7 +32,12 @@
 //! it gets that step's result. Several tasks of one type can share one follow-up: the
 //! [`Joinable`](crate::traits::join::Joinable) trait lets a `Vec` of their handles
 //! [`join`](crate::traits::join::Joinable::join), and the follow-up runs once all of them have
-//! finished, with all their values, or as soon as one fails.
+//! finished, with all their values, or as soon as one fails. The other way around, several
+//! followers can share one task's result: [`fan_out`](AdvTaskHandle::fan_out) starts a
+//! [`FanoutGroup`], and each follower gets the one result behind an `Arc`.
+//!
+//! A handle can also [`cancel`](AdvTaskHandle::cancel) its task: a task that hasn't started never
+//! runs, and neither does the work that only it needed.
 //!
 //! # Unique Identification
 //!
@@ -492,6 +497,20 @@ impl Task {
         self
     }
 
+    /// Makes a fan-out group's follower ready: puts its share of the result of the task the group
+    /// follows into its job, as a [`SealedHandoff::FanoutShare`]. The engine calls it once per
+    /// follower, each time with a clone of the group's one share, so the result is never copied.
+    ///
+    /// If its priority was inherited (it was declared with [`FanoutGroup::then`]), it's capped
+    /// below realtime, as a follow-up's is in [`with_input`](Self::with_input). A task that isn't a
+    /// fan-out follower comes back unchanged.
+    ///
+    /// For Thryve's engine. Not part of the public API.
+    ///
+    /// # Arguments
+    ///
+    /// * `group_share` - The group's share: the result, opened once by the group's converter
+    /// * `max_priority` - The configured `tasks.max_priority`, which sets where realtime starts
     #[doc(hidden)]
     pub fn with_group_share(
         mut self,
@@ -706,7 +725,7 @@ pub struct AdvTask<T: Send + 'static, E: std::error::Error + Send + 'static> {
 /// handle from a forwarding task (see [`AdvTask::forward`]) uses it up too: whoever follows the
 /// forwarding task gets this task's result. So does joining it with others
 /// ([`join`](crate::traits::join::Joinable::join)), whose follow-up waits for this task together
-/// with them.
+/// with them, and so does [`fan_out`](Self::fan_out), whose followers share this task's result.
 ///
 /// The engine keeps the task's result for as long as the handle exists, so `then` works even
 /// after the task has finished. Dropping the handle without calling `then` tells the engine that
@@ -1235,6 +1254,8 @@ where
     pub fn fan_out(self) -> FanoutGroup<T, E> {
         let pre_fanout_task_id = self.task_id;
 
+        // Opens the result as `Result<T, E>` and shares it as `Handoff<T, Arc<E>>`, behind an
+        // `Arc` whose type is hidden again for the engine.
         let converter = move |sealed_handoff: SealedHandoff| {
             if let Some(handoff) = sealed_handoff.open::<T, E>() {
                 let shared_handoff = handoff.into_shared();
@@ -1400,6 +1421,8 @@ where
             let mut fanout_tasks_ids = vec![0; self.followers.len()];
             let tx = &self.pre_fanout_task.tx;
 
+            // The followers first, on the task mailbox, then the group's data, which names them,
+            // on the status mailbox.
             for (i, task) in self.followers.drain(..).enumerate() {
                 let fanout_task_id = task.id;
                 tx.send_fanout_task(task)?;
@@ -1537,6 +1560,7 @@ where
 {
     let slots_len = slots.len();
 
+    // No handles: there's nothing to join.
     if slots_len == 0 {
         return Err(JoinError::MonitorsZeroInputs {
             task_name: String::from(task_name),
@@ -1548,6 +1572,8 @@ where
     let tx: PacketHandle = slots[0].tx.clone();
     let mut input_ids = vec![0; slots_len];
 
+    // The tasks' ids, in the handles' order, and the join's priority: when inherited, the
+    // highest among its tasks.
     for (i, handle) in slots.iter().enumerate() {
         if inherits_priority && priority < handle.base_priority {
             priority = handle.base_priority;
@@ -1556,12 +1582,15 @@ where
         input_ids[i] = handle.task_id;
     }
 
+    // The job a worker runs once the engine makes the join ready: it opens the slots in order.
     let job = move |mut sealed_handoffs: Vec<Option<SealedHandoff>>| -> TaskResult {
         let mut opened_handoffs: Vec<T> = Vec::new();
         let mut error_opt: Option<JoinError> = None;
 
         for (i, sealed_handoff_opt) in sealed_handoffs.drain(..).enumerate() {
             if let Some(sealed_handoff) = sealed_handoff_opt {
+                // A full slot: a value is kept, and the first error runs the closure with it at
+                // once. A slot of another type is a bug in Thryve.
                 if let Some(handoff) = sealed_handoff.open() {
                     match handoff {
                         Handoff::Value(value) => opened_handoffs.push(value),
@@ -1584,6 +1613,8 @@ where
                     .into();
                 }
             } else {
+                // An empty slot: the join ran early, so another slot should hold an error. The
+                // first empty slot is remembered in case none does.
                 if error_opt.is_none() {
                     error_opt = Some(JoinError::InputsMissing {
                         task_name: name_as_string.clone(),
@@ -1593,10 +1624,12 @@ where
             }
         }
 
+        // Empty slots and no error: the closure can't run.
         if let Some(error) = error_opt {
             return error.into();
         }
 
+        // Every slot held a value: the closure gets them all, in order.
         let join_handoff = JoinHandoff::Filled {
             values: opened_handoffs,
         };
@@ -1605,6 +1638,7 @@ where
 
     let join_task = Task::new_join_wait(task_name, priority, inherits_priority, input_ids, job)?;
 
+    // The name passed its check, so the handles are used up and send no releases.
     for handle in slots.iter_mut() {
         handle.is_used = true;
     }

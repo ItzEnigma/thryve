@@ -93,9 +93,9 @@ pub struct PacketHandle {
     task_tx: Sender<Task>,
     /// Sender for notifications.
     notif_tx: Sender<Notif>,
-    /// Sender for Thryve's own messages to the engine: status lines, and the releases of dropped
-    /// task handles. Its channel has no capacity limit, so a send never waits, even while the
-    /// engine isn't reading.
+    /// Sender for Thryve's own messages to the engine: status lines, the releases of dropped task
+    /// handles, cancels, and fan-out groups' data (see [`StatusMsg`]). Its channel has no capacity
+    /// limit, so a send never waits, even while the engine isn't reading.
     status_tx: Sender<StatusMsg>,
     /// Whether graph mode is on. Shared by every clone of this handle, so one failure turns
     /// graph mode off everywhere.
@@ -119,8 +119,9 @@ impl PacketHandle {
     ///
     /// * `task_tx` - Sender for tasks
     /// * `notif_tx` - Sender for notifications
-    /// * `status_tx` - Sender for Thryve's own messages: status lines, and the releases of
-    ///   dropped task handles. Its channel should be unbounded, so that sending on it never waits
+    /// * `status_tx` - Sender for Thryve's own messages: status lines, the releases of dropped
+    ///   task handles, cancels, and fan-out groups' data. Its channel should be unbounded, so that
+    ///   sending on it never waits
     /// * `is_graph_vis_enabled` - Whether graph visualization is enabled.
     ///   When true, call site information is captured for each task, until graph mode fails
     ///   and turns off.
@@ -171,8 +172,8 @@ impl PacketHandle {
     /// 3. Retrieves the fingerprint of the currently executing task (parent)
     /// 4. Attaches this call site information to the task
     ///
-    /// This information is used by the topology handler (`TopologyHandlerObserver`, in `thryve_observers`)
-    /// to build a topology graph showing task creation relationships.
+    /// This information is used by the topology handler (`TopologyHandlerObserver`, in
+    /// `thryve_observers`) to build a topology graph showing task creation relationships.
     ///
     /// The compiler passes the call site in (`#[track_caller]`), so it's always found and exact,
     /// whatever the build's optimization level or debug info. A function of yours that wraps this
@@ -521,10 +522,13 @@ impl PacketHandle {
         }
 
         let number_of_items = items_to_split.len();
+        // Never more pieces than items, so no piece is empty.
         let max_possible_pieces = std::cmp::min(number_of_items, number_of_pieces);
         let mut chunks = Vec::new();
         let mut items_iter = items_to_split.into_iter();
 
+        // The balanced cut: piece `i` takes the items from `i * n / p` up to `(i + 1) * n / p`,
+        // with `n` items and `p` pieces, so sizes differ by at most one.
         for i in 0..max_possible_pieces {
             let start_idx = (i * number_of_items) / max_possible_pieces;
             let end_idx = ((i + 1) * number_of_items) / max_possible_pieces;

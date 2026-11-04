@@ -93,6 +93,9 @@ use thryve_utils::{cfg::ctx::Ctx, errors::StartupError};
 ///
 /// - `topology`: The task topology graph (protected by a read-write lock)
 /// - `topology_dir`: The directory where topology files are stored
+/// - `packet_handle`: For the graph-mode switch every packet handle shares
+/// - `error_log`: Where the handler's own reports go
+/// - `workspace_root_missing`: Set once the workspace root couldn't be found
 ///
 /// # Example
 ///
@@ -133,6 +136,7 @@ impl ObsLogic for TopologyHandlerObserver {
     ///
     /// * `obs` - The observer being cleaned up
     fn clean_up(&self, obs: Arc<Observer>) {
+        // What's still queued is recorded first.
         while !obs.obs_queue.main_queue.is_empty() {
             if let Some(notif) = obs.obs_queue.main_queue.pop() {
                 self.handle_entry(notif);
@@ -302,6 +306,7 @@ impl TopologyHandlerObserver {
     ///
     /// * `notif` - The notification to handle
     pub fn handle_entry(&self, notif: Notif) {
+        // Only notifications addressed to this handler.
         if notif.notif_receiver() != "TopologyHandler" {
             return;
         }
@@ -351,6 +356,7 @@ impl TopologyHandlerObserver {
                     notif_core.graph_node.callsite.file_path = relative_path.to_path_buf();
                 }
 
+                // One node per call site: a fingerprint already in the graph adds nothing.
                 let node_fingerprint = notif_core.graph_node.fingerprint.clone();
 
                 if !topology_ref.contains_node(&node_fingerprint) {
@@ -366,6 +372,8 @@ impl TopologyHandlerObserver {
                 let to = notif_core.to_fingerprint.as_str();
 
                 match (topology_ref.node_index(from), topology_ref.node_index(to)) {
+                    // Both ends are known: a new edge, or one more count on the edge between
+                    // them.
                     (Some(from_index), Some(to_index)) => {
                         match topology_ref.graph.find_edge(from_index, to_index) {
                             Some(edge_index) => {
@@ -490,6 +498,7 @@ impl TopologyHandlerObserver {
     pub fn visualize_gui(&self) {
         let mut stdout = io::stdout();
 
+        // `Topology.exe` is looked for in the folder that holds the topology folder.
         let Some(current_execution_dir) = self.topology_dir.parent() else {
             let _ = writeln!(stdout, "Failed to get topology directory parent path");
             return;
@@ -506,6 +515,7 @@ impl TopologyHandlerObserver {
         let _ = writeln!(stdout, "Command: {command}");
         let _ = stdout.flush();
 
+        // Started only if it's there.
         if PathBuf::from(&command).exists() {
             // Detached GUI viewer, not meant to block shutdown
             #[allow(clippy::zombie_processes)]

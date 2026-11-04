@@ -79,8 +79,8 @@ pub struct Ctx {
     pub task_rx: Arc<Receiver<Task>>,
     /// Receiver for incoming notifications.
     pub notif_rx: Arc<Receiver<Notif>>,
-    /// Receiver for Thryve's own messages to the engine (status lines, and the releases of dropped
-    /// task handles), from an unbounded channel.
+    /// Receiver for Thryve's own messages to the engine (status lines, the releases of dropped
+    /// task handles, cancels, and fan-out groups' data), from an unbounded channel.
     pub status_rx: Arc<Receiver<StatusMsg>>,
     /// Handle for sending to the engine (private).
     packet_handle: PacketHandle,

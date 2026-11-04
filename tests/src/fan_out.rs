@@ -7,21 +7,21 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of fan-out: several followers on one result.
+//! Fan-out: several followers sharing one task's result.
 //!
-//! Piece 1b, an error's record and its pointer: when the engine queues a task with another
-//! task's error as its input, it keeps the error's text under the id of the task that produced
-//! it, and a pointer to it under the id of the task that carries it. The carrier's report takes
-//! the pointer and follows it. Until fan-out's groups come, each record has one pointer, and the
-//! behavior is T6's: its gate covers that, counting both entries in the wait table. What's new is
-//! that one id can hold both, one after the other:
+//! An error's record and its pointer (`records_and_pointers`): when the engine queues a task with
+//! another task's error as its input, it keeps the error's text under the id of the task that
+//! produced it, and a pointer to it under the id of the task that carries it. The carrier's report
+//! takes the pointer and follows it. For a follow-up or a join, each record has one pointer, and
+//! the cancelling tests (`cancelling`) cover that, counting both entries in the wait table. One id can
+//! also hold both, one after the other:
 //!
 //! - a task that took an error and failed hands its own error on. Its report takes the pointer
 //!   it carried before its own record goes under its id, so the error it took is never written,
 //!   and its own error, if nobody takes it, is written to `Error.log` once.
 //!
-//! Piece 2, the typed side: everything the dev writes, up to the moment a group reaches the
-//! engine. `fan_out()` on LoadImg's handle returns a group, `then` on it declares Thumbnail,
+//! The typed side (`the_typed_side`): everything the dev writes, up to the moment a group reaches
+//! the engine. `fan_out()` on LoadImg's handle returns a group, `then` on it declares Thumbnail,
 //! Compress and Metadata, and `send_fanout()` sends them. No engine is involved: the tests read the
 //! two mailboxes, and run tasks the way a worker does.
 //!
@@ -39,8 +39,8 @@
 //! - a task's closure can make a group and send it while it runs. That no closure can capture one
 //!   is checked by a `compile_fail` example on `FanoutGroup`.
 //!
-//! Piece 3, the engine's group: whatever reaches the engine first, the group's data, its
-//! followers or LoadImg's result, the three meet, and each follower gets a share.
+//! The engine's group (`the_engine_s_group`): whatever reaches the engine first, the group's data,
+//! its followers or LoadImg's result, the three meet, and each follower gets a share.
 //!
 //! - followers that arrive before the share are held under their own ids, and queued once the
 //!   converter runs; the ones that arrive after it are queued at once, and the group goes once
@@ -56,38 +56,38 @@
 //! - a follower's handle is an ordinary handle, and a group dropped unsent still runs its
 //!   followers.
 //!
-//! Piece 4, cancels: a cancelled task stops the work that only it needed. The cancel goes up
-//! from the task cancelled to the task it waits for, as long as nobody else needs that task's
-//! result, and so on up. A task that's already running isn't stopped, and its report takes its
-//! id out of the set.
+//! Cancels (`the_engine_s_group::cancels`): a cancelled task stops the work that only it needed.
+//! The cancel goes up from the task cancelled to the task it waits for, as long as nobody else
+//! needs that task's result, and so on up. A task that's already running isn't stopped, and its
+//! report takes its id out of the cancelled set.
 //!
 //! - cancelling the end of a chain stops every task above it that hasn't started, even when the
 //!   cancel is read before the follow-up itself;
 //! - after a forward, a cancelled follow-up stops the task forwarded to, not the one that
 //!   forwarded, which has already reported;
 //! - LoadImg stops once every follower is cancelled: before the group's data, after it but
-//!   before they arrive, or while they're held. A forward LoadImg makes after that stops the task
-//!   forwarded to;
+//!   before they arrive, or while they're held, and so does the task LoadImg waits for, if only
+//!   LoadImg needed it. A forward LoadImg makes after that stops the task forwarded to;
 //! - LoadImg's cancelled report skips the held followers, and a follower that arrives after it
 //!   is skipped at once;
 //! - a cancelled follow-up of one follower, or a cancelled join over two, withdraws only those
 //!   followers, and the others still run;
 //! - an error that the group's data finds with no follower live is still written once.
 //!
-//! Piece 5, the shutdown: a follower still held is a task that never ran, unless it was
-//! cancelled, and an error's record is one lost result, however many followers carry a pointer
-//! to it, even none.
+//! The shutdown (`the_engine_s_group::the_shutdown`): a follower still held is a task that never
+//! ran, unless it was cancelled, and an error's record is one lost result, however many followers
+//! carry a pointer to it, even none.
 
 use crossbeam::channel::unbounded;
 
 use thryve_core::runtime::engine::Engine;
 
-use crate::gate_t2::{finalize_within, fresh_dir, started_engine};
-use crate::gate_t4::run_until_the_wait_table_is_empty;
-use crate::gate_t6::{
+use crate::cancelling::{
     WAIT, error_log_mentions_a_cancel, failing_row, holding_the_worker, telling_follow_up,
     times_logged, until,
 };
+use crate::shutdown_and_startup::{finalize_within, fresh_dir, started_engine};
+use crate::typed_tasks::run_until_the_wait_table_is_empty;
 
 mod records_and_pointers {
     use super::*;
@@ -95,7 +95,7 @@ mod records_and_pointers {
     #[test]
     fn a_task_that_took_an_error_and_failed_hands_its_own_on_and_it_is_logged_once_if_nobody_takes_it()
      {
-        let dir = fresh_dir("fanout_a_task_that_took_an_error_and_failed");
+        let dir = fresh_dir("fan_out_a_task_that_took_an_error_and_failed");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (thumbnail_ran_tx, thumbnail_ran_rx) = unbounded();
@@ -153,7 +153,7 @@ mod records_and_pointers {
     }
 }
 
-/// Piece 2: the group, from `fan_out()` to the two mailboxes, with no engine.
+/// The typed side: the group, from `fan_out()` to the two mailboxes, with no engine.
 mod the_typed_side {
     use std::any::Any;
     use std::sync::Arc;
@@ -166,7 +166,9 @@ mod the_typed_side {
     use thryve_utils::res::{Handoff, SealedHandoff, TaskResult};
     use thryve_utils::traits::packets::Packet;
 
-    use crate::gate_t4::{handle_and_mailbox, handle_mailbox_and_status, open, run_like_a_worker};
+    use crate::typed_tasks::{
+        handle_and_mailbox, handle_mailbox_and_status, open, run_like_a_worker,
+    };
 
     /// The converter, as the group's data carries it.
     type Converter =
@@ -479,7 +481,7 @@ mod the_typed_side {
             let callsite = follower.callsite.expect("graph mode records a call site");
             assert_eq!(callsite.line_number, line, "{name}");
             assert!(
-                callsite.file_path.ends_with("gate_fanout.rs"),
+                callsite.file_path.ends_with("fan_out.rs"),
                 "{:?}",
                 callsite.file_path
             );
@@ -515,8 +517,8 @@ mod the_typed_side {
     }
 }
 
-/// Piece 3: the engine puts the group together and shares LoadImg's result, and an error it
-/// shares gets one record.
+/// The engine's side: the engine puts the group together and shares LoadImg's result, and an
+/// error it shares gets one record.
 mod the_engine_s_group {
     use std::sync::Arc;
     use std::time::Duration;
@@ -527,7 +529,7 @@ mod the_engine_s_group {
     use thryve_utils::packets::task::{AdvTask, AdvTaskHandle, FanoutGroup};
     use thryve_utils::res::Handoff;
 
-    use crate::gate_t4::forwarding;
+    use crate::typed_tasks::forwarding;
 
     use super::*;
 
@@ -693,11 +695,11 @@ mod the_engine_s_group {
         (row_1, followers)
     }
 
-    // Whichever arrives first, the group's data, the followers and the result meet (rule 7).
+    // Whichever arrives first, the group's data, the followers and the result meet.
 
     #[test]
     fn followers_held_before_the_group_s_data_run_once_it_finds_load_img_s_kept_result() {
-        let dir = fresh_dir("fanout_followers_held_then_the_group_s_data");
+        let dir = fresh_dir("fan_out_followers_held_then_the_group_s_data");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let load = packet_handle.send_adv_task(decoding("LoadImg")).unwrap();
@@ -723,7 +725,7 @@ mod the_engine_s_group {
 
     #[test]
     fn followers_that_arrive_after_the_share_are_queued_at_once() {
-        let dir = fresh_dir("fanout_the_group_s_data_then_the_followers");
+        let dir = fresh_dir("fan_out_the_group_s_data_then_the_followers");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let load = packet_handle.send_adv_task(decoding("LoadImg")).unwrap();
@@ -751,7 +753,7 @@ mod the_engine_s_group {
 
     #[test]
     fn followers_held_while_the_group_waits_run_when_load_img_s_result_arrives() {
-        let dir = fresh_dir("fanout_the_group_waits_for_the_result");
+        let dir = fresh_dir("fan_out_the_group_waits_for_the_result");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -779,11 +781,11 @@ mod the_engine_s_group {
         finish(engine, followers);
     }
 
-    // LoadImg forwards: the result at the end of the links reaches the group (rule 7).
+    // LoadImg forwards: the result at the end of the links reaches the group.
 
     #[test]
     fn a_forward_made_before_the_group_s_data_leaves_the_note_at_the_task_forwarded_to() {
-        let dir = fresh_dir("fanout_a_forward_then_the_group_s_data");
+        let dir = fresh_dir("fan_out_a_forward_then_the_group_s_data");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -815,7 +817,7 @@ mod the_engine_s_group {
 
     #[test]
     fn a_result_already_kept_at_the_end_of_a_forward_runs_the_converter_at_once() {
-        let dir = fresh_dir("fanout_a_kept_result_at_the_end_of_a_forward");
+        let dir = fresh_dir("fan_out_a_kept_result_at_the_end_of_a_forward");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let load = packet_handle
@@ -839,7 +841,7 @@ mod the_engine_s_group {
 
     #[test]
     fn a_forward_made_after_the_group_s_data_leaves_the_note_at_the_task_forwarded_to() {
-        let dir = fresh_dir("fanout_the_group_s_data_then_a_forward");
+        let dir = fresh_dir("fan_out_the_group_s_data_then_a_forward");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -871,7 +873,7 @@ mod the_engine_s_group {
 
     #[test]
     fn two_forwards_made_before_the_group_s_data_leave_one_note_at_the_last_task() {
-        let dir = fresh_dir("fanout_two_forwards_then_the_group_s_data");
+        let dir = fresh_dir("fan_out_two_forwards_then_the_group_s_data");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -904,7 +906,7 @@ mod the_engine_s_group {
 
     #[test]
     fn a_forward_that_reaches_the_note_moves_it_on() {
-        let dir = fresh_dir("fanout_the_note_moves_on");
+        let dir = fresh_dir("fan_out_the_note_moves_on");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -938,7 +940,7 @@ mod the_engine_s_group {
         finish(engine, followers);
     }
 
-    // One value, shared and freed once (rules 3 and 4).
+    // One value, shared and freed once.
 
     /// Pixels that tell `freed` when they're dropped.
     struct Pixels {
@@ -954,7 +956,7 @@ mod the_engine_s_group {
 
     #[test]
     fn the_followers_share_one_value_and_the_last_one_done_with_it_frees_it() {
-        let dir = fresh_dir("fanout_one_value_shared");
+        let dir = fresh_dir("fan_out_one_value_shared");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (address_tx, address_rx) = unbounded();
         let (freed_tx, freed_rx) = unbounded();
@@ -1027,11 +1029,11 @@ mod the_engine_s_group {
         assert!(freed_rx.try_recv().is_err(), "the pixels were freed twice");
     }
 
-    // A cancelled follower (rule 7, with T6's R1).
+    // A cancelled follower: it's skipped instead of queued, and the others still run.
 
     #[test]
     fn a_held_follower_cancelled_before_the_result_is_skipped_and_the_others_still_run() {
-        let dir = fresh_dir("fanout_a_held_follower_cancelled");
+        let dir = fresh_dir("fan_out_a_held_follower_cancelled");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -1057,11 +1059,11 @@ mod the_engine_s_group {
         assert!(!error_log_mentions_a_cancel(&dir));
     }
 
-    // LoadImg's error, shared: written once, and only if no follower took it (rule 15).
+    // LoadImg's error, shared: written once, and only if no follower took it.
 
     #[test]
     fn load_img_s_error_reaches_every_held_follower_and_nothing_is_written() {
-        let dir = fresh_dir("fanout_an_error_reaches_every_follower");
+        let dir = fresh_dir("fan_out_an_error_reaches_every_follower");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -1087,7 +1089,7 @@ mod the_engine_s_group {
 
     #[test]
     fn load_img_s_kept_error_reaches_followers_that_arrive_later_and_nothing_is_written() {
-        let dir = fresh_dir("fanout_a_kept_error_reaches_later_followers");
+        let dir = fresh_dir("fan_out_a_kept_error_reaches_later_followers");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (go_tx, go_rx) = bounded(1);
@@ -1123,7 +1125,7 @@ mod the_engine_s_group {
 
     #[test]
     fn held_followers_all_cancelled_have_load_img_s_error_written_once() {
-        let dir = fresh_dir("fanout_held_followers_all_cancelled");
+        let dir = fresh_dir("fan_out_held_followers_all_cancelled");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (started_tx, started_rx) = bounded(1);
@@ -1143,7 +1145,7 @@ mod the_engine_s_group {
             follower.cancel();
         }
         until(&mut engine, Engine::check_status, "the cancels");
-        // The three, and LoadImg, which nobody needs any more (rule 12). It's already running,
+        // The three, and LoadImg, which nobody needs any more. It's already running,
         // so it still fails, and its report takes its id out of the set.
         assert_eq!(engine.cancelled_tasks.len(), 4);
 
@@ -1163,7 +1165,7 @@ mod the_engine_s_group {
 
     #[test]
     fn followers_all_cancelled_in_the_queue_have_load_img_s_error_written_once() {
-        let dir = fresh_dir("fanout_followers_all_cancelled_in_the_queue");
+        let dir = fresh_dir("fan_out_followers_all_cancelled_in_the_queue");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (row_1, followers) =
@@ -1188,7 +1190,7 @@ mod the_engine_s_group {
 
     #[test]
     fn a_follower_cancelled_in_the_queue_while_the_others_take_the_error_writes_nothing() {
-        let dir = fresh_dir("fanout_one_cancelled_and_two_take_the_error");
+        let dir = fresh_dir("fan_out_one_cancelled_and_two_take_the_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (row_1, mut followers) =
@@ -1208,7 +1210,7 @@ mod the_engine_s_group {
 
     #[test]
     fn once_a_follower_took_the_error_the_cancelled_ones_write_nothing() {
-        let dir = fresh_dir("fanout_one_takes_the_error_and_two_are_cancelled");
+        let dir = fresh_dir("fan_out_one_takes_the_error_and_two_are_cancelled");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (row_1, mut followers) =
@@ -1230,11 +1232,11 @@ mod the_engine_s_group {
         assert_eq!(times_logged(&dir, MISSING), 0);
     }
 
-    // A follower's handle, and a group dropped unsent (rules 8 and 11).
+    // A follower's handle, and a group dropped unsent.
 
     #[test]
     fn a_follower_s_handle_is_an_ordinary_handle_and_its_follow_up_gets_its_result() {
-        let dir = fresh_dir("fanout_a_follower_s_follow_up");
+        let dir = fresh_dir("fan_out_a_follower_s_follow_up");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let (upload_tx, upload_rx) = unbounded();
@@ -1278,7 +1280,7 @@ mod the_engine_s_group {
 
     #[test]
     fn a_group_dropped_without_send_fanout_still_runs_its_followers() {
-        let dir = fresh_dir("fanout_a_group_dropped_unsent");
+        let dir = fresh_dir("fan_out_a_group_dropped_unsent");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
         let load = packet_handle.send_adv_task(decoding("LoadImg")).unwrap();
@@ -1296,8 +1298,7 @@ mod the_engine_s_group {
         finish(engine, followers);
     }
 
-    // Cancels: a cancelled task stops the work that only it needed (rules 10 and 12–14, and T6's
-    // deferral).
+    // Cancels: a cancelled task stops the work that only it needed, and so on up.
 
     mod cancels {
         use std::path::Path;
@@ -1345,11 +1346,11 @@ mod the_engine_s_group {
             assert!(!error_log_mentions_a_cancel(dir));
         }
 
-        // Plain follow-ups (T6's deferral).
+        // Plain follow-ups: a cancelled follow-up also stops the task it waits for.
 
         #[test]
         fn cancelling_the_end_of_a_chain_stops_every_task_above_it_that_has_not_started() {
-            let dir = fresh_dir("fanout_cancels_the_end_of_a_chain");
+            let dir = fresh_dir("fan_out_cancels_the_end_of_a_chain");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
 
@@ -1379,7 +1380,7 @@ mod the_engine_s_group {
 
         #[test]
         fn a_follow_up_cancelled_before_the_engine_takes_it_in_still_stops_its_producer() {
-            let dir = fresh_dir("fanout_cancels_before_the_follow_up_arrives");
+            let dir = fresh_dir("fan_out_cancels_before_the_follow_up_arrives");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let go_tx = holding_the_worker(&mut engine, &packet_handle);
@@ -1408,7 +1409,7 @@ mod the_engine_s_group {
 
         #[test]
         fn after_a_forward_a_cancelled_follow_up_stops_the_task_forwarded_to() {
-            let dir = fresh_dir("fanout_cancels_after_a_forward");
+            let dir = fresh_dir("fan_out_cancels_after_a_forward");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (go_tx, go_rx) = bounded(1);
@@ -1449,11 +1450,11 @@ mod the_engine_s_group {
             ends_with_nothing_run(engine, &dir, &ran_rx);
         }
 
-        // A group's followers (rules 12–14).
+        // A group's followers: the task the group follows stops once every follower is cancelled.
 
         #[test]
         fn cancelling_every_held_follower_stops_load_img_while_it_waits_in_the_queue() {
-            let dir = fresh_dir("fanout_cancels_every_held_follower");
+            let dir = fresh_dir("fan_out_cancels_every_held_follower");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
 
@@ -1467,7 +1468,7 @@ mod the_engine_s_group {
             the_followers_arrive(&mut engine);
 
             // Each cancel takes one follower off the live list. The third empties it, so LoadImg,
-            // which nobody needs any more, goes into the set too (rule 12).
+            // which nobody needs any more, goes into the set too.
             for follower in followers {
                 follower.cancel();
             }
@@ -1482,7 +1483,7 @@ mod the_engine_s_group {
 
         #[test]
         fn cancelling_every_follower_also_stops_the_task_load_img_waits_for() {
-            let dir = fresh_dir("fanout_cancels_up_past_load_img");
+            let dir = fresh_dir("fan_out_cancels_up_past_load_img");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (above_tx, above_rx) = unbounded();
@@ -1504,7 +1505,7 @@ mod the_engine_s_group {
             the_followers_arrive(&mut engine);
 
             // The third cancel empties the live list, so LoadImg is cancelled, and the check goes
-            // on up: Hash, which only LoadImg needed, is cancelled too (rule 12).
+            // on up: Hash, which only LoadImg needed, is cancelled too.
             for follower in followers {
                 follower.cancel();
             }
@@ -1520,7 +1521,7 @@ mod the_engine_s_group {
 
         #[test]
         fn followers_cancelled_before_the_group_s_data_leave_load_img_with_nobody() {
-            let dir = fresh_dir("fanout_cancels_before_the_group_s_data");
+            let dir = fresh_dir("fan_out_cancels_before_the_group_s_data");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let go_tx = holding_the_worker(&mut engine, &packet_handle);
@@ -1528,7 +1529,7 @@ mod the_engine_s_group {
             until(&mut engine, Engine::check_tasks, "LoadImg");
 
             // The three are cancelled before the group is sent, so their cancels come before the
-            // group's data. Its live list starts empty (rule 14), and LoadImg is cancelled at once.
+            // group's data. Its live list starts empty, and LoadImg is cancelled at once.
             let mut group = load.fan_out();
             for follower in declare_three_followers(&mut group, &ran_tx) {
                 follower.cancel();
@@ -1552,7 +1553,7 @@ mod the_engine_s_group {
 
         #[test]
         fn followers_cancelled_after_the_group_s_data_but_before_they_arrive_still_stop_load_img() {
-            let dir = fresh_dir("fanout_cancels_before_the_followers_arrive");
+            let dir = fresh_dir("fan_out_cancels_before_the_followers_arrive");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let go_tx = holding_the_worker(&mut engine, &packet_handle);
@@ -1583,7 +1584,7 @@ mod the_engine_s_group {
 
         #[test]
         fn a_follower_that_arrives_after_its_group_was_cancelled_is_skipped_at_once() {
-            let dir = fresh_dir("fanout_cancels_a_follower_after_its_group");
+            let dir = fresh_dir("fan_out_cancels_a_follower_after_its_group");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let go_tx = holding_the_worker(&mut engine, &packet_handle);
@@ -1624,7 +1625,7 @@ mod the_engine_s_group {
 
         #[test]
         fn a_forward_made_after_every_follower_was_cancelled_stops_the_task_forwarded_to() {
-            let dir = fresh_dir("fanout_cancels_then_a_forward");
+            let dir = fresh_dir("fan_out_cancels_then_a_forward");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (started_tx, started_rx) = bounded(1);
@@ -1671,7 +1672,7 @@ mod the_engine_s_group {
         #[test]
         fn cancelling_a_held_follower_s_follow_up_withdraws_the_follower_and_the_others_still_run()
         {
-            let dir = fresh_dir("fanout_cancels_a_follower_s_follow_up");
+            let dir = fresh_dir("fan_out_cancels_a_follower_s_follow_up");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (upload_ran_tx, upload_ran_rx) = unbounded();
@@ -1717,7 +1718,7 @@ mod the_engine_s_group {
 
         #[test]
         fn a_cancelled_join_over_two_followers_withdraws_both_and_load_img_runs_for_the_third() {
-            let dir = fresh_dir("fanout_cancels_a_join_over_two_followers");
+            let dir = fresh_dir("fan_out_cancels_a_join_over_two_followers");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (save_ran_tx, save_ran_rx) = unbounded();
@@ -1741,8 +1742,8 @@ mod the_engine_s_group {
             the_followers_arrive(&mut engine);
             until(&mut engine, Engine::check_status, "the group's data");
 
-            // Save's cancel cancels the two followers it waits for (T6's R2), and each comes off
-            // the live list. Metadata still needs LoadImg.
+            // Save is a join: its cancel cancels the two followers it waits for, and each comes
+            // off the live list. Metadata still needs LoadImg.
             save.cancel();
             until(&mut engine, Engine::check_status, "the cancel");
             assert_eq!(engine.cancelled_tasks.len(), 2);
@@ -1763,7 +1764,7 @@ mod the_engine_s_group {
 
         #[test]
         fn load_img_s_error_found_with_no_follower_live_is_still_written_once() {
-            let dir = fresh_dir("fanout_cancels_then_the_group_s_data_finds_an_error");
+            let dir = fresh_dir("fan_out_cancels_then_the_group_s_data_finds_an_error");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             let (ran_tx, ran_rx) = unbounded();
             let (go_tx, go_rx) = bounded(1);
@@ -1776,7 +1777,7 @@ mod the_engine_s_group {
 
             // The three are cancelled before the group is sent. The group's data finds LoadImg's
             // error kept and no follower live: LoadImg has already reported, so there's nothing to
-            // stop, and the converter runs as usual, with the error's record (rule 14).
+            // stop, and the converter runs as usual, with the error's record.
             let mut group = load.fan_out();
             for follower in declare_three_followers(&mut group, &ran_tx) {
                 follower.cancel();
@@ -1799,16 +1800,16 @@ mod the_engine_s_group {
     }
 
     // The shutdown: a held follower is a task that never ran, and an error's record is one lost
-    // result, however many followers carry it (rule 16).
+    // result, however many followers carry it.
 
     mod the_shutdown {
-        use crate::gate_t2::{read_log, summary_line};
+        use crate::shutdown_and_startup::{read_log, summary_line};
 
         use super::*;
 
         #[test]
         fn followers_still_held_at_the_shutdown_are_tasks_that_never_ran_unless_cancelled() {
-            let dir = fresh_dir("fanout_shutdown_held_followers");
+            let dir = fresh_dir("fan_out_shutdown_held_followers");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             engine.config.debugging.is_debugging = true;
             let (ran_tx, ran_rx) = unbounded();
@@ -1841,7 +1842,7 @@ mod the_engine_s_group {
 
         #[test]
         fn an_error_s_record_is_one_lost_result_however_many_followers_carry_it() {
-            let dir = fresh_dir("fanout_shutdown_one_record_three_pointers");
+            let dir = fresh_dir("fan_out_shutdown_one_record_three_pointers");
             // Row 1 holds the only worker through the shutdown, which gives up on it after a
             // second.
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
@@ -1867,7 +1868,7 @@ mod the_engine_s_group {
 
         #[test]
         fn an_error_s_record_whose_followers_never_arrived_is_one_lost_result() {
-            let dir = fresh_dir("fanout_shutdown_a_record_with_no_follower");
+            let dir = fresh_dir("fan_out_shutdown_a_record_with_no_follower");
             let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
             engine.config.debugging.is_debugging = true;
             let (ran_tx, ran_rx) = unbounded();

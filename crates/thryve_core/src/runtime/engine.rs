@@ -9,25 +9,34 @@
 
 //! Core engine for the Thryve runtime.
 //!
-//! This module provides the [`Engine`] struct, which is the central
-//! component of the Thryve runtime. The engine manages the execution
-//! flow of tasks and notifications, coordinating between the plugin
-//! manager and observer manager.
+//! This module provides the [`Engine`] struct, the central component of the Thryve runtime. It
+//! runs on a thread of its own, drives the plugin manager (the plugins and their worker pool) and
+//! the observer manager (the observers and the routing of notifications to them), and is the only
+//! reader of four mailboxes.
 //!
-//! # Architecture
+//! # The mailboxes
 //!
-//! The engine maintains a main loop that:
-//! 1. Checks for new tasks from the service
-//! 2. Processes notifications from observers
-//! 3. Handles results from task executions
-//! 4. Coordinates shutdown and pause/resume operations
+//! - Status: Thryve's own messages, sent through a `PacketHandle`: status lines for the logger,
+//!   the releases of dropped task handles, cancels, and the data of fan-out groups.
+//! - Tasks: what plugins (and the host) send to run, queued for the plugin workers.
+//! - Notifications: what plugins send for the observers, such as log lines.
+//! - Results: what a worker reports for each task it ran, or skipped because it was cancelled.
 //!
-//! # Communication
+//! # The main loop
 //!
-//! The engine communicates with other components via crossbeam channels:
-//! - Task receiver: Receives tasks from the service
-//! - Notification receiver: Receives notifications from observers
-//! - Result receiver: Receives results from plugin executions
+//! Each call to [`Engine::run_once`] is one turn. It reads the four mailboxes in the order above,
+//! taking a bounded number from each, and if they were all empty, it sleeps until one of them gets
+//! something. Pausing stops the workers from starting tasks; [`Engine::finalize`] shuts
+//! everything down and sums up the work the shutdown lost.
+//!
+//! # Typed tasks
+//!
+//! Most of the engine's own logic is about typed tasks (`AdvTask`), whose parts reach it
+//! separately and in any order: a follow-up declared with `then` and the result it waits for, a
+//! join and the results of its tasks, a fan-out group and the result its followers share, a
+//! forward and the task it leads to, and a dropped handle or a cancel and the task it's about.
+//! Whichever part arrives first waits in one of the engine's two tables (see
+//! [`engine_wait_table`](crate::runtime::engine_wait_table)) until the other side arrives.
 
 use crate::runtime::engine_task_states::TrackedState;
 use crate::runtime::engine_task_states::WaitingState;
@@ -72,18 +81,27 @@ use std::{sync::Arc, thread, time::Duration};
 /// - `metrics`: Size metrics, kept in debug mode with `calculate_metrics` on
 /// - `obs_manager`: Manages observers and notifications
 /// - `plugin_manager`: Manages plugins and tasks
-/// - `task_rx`: Receiver for incoming tasks
-/// - `notif_rx`: Receiver for incoming notifications
-/// - `res_rx`: Receiver for task execution results
+/// - `task_rx`, `notif_rx`, `res_rx`, `status_rx`: The four mailboxes (tasks, notifications,
+///   results, and Thryve's own status messages)
+/// - `waiting_tasks`: The wait table, where typed tasks' follow-ups, results, joins' followers
+///   and fan-out groups meet, under the id of the task waited on
+/// - `tracked_tasks`: What the engine keeps about a task under the task's own id: joins still
+///   waiting, held fan-out followers, where each follow-up waits, and error texts kept for the
+///   tasks queued with them, with their pointers
+/// - `count_of_ptrs_to_errors`: How many of those pointers there are, so a report can skip the
+///   lookup when there are none
+/// - `cancelled_tasks`: The ids of the tasks cancelled before they started, shared with the
+///   workers
 /// - `exit_flag`: Set once the engine is being finalized; the loops stop then
 /// - `pause_flag`: Indicates whether the engine is paused
 ///
 /// # Example
 ///
 /// ```ignore
-/// // Engine is typically created and managed by the service
-/// let engine = Engine::new(&ctx);
-/// engine.run_once(); // Single iteration
+/// // The engine is normally created and run by `thryve_run`, on a thread of its own.
+/// let mut engine = Engine::new(&ctx);
+/// engine.resume(true);
+/// engine.run_once(); // One turn
 /// ```
 pub struct Engine {
     /// The configuration the engine was created with. The engine reads it as it runs: the idle
@@ -103,8 +121,8 @@ pub struct Engine {
     notif_rx: Arc<Receiver<Notif>>,
     /// Receiver for task execution results.
     res_rx: Receiver<(u64, TaskResult)>,
-    /// Receiver for Thryve's own messages: status lines, and the releases of dropped task
-    /// handles. Unbounded, so their senders never wait.
+    /// Receiver for Thryve's own messages: status lines, the releases of dropped task handles,
+    /// cancels, and fan-out groups' data. Unbounded, so their senders never wait.
     status_rx: Arc<Receiver<StatusMsg>>,
     /// Where a typed task's follow-up and its result meet, under the task's id. An entry is a
     /// follow-up waiting for the result, a result kept for a handle that may still call `then`,
@@ -237,11 +255,12 @@ impl Engine {
 
     /// Runs one turn of the engine's main loop.
     ///
-    /// A turn reads the four mailboxes in order: status lines, tasks, notifications and results.
-    /// It takes at most a set number from each (500 status lines, and the `pipes.*_per_turn`
-    /// settings for the others), so a busy mailbox can't keep the others waiting. Status lines
-    /// and notifications go to the observers, tasks are queued for the workers, and results are
-    /// handled.
+    /// A turn reads the four mailboxes in order: status messages, tasks, notifications and
+    /// results. It takes at most a set number from each (500 status messages, and the
+    /// `pipes.*_per_turn` settings for the others), so a busy mailbox can't keep the others
+    /// waiting. Status lines and notifications go to the observers, the other status messages
+    /// (releases, cancels, fan-out groups' data) are handled, tasks are queued for the workers,
+    /// and results are handled.
     ///
     /// If the turn found nothing, it waits until any mailbox gets something, or until
     /// [`idle_wait`](thryve_utils::cfg::config::EngineConfig::idle_wait) runs out. So an idle
@@ -258,21 +277,25 @@ impl Engine {
     /// }
     /// ```
     pub fn run_once(&mut self) {
+        // Paused: the 500 ms wait comes first, so a loop of paused turns doesn't spin.
         if self.pause_flag {
             self.receive_timeout();
         }
 
+        // Paused or finalized: only status lines and notifications are read.
         if self.exit_flag || self.pause_flag {
             self.check_status();
             self.check_notifs();
             return;
         }
 
+        // A full turn, in this order: status messages, tasks, notifications, results.
         let received_status = self.check_status();
         let received_tasks = self.check_tasks();
         let received_notifs = self.check_notifs();
         let received_results = self.check_results();
 
+        // Nothing came in: sleep until a mailbox gets something, or `idle_wait` runs out.
         if !received_status && !received_tasks && !received_notifs && !received_results {
             self.receive_timeout();
         }
@@ -324,6 +347,8 @@ impl Engine {
                     StatusMsg::HandleRelease(wait_id) => {
                         self.release(wait_id);
                     }
+                    // A cancel releases the handle first. Only a task that hasn't reported yet
+                    // (the release was remembered) has anything left to cancel.
                     StatusMsg::Cancel(task_id) => {
                         if let Some(last_id) = self.release(task_id) {
                             self.cancel_task(last_id);
@@ -334,8 +359,12 @@ impl Engine {
                         pre_fanout_task_id,
                         fanout_tasks_ids,
                     } => {
+                        // What the slot held before the group: nothing, a kept result, or a link.
+                        // It comes out so that the group can take the slot.
                         let waiting_state = self.waiting_tasks.remove(pre_fanout_task_id);
 
+                        // The live followers: those not cancelled before the group's data
+                        // arrived. With an empty set, that's all of them.
                         let mut live_fanout_tasks_ids: HashSet<u64> =
                             HashSet::with_capacity(fanout_tasks_ids.len());
 
@@ -353,6 +382,8 @@ impl Engine {
                             }
                         }
 
+                        // The group, in the slot of the task its followers share. It waits for
+                        // that task until a forward says otherwise.
                         self.waiting_tasks.store(
                             pre_fanout_task_id,
                             WaitingState::FanoutGroup {
@@ -368,12 +399,17 @@ impl Engine {
                         if waiting_state.is_handoff()
                             && let WaitingState::HandoffKept(sealed_handoff) = waiting_state
                         {
+                            // The task has already finished: its kept result is shared now.
                             self.run_group_converter(pre_fanout_task_id, sealed_handoff);
                         } else if waiting_state.is_link()
                             && let WaitingState::Link { next_id } = waiting_state
                         {
+                            // The task forwarded: the group waits for the task at the end of the
+                            // forwards instead.
                             self.follow_forward_fanout_group(pre_fanout_task_id, next_id);
                         } else {
+                            // The task hasn't reported yet. If every follower was already
+                            // cancelled, nobody needs it, so it's cancelled now.
                             if let Some(task_id) = self
                                 .waiting_tasks
                                 .pre_fanout_task_to_cancel(pre_fanout_task_id)
@@ -444,6 +480,7 @@ impl Engine {
     ///
     /// * `task` - The task to start
     pub fn accept_task(&mut self, task: Task) {
+        // Debug mode: the task's size for the metrics, and its node in the topology graph.
         if self.config.debugging.is_debugging {
             if self.config.debugging.calculate_metrics {
                 self.manage_metrics_tasks(&task);
@@ -454,15 +491,21 @@ impl Engine {
             }
         }
 
+        // A task that waits for the result of the task `id`.
         if let Some(id) = task.waiting_on_id() {
             if task.is_job_task_wait() {
+                // A follow-up declared with `then`: it meets the result in the wait table.
                 self.attach(task, id);
                 return;
             } else if task.is_job_task_fanout() {
+                // A fan-out group's follower.
                 if let Some(waiting_state) = self.waiting_tasks.get(id)
                     && waiting_state.is_fanout_group()
                     && let Some(group_share) = self.waiting_tasks.get_group_share(id)
                 {
+                    // The group's share is there: the follower is queued with it at once, and
+                    // the group counts it. If the share is an error, the follower also gets a
+                    // pointer to the error's record.
                     let task = task.with_group_share(group_share, self.config.tasks.max_priority);
                     let task_id = task.id;
 
@@ -480,9 +523,13 @@ impl Engine {
                     && !self.cancelled_tasks.is_empty()
                     && self.cancelled_tasks.contains(&task.id)
                 {
+                    // The group will never give a share (the task it follows was cancelled),
+                    // and this follower was cancelled too: it's skipped at once.
                     self.skip_fanned_out_task(id, task.id);
                     return;
                 } else {
+                    // No share yet: the follower is held under its own id until the converter
+                    // runs. If its cancel was read before it, it's withdrawn from the group now.
                     let task_id = task.id;
                     self.tracked_tasks
                         .store(task_id, TrackedState::HeldFannedOut(task));
@@ -495,9 +542,12 @@ impl Engine {
                 }
             }
         } else if task.waiting_on_join().is_some() {
+            // A join: it waits for the results of its tasks.
             self.add_join_to_waiting(task);
             return;
         }
+
+        // Any other task is queued as it is.
         self.plugin_manager.threadpool.submit_task(task);
     }
 
@@ -648,12 +698,13 @@ impl Engine {
     ///    worker that's running a task finishes it;
     /// 3. waits for every worker to finish while it keeps emptying its mailboxes, because a
     ///    worker can be blocked on a full one. Notifications are forwarded to the observers,
-    ///    which still run; tasks, results and status lines are collected, and releases and
-    ///    cancels are dropped. Then it joins the workers. A worker still running at the deadline
-    ///    is left behind, and `Error.log` names it and its task. Then the wait table is emptied,
-    ///    since results are only collected now: a follow-up still waiting never gets its input
-    ///    and never runs, nor does a join still waiting for some of its tasks, and a result kept
-    ///    for a handle that still exists is counted with the late results;
+    ///    which still run; tasks, results and status lines are collected, and releases, cancels
+    ///    and fan-out groups' data are dropped. Then it joins the workers. A worker still running
+    ///    at the deadline is left behind, and `Error.log` names it and its task. Then the wait
+    ///    table is emptied, since results are only collected now: a follow-up still waiting never
+    ///    gets its input and never runs, nor does a join still waiting for some of its tasks or a
+    ///    fan-out follower still held, and a result kept for a handle that still exists is
+    ///    counted with the late results;
     /// 4. cleans up the plugins on a thread of its own, emptying the mailboxes the same way while
     ///    it runs, until the same deadline. A failed cleanup goes to `Error.log`. The cleanups are
     ///    skipped, and `Error.log` says so, if a worker was left behind (its plugin may still be
@@ -1013,20 +1064,26 @@ impl Engine {
         let (id, mut result) = task_result;
         let mut is_cancelled = false;
 
+        // Any report takes the task's id out of the cancelled set, if it's there.
         let _ = !self.cancelled_tasks.is_empty() && self.cancelled_tasks.remove(&id).is_some();
 
+        // A typed task's handoff: its result, a forward, or a cancel.
         if let Some(sealed_handoff) = result.take_handoff() {
             if sealed_handoff.is_cancelled() {
                 is_cancelled = true;
             }
 
+            // If the task was queued with an error as its input, that error is settled first.
             if !(self.count_of_ptrs_to_errors == 0) {
                 self.take_error(id, is_cancelled);
             }
 
+            // What waits in the task's slot decides where the handoff goes.
             let wait_state = self.waiting_tasks.get_as_ref(id);
 
             if wait_state.is_none() {
+                // Nothing yet: a result is kept for a `then` that may still come, and a forward
+                // leaves a link for it. A cancel has nobody to tell.
                 if sealed_handoff.is_finish() {
                     self.waiting_tasks.insert_handoff(id, sealed_handoff);
                 } else {
@@ -1040,6 +1097,8 @@ impl Engine {
                     drop(self.waiting_tasks.remove(id));
                     self.drop_unclaimed_handoff(sealed_handoff);
                 } else {
+                    // A forward passes the release on to the task forwarded to; a cancel just
+                    // ends it.
                     self.waiting_tasks.remove(id);
 
                     if let Some(current_id) = sealed_handoff.read_forward_id() {
@@ -1047,6 +1106,9 @@ impl Engine {
                     }
                 }
             } else if wait_state.is_join_part_placeholder() {
+                // A join's follower: a forward moves it on to the task forwarded to. A result
+                // fills the join's slot if the join still waits, and is let go if it has
+                // already run or was cancelled.
                 if let WaitingState::JoinPartPlaceHolder { join_id, position } =
                     self.waiting_tasks.remove(id)
                 {
@@ -1062,17 +1124,22 @@ impl Engine {
                 if let Some(next_id) = sealed_handoff.read_forward_id()
                     && let Some(task) = self.take_follow_up(id)
                 {
+                    // A forward: the follow-up moves on to the task forwarded to.
                     self.attach(task, next_id);
                 } else if let Some(task) = self.take_follow_up(id) {
                     if !self.cancelled_tasks.is_empty()
                         && self.cancelled_tasks.remove(&task.id).is_some()
                     {
+                        // The follow-up was cancelled while it waited: it's reported as
+                        // cancelled, and the handoff is let go.
                         self.handle_result((
                             task.id,
                             TaskResult::new_handoff(SealedHandoff::Cancelled),
                         ));
                         self.drop_unclaimed_handoff(sealed_handoff);
                     } else {
+                        // The follow-up gets the result as its input and is queued. An error's
+                        // text is kept until the follow-up reports.
                         if let Some(sealed_error_text) = sealed_handoff.error_text() {
                             self.store_error(id, task.id, sealed_error_text);
                         }
@@ -1082,18 +1149,23 @@ impl Engine {
                     }
                 }
             } else if wait_state.is_fanout_group() {
+                // A fan-out group waits in the task's own slot.
                 self.result_reached_fanout_group(id, sealed_handoff);
             } else if wait_state.is_backwards_link()
                 && let Some(pre_fanout_task_id) = self.waiting_tasks.take_backwards_link_id(id)
             {
+                // The note at the end of a task's forwards: the handoff goes back to the group,
+                // in the slot of the task the group follows.
                 self.result_reached_fanout_group(pre_fanout_task_id, sealed_handoff);
             }
         }
 
+        // The task chained to the result, if there is one, is taken in like any new task.
         if let Some(next_task) = result.next_task.take() {
             self.accept_task(next_task);
         }
 
+        // With task logging on, a line for every report but a cancel.
         if self.config.debugging.is_debugging && self.config.debugging.log_tasks && !is_cancelled {
             let notif = Log::log(format!("Finished Task ID: {}.", task_result.0), "Main");
 
@@ -1104,6 +1176,8 @@ impl Engine {
             self.obs_manager.forward_notif(notif);
         }
 
+        // The result's message goes to the log file it names. A message or a file without a
+        // result type is a mistake in the plugin, written to `Error.log` instead.
         let result_message = std::mem::take(&mut result.message);
         let result_type = result.result_type();
         let log_file = result.log_msg_to_file();
@@ -1133,6 +1207,7 @@ impl Engine {
             self.obs_manager.forward_notif(notif);
         }
 
+        // `Fin` and `FinErr` shut the engine down.
         if (result_type == "Fin" || result_type == "FinErr") && !self.exit_flag {
             // Not the service's Stop, so the summary of lost work, if any, goes to `Error.log`.
             self.finalize(false);
@@ -1269,10 +1344,10 @@ impl Engine {
     /// (`logger` is set), a log line goes straight into the logger's queue, and any other
     /// notification goes into `notifs`: its observer is stopped or stopping, and the engine no
     /// longer holds it. Status lines are collected for the logger, which writes them at the end.
-    /// Releases and cancels are dropped. The wait table a release is for is emptied once the
-    /// workers have stopped, and no task starts any more, so a cancel has nothing left to stop.
-    /// Its task, if it never ran, still counts as lost work in the summary: only a task cancelled
-    /// before the shutdown doesn't.
+    /// Releases, cancels and fan-out groups' data are dropped. The wait table they're for is
+    /// emptied once the workers have stopped, and no task starts any more, so a cancel has nothing
+    /// left to stop. Its task, if it never ran, still counts as lost work in the summary: only a
+    /// task cancelled before the shutdown doesn't.
     ///
     /// What arrives while it reads waits for the next call. Reading until the mailboxes are
     /// empty could go on forever while threads keep sending, and the callers check their
@@ -1298,6 +1373,7 @@ impl Engine {
 
         let mut received = false;
 
+        // Tasks and results are only collected: the shutdown neither runs nor handles them.
         for task in self.task_rx.try_iter().take(task_count) {
             tasks.push(task);
             received = true;
@@ -1324,6 +1400,8 @@ impl Engine {
             received = true;
         }
 
+        // Status lines are kept for the logger; releases, cancels and fan-out groups' data are
+        // dropped.
         for status in self.status_rx.try_iter().take(status_count) {
             if let StatusMsg::LogLine(notif) = status {
                 status_reps.push(notif);
@@ -1540,9 +1618,12 @@ impl Engine {
     /// * `task` - The follow-up
     /// * `list_starts_from_id` - The id of the task it follows
     fn attach(&mut self, task: Task, list_starts_from_id: u64) {
+        // The task whose result the follow-up gets: the end of the forwards.
         let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
 
         if let WaitingState::None = wait_state {
+            // Nothing there yet: the follow-up waits in that task's slot, with a record of where
+            // it waits. If its cancel was read before it, it's withdrawn at once.
             let task_id = task.id;
             self.tracked_tasks.insert_waiting_on(task_id, last_id);
             self.waiting_tasks.insert_follow_up(last_id, task);
@@ -1551,6 +1632,8 @@ impl Engine {
                 self.cancel_task(task_id);
             }
         } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            // The result was kept: the follow-up gets it and is queued, and an error's text is
+            // kept until it reports.
             if self.cancelled_tasks.is_empty() || self.cancelled_tasks.remove(&task.id).is_none() {
                 if let Some(sealed_error_text) = sealed_handoff.error_text() {
                     self.store_error(last_id, task.id, sealed_error_text);
@@ -1559,6 +1642,8 @@ impl Engine {
                 let task = task.with_input(sealed_handoff, self.config.tasks.max_priority);
                 self.plugin_manager.threadpool.submit_task(task);
             } else {
+                // The follow-up was cancelled: it's reported as cancelled, and the result is
+                // let go.
                 self.handle_result((task.id, TaskResult::new_handoff(SealedHandoff::Cancelled)));
                 self.drop_unclaimed_handoff(sealed_handoff);
             }
@@ -1586,9 +1671,12 @@ impl Engine {
     /// * `join_task_id` - The join's id, its key in `tracked_tasks`
     /// * `position` - The follower's slot in the join
     fn attach_follower(&mut self, list_starts_from_id: u64, join_task_id: u64, position: usize) {
+        // The task whose result the join now waits for: the end of the forwards.
         let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
 
         if let WaitingState::None = wait_state {
+            // Nothing there yet: the follower waits there, and the join's slot learns that
+            // task's id, if the join still waits.
             self.waiting_tasks.store(
                 last_id,
                 WaitingState::JoinPartPlaceHolder {
@@ -1601,6 +1689,8 @@ impl Engine {
                 join_task.join_new_input_id(last_id, position)
             }
         } else if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            // The result was kept: it fills the join's slot, or it's let go if the join has
+            // already run.
             if self.tracked_tasks.get_join_as_mut(join_task_id).is_some() {
                 self.fill_join_slot(sealed_handoff, last_id, join_task_id, position);
             } else {
@@ -1642,8 +1732,10 @@ impl Engine {
         let (last_id, wait_state) = self.waiting_tasks.remove_while_is_link(list_starts_from_id);
 
         if let WaitingState::HandoffKept(sealed_handoff) = wait_state {
+            // The result was kept, and nobody will take it now.
             self.drop_unclaimed_handoff(sealed_handoff);
         } else if wait_state.is_none() {
+            // Nothing there yet: the release waits for the result.
             self.waiting_tasks.release(last_id);
             return Some(last_id);
         }
@@ -1684,16 +1776,20 @@ impl Engine {
     ///
     /// * `join_task` - The join, as declared with `join`
     fn add_join_to_waiting(&mut self, mut join_task: Task) {
+        // A join whose cancel was read before it.
         let is_cancelled =
             !self.cancelled_tasks.is_empty() && self.cancelled_tasks.contains(&join_task.id);
 
         if let Some(input_ids) = join_task.join_get_ids() {
             let mut has_save_been_error_triggered = false;
             for (i, current_id) in input_ids.into_iter().enumerate() {
+                // Each task's result arrives at the end of its forwards.
                 let (id, wait_state) = self.waiting_tasks.remove_while_is_link(current_id);
 
                 match wait_state {
                     WaitingState::None => {
+                        // Not finished yet: the join leaves its follower there, and its slot
+                        // takes that task's id.
                         self.waiting_tasks.store(
                             id,
                             WaitingState::JoinPartPlaceHolder {
@@ -1704,10 +1800,15 @@ impl Engine {
 
                         join_task.join_new_input_id(id, i);
                     }
+                    // Already finished: its kept result is taken now.
                     WaitingState::HandoffKept(sealed_handoff) => {
                         if has_save_been_error_triggered || is_cancelled {
+                            // After the first error, or for a cancelled join, nobody will take
+                            // it.
                             self.drop_unclaimed_handoff(sealed_handoff);
                         } else if let Some(sealed_error_text) = sealed_handoff.error_text() {
+                            // The first error: it goes into its slot and triggers the join. Its
+                            // text is kept until the join reports.
                             self.store_error(id, join_task.id, sealed_error_text);
 
                             if let Err(sealed_handoff_err) =
@@ -1720,6 +1821,8 @@ impl Engine {
                         } else if let Err(sealed_handoff_err) =
                             join_task.join_insert(sealed_handoff, i)
                         {
+                            // A value goes into its slot; a slot already full hands it back,
+                            // and it's let go.
                             self.drop_unclaimed_handoff(sealed_handoff_err);
                         }
                     }
@@ -1742,18 +1845,23 @@ impl Engine {
                 }
             }
 
+            // After the walk, with the number of slots still empty.
             if let Some(remaining_inputs) = join_task.waiting_on_join() {
+                // An error runs the join early, so the tasks it still waits for are cancelled.
                 if has_save_been_error_triggered {
                     self.set_empty_inputs_to_cancel(&join_task);
                 }
 
                 if remaining_inputs == 0 || has_save_been_error_triggered {
+                    // Every slot is full, or an error triggered it: queued now.
                     let join_task_ready =
                         join_task.with_join_inputs(self.config.tasks.max_priority);
                     self.plugin_manager.threadpool.submit_task(join_task_ready);
                 } else if is_cancelled {
+                    // Cancelled before it arrived: cancelled with the tasks it waits for.
                     self.cancel_join_task(join_task);
                 } else {
+                    // Held until the rest of its results arrive.
                     self.tracked_tasks.insert_join(join_task);
                 }
             }
@@ -1788,6 +1896,7 @@ impl Engine {
         join_task_id: u64,
         position: usize,
     ) {
+        // Read before the result moves into the slot.
         let sealed_error_text_opt: Option<String> = sealed_handoff.error_text();
         let is_sealed_handoff_an_error = sealed_error_text_opt.is_some();
 
@@ -1796,11 +1905,15 @@ impl Engine {
             let remaining_inputs_opt = join_task.waiting_on_join();
 
             if let Err(sealed_handoff_err) = inserted_result {
+                // The slot was already full: the result is let go.
                 self.drop_unclaimed_handoff(sealed_handoff_err);
             } else if let Some(remaining_inputs) = remaining_inputs_opt
                 && (remaining_inputs == 0 || is_sealed_handoff_an_error)
                 && let Some(join_task) = self.tracked_tasks.take_join(join_task_id)
             {
+                // The last empty slot was filled, or an error triggered the join: it's taken
+                // out and queued. An error first cancels the tasks it still waits for, and its
+                // text is kept until the join reports.
                 if is_sealed_handoff_an_error {
                     self.set_empty_inputs_to_cancel(&join_task);
                 }
@@ -1858,6 +1971,7 @@ impl Engine {
             for id in input_ids.drain(..) {
                 let task = self.waiting_tasks.get_as_ref(id);
 
+                // Only a slot whose follower still waits: that task hasn't reported.
                 if task.is_join_part_placeholder() {
                     self.cancel_task(id);
                 }
@@ -1884,10 +1998,13 @@ impl Engine {
         let mut is_waiting_on = false;
         if let Some(tracked_state) = self.tracked_tasks.get(consumer_id) {
             match tracked_state {
+                // A follow-up: the id is copied here, and the record taken out below, once the
+                // borrow of the table has ended.
                 TrackedState::WaitingOn(producer_id) => {
                     copied_id = Some(*producer_id);
                     is_waiting_on = true;
                 }
+                // A held follower: it comes off its group's live list.
                 TrackedState::HeldFannedOut(task) => {
                     if let Some(pre_fanout_task_id) = task.waiting_on_id() {
                         return self
@@ -1895,6 +2012,7 @@ impl Engine {
                             .fanned_out_task_abort(pre_fanout_task_id, consumer_id);
                     }
                 }
+                // Nothing above these to withdraw from.
                 TrackedState::CarriesErrorOf(_) => (),
                 TrackedState::HandedError { .. } => (),
                 TrackedState::Heldjoin(_) => (),
@@ -1930,21 +2048,25 @@ impl Engine {
 
         loop {
             if let Some(join_task) = self.tracked_tasks.take_join(current_task_id) {
+                // A join still waiting: cancelled with the tasks it waits for, which ends the
+                // walk.
                 self.cancel_join_task(join_task);
                 break;
             } else if let Some(producer_id) = self.get_producer_id(current_task_id) {
+                // Nobody else needs the task this one waits for: it's the next to cancel.
                 self.cancelled_tasks.insert(current_task_id);
                 current_task_id = producer_id;
             } else {
+                // Nothing above it to cancel.
                 self.cancelled_tasks.insert(current_task_id);
                 break;
             }
         }
     }
 
-    /// Hands what the task `pre_fanout_task_id` produced to the fan-out group waiting in its slot, whether
-    /// it arrived there directly or through the note at the end of its forwards. A forward isn't
-    /// the result the followers share: it's followed instead (see
+    /// Hands what the task `pre_fanout_task_id` produced to the fan-out group waiting in its slot,
+    /// whether it arrived there directly or through the note at the end of its forwards. A forward
+    /// isn't the result the followers share: it's followed instead (see
     /// [`follow_forward_fanout_group`](Self::follow_forward_fanout_group)). A cancelled report
     /// isn't one either: the task was cancelled because no follower needed it any more, so the
     /// group is cancelled (see [`cancel_fanout_group`](Self::cancel_fanout_group)). Anything else
@@ -1983,13 +2105,16 @@ impl Engine {
     /// * `pre_fanout_task_id` - The id of the task the group follows, in whose slot it waits
     /// * `forwarded_id` - The id of the task forwarded to
     fn follow_forward_fanout_group(&mut self, pre_fanout_task_id: u64, forwarded_id: u64) {
+        // The group now waits for the task at the end of the forwards.
         let waiting_state = self
             .waiting_tasks
             .fanout_group_remove_while_is_link(pre_fanout_task_id, forwarded_id);
 
         if let WaitingState::HandoffKept(sealed_handoff) = waiting_state {
+            // That task has already finished: its kept result is shared now.
             self.run_group_converter(pre_fanout_task_id, sealed_handoff);
         } else {
+            // It hasn't: if no follower is live, nobody needs it, and it's cancelled.
             if let Some(task_id) = self
                 .waiting_tasks
                 .pre_fanout_task_to_cancel(pre_fanout_task_id)
@@ -1999,8 +2124,8 @@ impl Engine {
         }
     }
 
-    /// Runs the converter of the fan-out group waiting on the task `pre_fanout_task_id` on that task's
-    /// result, the one place it runs, then queues the followers held so far (see
+    /// Runs the converter of the fan-out group waiting on the task `pre_fanout_task_id` on that
+    /// task's result, the one place it runs, then queues the followers held so far (see
     /// [`queue_fanned_out_tasks`](Self::queue_fanned_out_tasks)).
     ///
     /// If the result is an error, its text is kept first, as a record under the task's id with
@@ -2014,18 +2139,21 @@ impl Engine {
     /// * `pre_fanout_task_id` - The id of the task the group follows, in whose slot it waits
     /// * `sealed_handoff` - The task's result, or the result at the end of its forwards
     fn run_group_converter(&mut self, pre_fanout_task_id: u64, sealed_handoff: SealedHandoff) {
+        // Read before the converter takes the result.
         let sealed_error_text_opt = sealed_handoff.error_text();
 
         if let Err(err) = self
             .waiting_tasks
             .put_group_share(pre_fanout_task_id, sealed_handoff)
         {
+            // The converter failed: there's no share, and the followers stay held.
             self.obs_manager
                 .forward_notif(Log::err(get_err_oneline(&err)))
         } else if let Some(sealed_error_text) = sealed_error_text_opt
             && let Some(number_of_fanout_tasks) =
                 self.waiting_tasks.get_fanout_tasks_len(pre_fanout_task_id)
         {
+            // The result is an error: its record counts every follower in the group's data.
             self.store_handed_error(
                 pre_fanout_task_id,
                 sealed_error_text,
@@ -2055,7 +2183,9 @@ impl Engine {
         share: Arc<dyn Any + Send + Sync>,
     ) {
         for task_id in fanout_tasks_ids {
+            // Only the followers held so far. The others are queued as they arrive.
             if let Some(fanned_out_task) = self.tracked_tasks.take_fanout_task(task_id) {
+                // Cancelled while it was held: skipped.
                 if !self.cancelled_tasks.is_empty()
                     && self.cancelled_tasks.remove(&task_id).is_some()
                 {
@@ -2064,6 +2194,8 @@ impl Engine {
                     continue;
                 }
 
+                // Queued with a clone of the share, and counted. If the share is an error, the
+                // follower also gets a pointer to the error's record.
                 let fanned_out_task =
                     fanned_out_task.with_group_share(share.clone(), self.config.tasks.max_priority);
 
@@ -2080,8 +2212,8 @@ impl Engine {
         }
     }
 
-    /// Queues the followers held for the fan-out group waiting on the task `pre_fanout_task_id`, once the
-    /// converter has run (see
+    /// Queues the followers held for the fan-out group waiting on the task `pre_fanout_task_id`,
+    /// once the converter has run (see
     /// [`queue_fanned_out_tasks_inner`](Self::queue_fanned_out_tasks_inner)). With no share,
     /// because the converter failed, nothing happens.
     fn queue_fanned_out_tasks(&mut self, pre_fanout_task_id: u64) {
@@ -2125,9 +2257,11 @@ impl Engine {
     ///
     /// * `pre_fanout_task_id` - The id of the task the group follows, in whose slot it waits
     fn cancel_fanout_group(&mut self, pre_fanout_task_id: u64) {
+        // With neither a converter nor a share, the group will never give a share.
         self.waiting_tasks
             .fanout_group_drop_converter(pre_fanout_task_id);
 
+        // The followers held so far are skipped now; the others, as they arrive.
         if let Some(mut fanout_tasks_ids) =
             self.waiting_tasks.take_fanout_tasks_ids(pre_fanout_task_id)
         {
@@ -2153,6 +2287,7 @@ impl Engine {
     ///
     /// * `task` - The task to process for graph visualization
     pub fn handle_graph_visualization(&mut self, task: &Task) {
+        // The task's node, and an edge from the task that sent it, if a running task did.
         if let Some(callsite) = task.callsite.clone() {
             let topo_node =
                 TopologyNode::new(callsite.clone(), callsite.this_callsite_fingerprint.clone());
@@ -2252,8 +2387,11 @@ impl FinalizeCollection {
         let mut notif_map: HashMap<String, Vec<Notif>> = HashMap::new();
         let mut result_map: HashMap<String, Vec<TaskResult>> = HashMap::new();
 
+        // Counts and groups what was collected: tasks by name, notifications by receiver, and
+        // results by type.
         while !self.tasks.is_empty() || !self.notifs.is_empty() || !self.results.is_empty() {
             if let Some(task) = self.tasks.pop() {
+                // A cancelled task wasn't meant to run, so it isn't lost work.
                 if !eng.cancelled_tasks.is_empty() && eng.cancelled_tasks.contains(&task.id) {
                     continue;
                 }
@@ -2274,10 +2412,13 @@ impl FinalizeCollection {
                 count_notifs += 1;
             }
             if let Some((id, result)) = self.results.pop() {
+                // A late result that isn't a cancel means its task ran and took its error, so
+                // the error's record goes.
                 if !(eng.count_of_ptrs_to_errors == 0) && !result.is_handoff_cancelled() {
                     eng.take_error(id, false);
                 }
 
+                // Lost only if it carried something.
                 if result.next_task.is_some()
                     || !result.message.is_empty()
                     || result.handoff_error_text().is_some()
@@ -2292,6 +2433,7 @@ impl FinalizeCollection {
             }
         }
 
+        // The errors never taken: each record left is one lost result.
         let mut tracked_errors: HashMap<u64, TrackedState> = eng
             .tracked_tasks
             .table
@@ -2303,10 +2445,12 @@ impl FinalizeCollection {
 
         let total = count_tasks + count_notifs + count_results + self.still_running;
 
+        // Nothing was lost: no line at all.
         if total == 0 {
             return;
         }
 
+        // The one line: `Main.log` after the service's Stop, `Error.log` otherwise.
         s += &format!(
             "thryve exited leaving {} things not done: {} lost tasks, {} lost notifications, {} lost task results, {} still running",
             total, count_tasks, count_notifs, count_results, self.still_running
@@ -2318,7 +2462,9 @@ impl FinalizeCollection {
             self.status_reps.push(Log::err(s));
         }
 
+        // With debugging on, the details go to `Debug.log`, kind by kind.
         if eng.config.debugging.is_debugging {
+            // Tasks by name, with each one's call site when task logging is on.
             self.status_reps
                 .push(Log::log(format!(" tasks: {count_tasks} not done"), "Debug"));
             for (task_name, mut tasks) in task_map.drain() {
@@ -2337,6 +2483,7 @@ impl FinalizeCollection {
                 }
             }
 
+            // Notifications by receiver.
             self.status_reps.push(Log::log(
                 format!(" notifs: {count_notifs} not done"),
                 "Debug",
@@ -2353,6 +2500,7 @@ impl FinalizeCollection {
                 }
             }
 
+            // Results by type, then the errors never taken.
             self.status_reps.push(Log::log(
                 format!(" task results: {count_results} not done"),
                 "Debug",

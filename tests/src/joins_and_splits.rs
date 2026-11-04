@@ -7,13 +7,14 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T5, fan-in ("join all").
+//! Joins (fan-in, "join all") and splitting work.
 //!
-//! Step 1, the join: `join`, called on a `Vec` of handles through the `Joinable` trait, declares
-//! one follow-up for several tasks of one type, here Save over a few rows. Save waits with one slot per row, in the order of the handles. Once every slot is
-//! full, or as soon as a row fails, its closure gets a `JoinHandoff`: every value in order, or the
-//! failed row's position and its own error. These tests fill the slots by hand, with results from
-//! rows run the way a worker runs them.
+//! The join: `join`, called on a `Vec` of handles through the `Joinable` trait, declares one
+//! follow-up for several tasks of one type, here Save over a few rows. Save waits with one slot
+//! per row, in the order of the handles. Once every slot is full, or as soon as a row fails, its
+//! closure gets a `JoinHandoff`: every value in order, or the failed row's position and its own
+//! error. These tests fill the slots by hand, with results from rows run the way a worker runs
+//! them.
 //!
 //! - declaring refuses an empty list, and a bad name (releasing the rows); otherwise it uses up
 //!   the rows' handles and returns Save's own handle, which works like any other: followed with
@@ -27,7 +28,7 @@
 //! - a result of the wrong type, a row still missing when none failed, and Save run before it's
 //!   ready are reported as errors instead of panicking.
 //!
-//! Step 2, the engine: when Save arrives, the engine follows each row's links to the end, takes
+//! The engine: when Save arrives, the engine follows each row's links to the end, takes
 //! the results already kept, leaves Save's follower where the others will arrive, and holds Save
 //! until none is missing. Each arriving result fills its slot, and Save is queued once the last
 //! one is in.
@@ -40,7 +41,7 @@
 //! - joins nest and chain through the engine: a join of joins, followed with `then`;
 //! - 200 joins of 10 rows each get their values in order and leave nothing waiting.
 //!
-//! Step 3, failing fast: the first error to reach Save makes it run at once, with its slots as
+//! Failing fast: the first error to reach Save makes it run at once, with its slots as
 //! they are. A result that reaches Save after that is late, so nobody takes it: an error is
 //! written to `Error.log`, and a value is dropped. The rows still running keep their followers,
 //! which go once their results arrive.
@@ -54,7 +55,7 @@
 //! - a Save still waiting at the shutdown is one lost task, and the values in its slots aren't
 //!   lost work.
 //!
-//! Step 4, forwards and priority: a row that forwards after Save arrived never puts the forward in
+//! Forwards and priority: a row that forwards after Save arrived never puts the forward in
 //! its slot; its follower moves on to the task forwarded to, as a follow-up does. Save inherits
 //! the highest of its rows' priorities, capped just below realtime, unless it's given one.
 //!
@@ -68,7 +69,7 @@
 //!   given with `join_with_priority` is kept, even realtime; graph mode records the line that
 //!   called `join_with_priority`.
 //!
-//! Step 7, splitting work: `split_into` on the packet handle cuts a list into balanced pieces, in
+//! Splitting work: `split_into` on the packet handle cuts a list into balanced pieces, in
 //! order, and sends one typed task per piece; `send_split_tasks` sends one per chunk the caller
 //! already cut. Both hand back the pieces' handles, ready to be joined.
 //!
@@ -79,7 +80,7 @@
 //! - graph mode records the plugin's line for every piece;
 //! - split work joins back through the engine, and a failing piece reaches the join at its index.
 //!
-//! The mailbox, worker and engine helpers are `gate_t4`'s and `gate_t2`'s. CI runs these tests on
+//! The mailbox, worker and engine helpers are `typed_tasks`'s and `shutdown_and_startup`'s. CI runs these tests on
 //! one thread (`--test-threads=1`), like the rest of the crate.
 
 use std::fmt;
@@ -97,8 +98,10 @@ use thryve_utils::res::{Handoff, JoinHandoff, SealedHandoff};
 use thryve_utils::traits::join::Joinable;
 use thryve_utils::traits::packets::Packet;
 
-use crate::gate_t2::{finalize_within, fresh_dir, read_log, started_engine, summary_line};
-use crate::gate_t4::{
+use crate::shutdown_and_startup::{
+    finalize_within, fresh_dir, read_log, started_engine, summary_line,
+};
+use crate::typed_tasks::{
     forwarding, handle_and_mailbox, handle_mailbox_and_status, open, run_like_a_worker,
     run_until_received, run_until_the_wait_table_is_empty,
 };
@@ -393,7 +396,7 @@ mod declaring {
         let callsite = save.callsite.expect("graph mode records a call site");
         assert_eq!(callsite.line_number, line);
         assert!(
-            callsite.file_path.ends_with("gate_t5.rs"),
+            callsite.file_path.ends_with("joins_and_splits.rs"),
             "{:?}",
             callsite.file_path
         );
@@ -548,14 +551,14 @@ mod running {
     }
 }
 
-/// Step 2: Save through a running engine. It waits until every row has reported, whether a row
+/// Save through a running engine. It waits until every row has reported, whether a row
 /// finished before Save arrived or after, and whether it forwarded first.
 mod engine {
     use super::*;
 
     #[test]
     fn save_waits_with_a_follower_per_row_and_gets_every_value_in_order() {
-        let dir = fresh_dir("t5_followers");
+        let dir = fresh_dir("joins_and_splits_followers");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The rows wait for `go`, so Save arrives while all three are still running.
@@ -588,7 +591,7 @@ mod engine {
 
     #[test]
     fn rows_that_finished_before_save_arrived_are_taken_at_once() {
-        let dir = fresh_dir("t5_kept");
+        let dir = fresh_dir("joins_and_splits_kept");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The handles are held, so the engine keeps the three results.
@@ -614,7 +617,7 @@ mod engine {
 
     #[test]
     fn a_row_that_forwarded_before_save_arrived_is_followed_to_its_end() {
-        let dir = fresh_dir("t5_forwarded");
+        let dir = fresh_dir("joins_and_splits_forwarded");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The middle row forwards to a task that waits for `go`; the others just finish.
@@ -650,7 +653,7 @@ mod engine {
 
     #[test]
     fn a_failed_row_s_error_reaches_save_and_is_not_logged() {
-        let dir = fresh_dir("t5_error");
+        let dir = fresh_dir("joins_and_splits_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         let rows = vec![
@@ -681,7 +684,7 @@ mod engine {
 
     #[test]
     fn joins_nest_and_chain_through_the_engine() {
-        let dir = fresh_dir("t5_nested");
+        let dir = fresh_dir("joins_and_splits_nested");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         let send = |value| packet_handle.send_adv_task(row(value)).unwrap();
 
@@ -722,7 +725,7 @@ mod engine {
         // Each round fits in the task mailbox: its joins and their rows.
         const ROUND: usize = 50;
 
-        let dir = fresh_dir("t5_no_growth");
+        let dir = fresh_dir("joins_and_splits_no_growth");
         let (mut engine, packet_handle) = started_engine(&dir, 1_000, 2, 10);
         let (got_tx, got_rx) = unbounded();
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -766,7 +769,7 @@ mod engine {
     }
 }
 
-/// Step 3: a join fails fast. The first error to reach Save makes it run at once; a result that
+/// A join fails fast. The first error to reach Save makes it run at once; a result that
 /// reaches it afterwards is late, and nobody takes it. A Save still waiting at the shutdown is a
 /// lost task.
 mod failing {
@@ -774,7 +777,7 @@ mod failing {
 
     #[test]
     fn save_runs_as_soon_as_a_row_fails_and_the_other_rows_values_are_dropped() {
-        let dir = fresh_dir("t5_fail_fast");
+        let dir = fresh_dir("joins_and_splits_fail_fast");
         // One worker for each row, so Save can run on Row 2's while the two others wait.
         let (mut engine, packet_handle) = started_engine(&dir, 10, 3, 10);
 
@@ -813,7 +816,7 @@ mod failing {
 
     #[test]
     fn an_error_that_arrives_after_save_ran_is_written_to_the_error_log() {
-        let dir = fresh_dir("t5_late_error");
+        let dir = fresh_dir("joins_and_splits_late_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 2, 10);
 
         // Row 1 fails only once `go` lets it, after Row 2 has failed: Save gets Row 2's error,
@@ -849,7 +852,7 @@ mod failing {
 
     #[test]
     fn the_first_kept_error_triggers_save_and_the_kept_results_after_it_are_let_go() {
-        let dir = fresh_dir("t5_kept_error");
+        let dir = fresh_dir("joins_and_splits_kept_error");
         // Rows 1 and 5 hold a worker each, which leaves one for the others and Save.
         let (mut engine, packet_handle) = started_engine(&dir, 10, 3, 10);
 
@@ -899,7 +902,7 @@ mod failing {
 
     #[test]
     fn a_save_still_waiting_at_the_shutdown_is_one_lost_task() {
-        let dir = fresh_dir("t5_shutdown");
+        let dir = fresh_dir("joins_and_splits_shutdown");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         engine.config.debugging.is_debugging = true;
 
@@ -934,14 +937,14 @@ mod failing {
     }
 }
 
-/// Step 4, part 1: a row that forwards after Save was declared. The forward never goes into a
+/// A row that forwards after Save was declared. The forward never goes into a
 /// slot: the row's follower moves on to the task forwarded to, whose result Save then gets.
 mod forwarding_after_declaration {
     use super::*;
 
     #[test]
     fn rows_that_forward_after_save_arrived_fill_their_slots_with_the_last_task_s_value() {
-        let dir = fresh_dir("t5_forward_after");
+        let dir = fresh_dir("joins_and_splits_forward_after");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 2, 10);
 
         // Row 1 forwards to Decompress; Row 2 forwards to a Decompress that forwards again.
@@ -983,7 +986,7 @@ mod forwarding_after_declaration {
 
     #[test]
     fn a_forward_whose_task_finished_first_hands_save_the_kept_result() {
-        let dir = fresh_dir("t5_forward_race");
+        let dir = fresh_dir("joins_and_splits_forward_race");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 2, 10);
 
         // Row 1's value is kept before Save arrives. Row 2 sends Decompress at once, but holds
@@ -1019,7 +1022,7 @@ mod forwarding_after_declaration {
 
     #[test]
     fn a_forward_that_arrives_after_save_ran_still_moves_the_follower() {
-        let dir = fresh_dir("t5_forward_late");
+        let dir = fresh_dir("joins_and_splits_forward_late");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 2, 10);
 
         // Row 1 fails at once, which makes Save run. Row 2 sends Decompress, which fails too,
@@ -1055,7 +1058,7 @@ mod forwarding_after_declaration {
     }
 }
 
-/// Step 4, part 2: Save's priority. Declared with `join`, it inherits the highest priority among
+/// Save's priority. Declared with `join`, it inherits the highest priority among
 /// its rows, capped just below realtime when the engine makes it ready, through
 /// `with_join_inputs`. Declared with `join_with_priority`, it keeps the priority it was given.
 mod priority {
@@ -1135,14 +1138,14 @@ mod priority {
         let callsite = save.callsite.expect("graph mode records a call site");
         assert_eq!(callsite.line_number, line);
         assert!(
-            callsite.file_path.ends_with("gate_t5.rs"),
+            callsite.file_path.ends_with("joins_and_splits.rs"),
             "{:?}",
             callsite.file_path
         );
     }
 }
 
-/// Step 7: splitting work. `split_into` cuts a list into balanced pieces, in order, and sends one
+/// Splitting work. `split_into` cuts a list into balanced pieces, in order, and sends one
 /// typed task per piece; `send_split_tasks` sends one per chunk the caller already cut. Both return
 /// the pieces' handles, ready to be joined.
 mod splitting {
@@ -1289,7 +1292,7 @@ mod splitting {
             .map(|piece| {
                 let callsite = piece.callsite.expect("graph mode records a call site");
                 assert!(
-                    callsite.file_path.ends_with("gate_t5.rs"),
+                    callsite.file_path.ends_with("joins_and_splits.rs"),
                     "{:?}",
                     callsite.file_path
                 );
@@ -1301,7 +1304,7 @@ mod splitting {
 
     #[test]
     fn split_work_joins_back_through_the_engine() {
-        let dir = fresh_dir("t5_split_join");
+        let dir = fresh_dir("joins_and_splits_split_join");
         let (mut engine, packet_handle) = started_engine(&dir, 100, 2, 10);
 
         // 1,000 rows in 7 pieces, each adding up its own; Save gets the 7 sums, in order.
@@ -1330,7 +1333,7 @@ mod splitting {
 
     #[test]
     fn a_failing_piece_reaches_the_join_at_its_index() {
-        let dir = fresh_dir("t5_split_fail");
+        let dir = fresh_dir("joins_and_splits_split_fail");
         let (mut engine, packet_handle) = started_engine(&dir, 100, 2, 10);
 
         // 10 rows in 5 pieces of 2: the piece holding row 7 is the fourth, at index 3.

@@ -7,9 +7,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-//! The gate of milestone T4, "typed outcomes and then".
+//! Typed tasks, `then` and forwarding.
 //!
-//! Step 1, typed tasks: an `AdvTask<T, E>`'s closure returns `Result<T, E>`. When it runs, the
+//! Typed tasks: an `AdvTask<T, E>`'s closure returns `Result<T, E>`. When it runs, the
 //! result reaches the engine sealed, as a handoff, under the task's id; the engine carries it
 //! without knowing `T` or `E`. An error's text is written on the worker, where the type is still
 //! known, and the engine writes an error nobody handles to `Error.log`.
@@ -24,7 +24,7 @@
 //! - sending checks the name, records the sender's line in graph mode, and fails cleanly once the
 //!   engine is gone.
 //!
-//! Step 2, `then`: sending returns a handle, and `then` on it declares the task's follow-up. The
+//! `then`: sending returns a handle, and `then` on it declares the task's follow-up. The
 //! follow-up waits in the engine until the task finishes, then gets the task's value or its own
 //! error, opened as a `Handoff`.
 //!
@@ -35,7 +35,7 @@
 //!   panicking;
 //! - a follow-up inherits its task's priority, capped just below realtime, unless it's given one.
 //!
-//! Step 3, late `then` and releasing: the engine keeps a task's result while its handle exists.
+//! Late `then` and releasing: the engine keeps a task's result while its handle exists.
 //! Dropping the handle without `then` releases the result.
 //!
 //! - a follow-up declared after its task finished gets the value, or the error (which then isn't
@@ -45,7 +45,7 @@
 //! - at the shutdown, an error kept for a handle that still exists is lost work, and a value isn't;
 //! - 100,000 tasks, half of them followed up, leave nothing in the wait table.
 //!
-//! Step 4, forwarding: a task whose closure returns another task's handle (built with
+//! Forwarding: a task whose closure returns another task's handle (built with
 //! `AdvTask::forward`, or declared with `then_forward`) finishes with that task's outcome.
 //!
 //! - a forward reaches the engine as the id of the task forwarded to, and the handle it used up
@@ -59,7 +59,7 @@
 //! - at the shutdown, a link isn't counted, and the error it leads to is lost work;
 //! - 10,000 forwards, half of them followed up, leave nothing in the wait table.
 //!
-//! The img example, the case that motivated T4: "hash the file, then load the image with the
+//! The img example, the case typed tasks were made for: "hash the file, then load the image with the
 //! digest", written with `then`. A hash plugin (a stand-in) and an image plugin never name each
 //! other; the glue wires them.
 //!
@@ -69,7 +69,7 @@
 //! That a follow-up of the wrong type doesn't compile is checked by a `compile_fail` example on
 //! `AdvTaskHandle::then`.
 //!
-//! The engine helpers are T2's (see `gate_t2`). CI runs these tests on one thread
+//! The engine helpers are `shutdown_and_startup`'s. CI runs these tests on one thread
 //! (`--test-threads=1`), like the rest of the crate.
 
 use std::cell::Cell;
@@ -85,7 +85,9 @@ use thryve_utils::packets::task::{AdvTask, AdvTaskHandle, Task};
 use thryve_utils::res::{Handoff, SealedHandoff, TaskResult};
 use thryve_utils::traits::packets::Packet;
 
-use crate::gate_t2::{finalize_within, fresh_dir, read_log, started_engine, summary_line};
+use crate::shutdown_and_startup::{
+    finalize_within, fresh_dir, read_log, started_engine, summary_line,
+};
 
 /// A hash plugin's own error, with a cause, the way a real plugin's error would look.
 #[derive(Debug)]
@@ -344,7 +346,7 @@ mod sealed_results {
 
         assert_eq!(result_id, sent_id);
         let (opened, error_text) = open::<[u8; 32], HashError>(result);
-        // The follow-up (step 2) gets the error itself, not just its words.
+        // The follow-up gets the error itself, not just its words.
         match opened {
             Err(HashError::Read { path, source }) => {
                 assert_eq!(path, "a.png");
@@ -383,7 +385,7 @@ mod engine {
 
     #[test]
     fn an_error_nobody_handles_is_written_to_error_log() {
-        let dir = fresh_dir("t4_unhandled_error");
+        let dir = fresh_dir("typed_tasks_unhandled_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         handle_one(&mut engine, &packet_handle, failing_hash());
@@ -400,7 +402,7 @@ mod engine {
 
     #[test]
     fn a_value_nobody_waits_for_is_dropped_without_a_line() {
-        let dir = fresh_dir("t4_unclaimed_value");
+        let dir = fresh_dir("typed_tasks_unclaimed_value");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         handle_one(&mut engine, &packet_handle, answer());
@@ -418,7 +420,7 @@ mod engine {
 
     #[test]
     fn during_the_shutdown_an_error_counts_as_lost_work_and_a_value_does_not() {
-        let dir = fresh_dir("t4_lost_handoffs");
+        let dir = fresh_dir("typed_tasks_lost_handoffs");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         engine.config.debugging.is_debugging = true;
 
@@ -515,7 +517,7 @@ mod sending {
         let callsite = task.callsite.expect("graph mode records a call site");
         assert_eq!(callsite.line_number, line);
         assert!(
-            callsite.file_path.ends_with("gate_t4.rs"),
+            callsite.file_path.ends_with("typed_tasks.rs"),
             "{:?}",
             callsite.file_path
         );
@@ -551,7 +553,7 @@ mod sending {
             let callsite = follow_up.callsite.expect("graph mode records a call site");
             assert_eq!(callsite.line_number, line);
             assert!(
-                callsite.file_path.ends_with("gate_t4.rs"),
+                callsite.file_path.ends_with("typed_tasks.rs"),
                 "{:?}",
                 callsite.file_path
             );
@@ -570,18 +572,18 @@ mod sending {
     }
 }
 
-/// Step 2's `then`, through a running engine: the follow-up gets the task's exact value or error,
+/// `then`, through a running engine: the follow-up gets the task's exact value or error,
 /// a chain hands each value on, and the follow-ups still waiting at the shutdown are lost work.
 ///
 /// Each test sends the task and declares its follow-ups before the engine's first turn, so the
 /// engine has every follow-up before the task finishes. (A follow-up declared after that is
-/// step 3.)
+/// in `late_then_and_release`.)
 mod then {
     use super::*;
 
     #[test]
     fn the_follow_up_gets_the_exact_value() {
-        let dir = fresh_dir("t4_then_value");
+        let dir = fresh_dir("typed_tasks_then_value");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         let (got_tx, got_rx) = bounded(1);
@@ -606,7 +608,7 @@ mod then {
 
     #[test]
     fn the_follow_up_gets_the_exact_error_and_it_is_not_logged() {
-        let dir = fresh_dir("t4_then_error");
+        let dir = fresh_dir("typed_tasks_then_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         let (got_tx, got_rx) = bounded(1);
@@ -640,7 +642,7 @@ mod then {
 
     #[test]
     fn a_chain_hands_each_value_on() {
-        let dir = fresh_dir("t4_then_chain");
+        let dir = fresh_dir("typed_tasks_then_chain");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // A returns 42; B halves it and returns text, a new type; C passes on what it got.
@@ -671,7 +673,7 @@ mod then {
 
     #[test]
     fn follow_ups_still_waiting_at_the_shutdown_are_lost_tasks() {
-        let dir = fresh_dir("t4_then_shutdown");
+        let dir = fresh_dir("typed_tasks_then_shutdown");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         engine.config.debugging.is_debugging = true;
 
@@ -747,7 +749,7 @@ mod task_errors {
     }
 }
 
-/// Step 3: the engine keeps a task's handoff while the task's handle exists, so `then` works
+/// Late `then`: the engine keeps a task's handoff while the task's handle exists, so `then` works
 /// after the task finished. A dropped handle releases it, in whichever order the release and the
 /// result arrive, and an error nobody takes is written to `Error.log` once. Nothing is left in the
 /// wait table afterwards.
@@ -759,7 +761,7 @@ mod late_then_and_release {
 
     #[test]
     fn a_follow_up_declared_after_its_task_finished_gets_the_value() {
-        let dir = fresh_dir("t4_late_then_value");
+        let dir = fresh_dir("typed_tasks_late_then_value");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The engine handles the result while the handle is still held, so it keeps it.
@@ -786,7 +788,7 @@ mod late_then_and_release {
 
     #[test]
     fn a_follow_up_declared_after_its_task_finished_gets_the_error_and_it_is_not_logged() {
-        let dir = fresh_dir("t4_late_then_error");
+        let dir = fresh_dir("typed_tasks_late_then_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         let handle = packet_handle.send_adv_task(failing_hash()).unwrap();
@@ -820,7 +822,7 @@ mod late_then_and_release {
 
     #[test]
     fn an_error_whose_handle_was_dropped_before_the_task_finished_is_logged() {
-        let dir = fresh_dir("t4_release_before_result");
+        let dir = fresh_dir("typed_tasks_release_before_result");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The task waits for `go`, so the release is handled before its result exists.
@@ -848,7 +850,7 @@ mod late_then_and_release {
 
     #[test]
     fn an_error_whose_handle_was_dropped_after_the_task_finished_is_logged() {
-        let dir = fresh_dir("t4_release_after_result");
+        let dir = fresh_dir("typed_tasks_release_after_result");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // Kept while the handle exists, then let go when it's dropped.
@@ -869,7 +871,7 @@ mod late_then_and_release {
 
     #[test]
     fn at_the_shutdown_an_error_kept_for_a_live_handle_is_lost_work_and_a_value_is_not() {
-        let dir = fresh_dir("t4_kept_at_shutdown");
+        let dir = fresh_dir("typed_tasks_kept_at_shutdown");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         engine.config.debugging.is_debugging = true;
 
@@ -904,7 +906,7 @@ mod late_then_and_release {
         // Each round fits in the task mailbox: its tasks plus the follow-ups of half of them.
         const ROUND: usize = 500;
 
-        let dir = fresh_dir("t4_no_growth");
+        let dir = fresh_dir("typed_tasks_no_growth");
         let (mut engine, packet_handle) = started_engine(&dir, 1_000, 2, 10);
         let ran = Arc::new(AtomicUsize::new(0));
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -962,7 +964,7 @@ mod late_then_and_release {
     }
 }
 
-/// Step 4: a task whose closure returns another task's handle finishes with that task's outcome.
+/// Forwarding: a task whose closure returns another task's handle finishes with that task's outcome.
 /// Its follow-up gets that task's value or error, whether it was declared before or after the
 /// forward, and before or after that task finished; a release reaches that task too. Forwards
 /// stack, and nothing is left in the wait table afterwards.
@@ -1017,7 +1019,7 @@ mod forwarding {
 
     #[test]
     fn a_follow_up_declared_before_the_forward_moves_on_to_the_task_forwarded_to() {
-        let dir = fresh_dir("t4_forward_then_before");
+        let dir = fresh_dir("typed_tasks_forward_then_before");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         let (go_tx, go_rx) = bounded(1);
@@ -1054,7 +1056,7 @@ mod forwarding {
 
     #[test]
     fn a_follow_up_declared_after_the_forward_waits_for_the_task_forwarded_to() {
-        let dir = fresh_dir("t4_forward_then_after");
+        let dir = fresh_dir("typed_tasks_forward_then_after");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` forwards to `Answer`, held back, before `Upload` is declared: a link.
@@ -1086,7 +1088,7 @@ mod forwarding {
 
     #[test]
     fn stacked_forwards_hand_the_last_value_to_a_follow_up_declared_afterwards() {
-        let dir = fresh_dir("t4_forward_stacked");
+        let dir = fresh_dir("typed_tasks_forward_stacked");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` forwards to `Save`, which forwards to `Answer`. Each sends the next before it
@@ -1126,7 +1128,7 @@ mod forwarding {
 
     #[test]
     fn a_release_after_the_forward_lets_go_of_the_error_it_leads_to() {
-        let dir = fresh_dir("t4_forward_release_after");
+        let dir = fresh_dir("typed_tasks_forward_release_after");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` forwards to `HashFile`, whose error is kept while Process's handle exists.
@@ -1156,7 +1158,7 @@ mod forwarding {
 
     #[test]
     fn a_release_before_the_forward_reaches_the_task_forwarded_to() {
-        let dir = fresh_dir("t4_forward_release_before");
+        let dir = fresh_dir("typed_tasks_forward_release_before");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` waits for `go`, so its release is handled before it forwards.
@@ -1190,7 +1192,7 @@ mod forwarding {
 
     #[test]
     fn then_forward_hands_on_the_value_of_the_task_it_forwards_to() {
-        let dir = fresh_dir("t4_then_forward_value");
+        let dir = fresh_dir("typed_tasks_then_forward_value");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` gets Answer's 42, then sends `Save`, which returns 43, and forwards to it.
@@ -1225,7 +1227,7 @@ mod forwarding {
 
     #[test]
     fn a_forwarding_follow_up_s_own_error_goes_to_whoever_follows_it() {
-        let dir = fresh_dir("t4_then_forward_error");
+        let dir = fresh_dir("typed_tasks_then_forward_error");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // `Process` fails before it forwards.
@@ -1260,7 +1262,7 @@ mod forwarding {
 
     #[test]
     fn at_the_shutdown_a_link_is_not_counted_and_the_error_it_leads_to_is_lost_work() {
-        let dir = fresh_dir("t4_forward_at_shutdown");
+        let dir = fresh_dir("typed_tasks_forward_at_shutdown");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
         // The link and HashFile's error are both kept: Process's handle is still held.
@@ -1289,7 +1291,7 @@ mod forwarding {
         // and the follow-ups of half of them.
         const ROUND: usize = 250;
 
-        let dir = fresh_dir("t4_forward_no_growth");
+        let dir = fresh_dir("typed_tasks_forward_no_growth");
         let (mut engine, packet_handle) = started_engine(&dir, 1_000, 2, 10);
         let ran = Arc::new(AtomicUsize::new(0));
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -1343,7 +1345,7 @@ mod forwarding {
     }
 }
 
-/// Step 2's priorities: a follow-up inherits its dependency's priority, capped just below
+/// Priorities: a follow-up inherits its dependency's priority, capped just below
 /// realtime, unless it was given one with `then_with_priority`. The engine applies the cap when it
 /// hands the follow-up its input, through `with_input`.
 mod priority {
@@ -1408,7 +1410,7 @@ mod priority {
     }
 }
 
-/// The case that motivated T4: ImgCompression wants "hash the file, then load the image with the
+/// The case typed tasks were made for: ImgCompression wants "hash the file, then load the image with the
 /// digest". The two plugins below never name each other: each exports typed task makers, and the
 /// glue, written by whoever uses both, wires them with `then`. The hash is a stand-in (FNV-1a);
 /// the real BLAKE3 plugin lives in TestLib.
@@ -1529,7 +1531,7 @@ mod img_example {
 
     #[test]
     fn hash_then_load_hands_the_digest_to_the_loader() {
-        let dir = fresh_dir("t4_img_hash_then_load");
+        let dir = fresh_dir("typed_tasks_img_hash_then_load");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         let photo = dir.join("photo.png");
         std::fs::write(&photo, b"not really a png").unwrap();
@@ -1558,7 +1560,7 @@ mod img_example {
 
     #[test]
     fn a_failed_hash_reaches_the_glue_as_the_hasher_s_own_error() {
-        let dir = fresh_dir("t4_img_hash_fails");
+        let dir = fresh_dir("typed_tasks_img_hash_fails");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
         let missing = dir.join("missing.png");
 

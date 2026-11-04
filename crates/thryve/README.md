@@ -32,7 +32,7 @@ Thryve is designed around three main pillars:
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
 - **Typed tasks with follow-ups, splits, joins and fan-out**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, several tasks share one follow-up with `join`, and several follow-ups share one result with `fan_out`, so plugins combine without knowing each other
-- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and the work that only it needed stops too: the tasks a join still waits for, and the tasks a follow-up's chain was waiting on
+- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and the work that only it needed stops too: the tasks a join still waits for, the tasks a follow-up's chain was waiting on, and the task a fan-out group follows once every follower is cancelled
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -48,9 +48,10 @@ Thryve is designed around three main pillars:
 ### Data Flow
 
 1. **Tasks** enter through the task channel and are queued by priority
-2. **Worker threads** execute tasks from the priority queue
-3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, or into its join
+2. **Worker threads** execute tasks from the priority queue, and skip the ones that were cancelled
+3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, into its join, or to a fan-out group's followers
 4. **Notifications** flow through the observer system for logging and monitoring
+5. **Status messages**, Thryve's own, travel on a fourth channel that never makes a sender wait: status lines for the logger, the releases of dropped task handles, cancels, and fan-out groups' data
 
 ## Core Concepts
 
@@ -118,7 +119,7 @@ fn size_in_kb(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-- **Chains:** `then` returns the follow-up's handle, so steps chain. A task has one follow-up: `then` uses its handle up.
+- **Chains:** `then` returns the follow-up's handle, so steps chain. A task has one follow-up: `then` uses its handle up. To give one result to several follow-ups, see [Fan-out](#fan-out).
 - **Timing:** `then` works before or after the task finishes, since the engine keeps the result while the handle exists. Dropping a handle without `then` lets the result go, and an error is written to `Error.log`.
 - **Priority:** a follow-up inherits its task's priority, capped below realtime. `then_with_priority` gives it its own.
 - **Forwarding:** a task that creates its last step while it runs can forward to it with `AdvTask::forward` (or `then_forward`). It returns that step's handle, and whoever follows the task gets the step's result.
@@ -346,12 +347,13 @@ Everything usable from Rust is re-exported under `thryve::`:
 
 | Path | Description |
 |------|-------------|
-| `thryve::prelude` | One import for typed work: `AdvTask`, `AdvTaskHandle`, `Handoff`, `JoinHandoff`, `Joinable`, `PacketHandle`, `ThryveError` |
+| `thryve::prelude` | One import for typed work: `AdvTask`, `AdvTaskHandle`, `FanoutGroup`, `Handoff`, `JoinHandoff`, `Joinable`, `PacketHandle`, `ThryveError` |
 | `thryve::run::run_interactive` | Interactive mode: `summon_requirements`, `run_interactive` |
 | `thryve::run::run_service` | Windows service mode: `create_service`, `try_run_as_service` |
 | `thryve::utils::cfg::Config` / `thryve::utils::cfg::ctx::Ctx` | Configuration and application context |
 | `thryve::utils::packets::task::Task` | Unit of work with priority and unique ID |
-| `thryve::utils::packets::task::{AdvTask, AdvTaskHandle}` | Typed task returning `Result<T, E>` (`AdvTask::new`, or `AdvTask::forward` to forward), and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`) and that cancels it (`cancel`) |
+| `thryve::utils::packets::task::{AdvTask, AdvTaskHandle}` | Typed task returning `Result<T, E>` (`AdvTask::new`, or `AdvTask::forward` to forward), and the handle its follow-ups are declared on (`then`, `then_with_priority`, `then_forward`, `fan_out`) and that cancels it (`cancel`) |
+| `thryve::utils::packets::task::FanoutGroup` | What `fan_out` returns: several followers declared on one task's result with `then` or `then_with_priority`, which share it, sent with `send_fanout` |
 | `thryve::utils::traits::Joinable` | Trait on `Vec<AdvTaskHandle<T, E>>`: `join` and `join_with_priority` declare one follow-up for several typed tasks of one type, which runs with all their values, or as soon as one fails; `cancel_all` cancels them all |
 | `thryve::utils::packets::packet_handle::PacketHandle` | Handle for sending tasks (`send_task`, `send_adv_task`) and notifications to the engine, and for splitting work (`split_into`, `send_split_tasks`) |
 | `thryve::utils::res::TaskResult` | Task execution outcome, with chaining via `.chain(task)` |
@@ -361,8 +363,9 @@ Everything usable from Rust is re-exported under `thryve::`:
 | `thryve::utils::bases::observer::Observer` / `thryve::utils::traits::ObsLogic` | Observer structure and the trait your observer logic implements |
 | `thryve::utils::bases::notif::Notif` / `thryve::utils::traits::NotifLogic` | Notification structure and its logic trait |
 | `thryve::utils::jobs::ObsJob` | Closure wrapper expected by `Observer::new` (`Task::new` and `Plugin::new` take a plain closure) |
-| `thryve::utils::error::{ThryveError, StartupError, ConfigError, NamingError, NameInputType, EngineNotRunningError, TaskError, JoinError, SplitError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
+| `thryve::utils::error::{ThryveError, StartupError, ConfigError, ConfigViolations, RuleError, NamingError, NameInputType, EngineNotRunningError, TaskError, JoinError, SplitError, FanoutError, FinalizationError}` | Errors returned by Thryve; `get_err` / `get_err_oneline` render an error together with its causes |
 | `thryve::utils::impl_as_any!` | Macro that implements the `as_any` downcasting method required by `NotifLogic`/`ObsLogic` |
+
 Names are checked when a task, plugin, observer or notification is created: they must not be empty or contain control characters, and each constructor returns a `NamingError` otherwise. Log-file names (in the config) may contain only ASCII letters and digits, are compared ignoring case, and can't be `Main`, `Error`, `Debug` or a Windows device name such as `CON`.
 
 `Config::load_config_from_file` never falls back to the defaults. A config file must set every key of every section, and unknown keys are rejected; an invalid file returns a `ConfigError` that lists every invalid value at once. Use `Config::load_def_config()` if the defaults are acceptable after an error.
@@ -427,7 +430,7 @@ log_tasks= false
 | `pipes` | `res_pipe_capacity` | usize | 1024 | Result channel buffer size |
 | `pipes` | `res_processed_per_turn` | usize | 500 | Most results the engine takes per turn |
 | `tasks` | `max_priority` | u8 | 4 | Maximum task priority (0-14) |
-| `tasks` | `aging_interval` | u64 | 3 | Seconds before priority boost |
+| `tasks` | `aging_interval` | u64 | 3 | Seconds a task waits for each one-level priority boost |
 | `debugging` | `is_debugging` | bool | false | Enable debug mode |
 | `debugging` | `wait_before_execution` | u64 | 10 | Debug wait time (seconds) |
 | `debugging` | `visual_graph` | bool | false | Enable task topology graph visualization |

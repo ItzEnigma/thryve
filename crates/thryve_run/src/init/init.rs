@@ -367,11 +367,12 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 /// Creates the necessary directory structure and log files required for the
 /// system to operate. This includes:
 ///
-/// 1. Determining the executable directory
+/// 1. Checking the log-file names in `ctx.logging_file_names`
 /// 2. Creating a timestamped log directory
-/// 3. Creating Main.log and Error.log files
+/// 3. Creating Main.log and Error.log files, and Debug.log in debug mode
 /// 4. Creating additional log files based on configuration
-/// 5. Storing the directory data in the context
+/// 5. Creating the topology directory, in graph mode
+/// 6. Storing the directory data in the context
 ///
 /// # Arguments
 ///
@@ -399,6 +400,11 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 ///
 /// # Errors
 ///
+/// Returns [`ThryveError::Naming`] if a log-file name isn't allowed (empty, not a plain name, a
+/// Windows device name, or one of Thryve's own: Main, Error, Debug), and
+/// [`StartupError::RegisterDuplicate`] if two names are the same, ignoring letter case. Both are
+/// checked before anything is created.
+///
 /// Returns a [`StartupError`] if:
 /// - the executable's directory can't be found (`RootFolder`, `NoParentFolder`);
 /// - the log directory can't be created (`LogDirCreation`);
@@ -419,10 +425,12 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 /// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
 pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
-    // Create log files for each module type and store them in a hashmap for easy access.
+    // The log files, by name, for the logger.
     let mut temp_hash_map: HashMap<LogFileNamedInput, Arc<File>> = HashMap::new();
     let mut temp_validation_hash_map: HashMap<LogFileNamedInput, String> = HashMap::new();
 
+    // The configured names are checked first, so a bad or duplicate name fails before any folder
+    // is made. They're compared in upper case, so letter case doesn't make two names different.
     for name in ctx.logging_file_names.iter() {
         let log_file_name = LogFileNamedInput::new_register(&name.to_ascii_uppercase())?;
 
@@ -436,6 +444,7 @@ pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
         temp_validation_hash_map.insert(log_file_name, name.to_string());
     }
 
+    // This run's log folder, named after the time it started.
     let log_dir_path = create_dir(DirName::Log)?;
 
     // Create a main log file and an error log file for general logging and
@@ -507,6 +516,7 @@ pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
         );
     }
 
+    // The folders and files go into the context, with the topology folder in graph mode.
     let current_exec_dir = get_current_exec_dir()?;
     let mut dir_data = DirData::new(current_exec_dir, temp_hash_map);
     dir_data.set_path(DirName::Log, log_dir_path);

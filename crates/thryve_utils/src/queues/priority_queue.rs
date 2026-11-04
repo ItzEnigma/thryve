@@ -21,13 +21,14 @@
 //! effective_priority = min(base_priority + aging_boost, max_priority)
 //! ```
 //!
-//! Where `aging_boost` increases based on how long the task has been waiting.
+//! Where `aging_boost` grows by one for every `aging_interval` seconds the task has been waiting.
 //!
-//! # Starvation Prevention
+//! # Realtime and Starvation Prevention
 //!
-//! Tasks that have aged significantly (reaching 80% of max priority) are
-//! prioritized over newer tasks, even if those newer tasks have higher
-//! base priority. This ensures fair scheduling over time.
+//! A task whose base priority is at least 80% of `max_priority` is realtime, and realtime tasks
+//! always come before the others. Among the rest, ageing raises a waiting task's effective
+//! priority, so a low-priority task that has waited long enough comes before newer tasks with a
+//! higher base priority. Ageing never makes a task realtime.
 //!
 //! # Thread Safety
 //!
@@ -100,9 +101,10 @@ pub struct EnqueuedTask {
 /// # Ordering
 ///
 /// Tasks are ordered by:
-/// 1. Effective priority (base + aging boost)
-/// 2. Enqueue time (FIFO for equal priority)
-/// 3. Task ID (tiebreaker)
+/// 1. Realtime first (base priority at least 80% of `max_priority`)
+/// 2. Effective priority (base + aging boost)
+/// 3. Enqueue time (FIFO for equal priority)
+/// 4. Task ID (tiebreaker)
 pub struct Priority {
     /// Task configuration for priority calculations.
     pub task_config: Arc<TaskConfig>,
@@ -169,7 +171,7 @@ impl Queue<Task> for PQChild<Task> {
                 break;
             }
 
-            // Try to pop a task.
+            // Fast path: take the first task, if there is one.
             if let Some(entry) = self.main_queue.pop_front() {
                 let mut wrapper = entry.value().take();
 
@@ -179,9 +181,10 @@ impl Queue<Task> for PQChild<Task> {
                 }
             }
 
+            // Registered as idle before it looks again, so a push from now on wakes it.
             self.worker_registry.set_idle(idx);
 
-            // 2. Medium Path: Spin backoff before committing to sleep
+            // Medium path: spin with backoff before committing to sleep.
             let backoff = Backoff::new();
 
             while !backoff.is_completed() {
@@ -201,8 +204,8 @@ impl Queue<Task> for PQChild<Task> {
                 backoff.snooze();
             }
 
-            // Check for shutdown.
-            // Wait for notification.
+            // Slow path: unless the queue is shutting down, park until a push, a resume or the
+            // shutdown wakes this worker, then look again.
             if !self.exit_flag.load(Ordering::SeqCst) {
                 thread::park();
                 self.worker_registry.clear_idle(idx);
@@ -292,7 +295,8 @@ impl PQChild<Task> {
     /// # Arguments
     ///
     /// * `config` - Application configuration
-    /// * `packet_handle` - Handle for sending notifications
+    /// * `packet_handle` - Handle for sending the queue's status lines ("Task Queue Paused", and
+    ///   so on)
     ///
     /// # Returns
     ///
@@ -343,11 +347,11 @@ impl PartialEq for Priority {
 impl Eq for Priority {}
 
 impl Ord for Priority {
-    /// Orders priorities with starvation prevention.
+    /// Orders priorities so that the task to run first is the smallest.
     ///
-    /// Tasks that have aged to 80% of max priority or higher are
-    /// prioritized over newer tasks (more like realtime tasks).
-    /// There are also checks made that prevent starvation.
+    /// A realtime task (base priority at least 80% of `max_priority`) comes before any other,
+    /// whatever their ages. Otherwise the higher effective priority (base plus ageing, which is
+    /// what prevents starvation) comes first, then the task enqueued first, then the lower id.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let threshold = realtime_threshold(self.task_config.max_priority);
 
