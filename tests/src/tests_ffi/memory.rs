@@ -20,7 +20,7 @@ mod tests_plugin_logic_adapter {
     // Track if cleanup was called
     static mut CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         unsafe {
             CLEANUP_CALLED = true;
         }
@@ -30,8 +30,8 @@ mod tests_plugin_logic_adapter {
     #[test]
     fn test_plugin_logic_adapter_clean_up_calls_callback() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, Some(test_plugin_cleanup));
 
         // Reset the flag
         unsafe {
@@ -51,15 +51,15 @@ mod tests_plugin_logic_adapter {
 
         // Cleanup: drop the core pointer
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 
     #[test]
     fn test_plugin_logic_adapter_as_any_returns_self() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, Some(test_plugin_cleanup));
 
         // Act
         let any_ref = adapter.as_any();
@@ -69,7 +69,7 @@ mod tests_plugin_logic_adapter {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
@@ -82,7 +82,7 @@ mod tests_observer_logic_adapter {
     // Track if cleanup was called
     static mut OBS_CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {
+    extern "C" fn test_obs_cleanup(_core_ptr: *const std::ffi::c_void) {
         unsafe {
             OBS_CLEANUP_CALLED = true;
         }
@@ -91,8 +91,8 @@ mod tests_observer_logic_adapter {
     #[test]
     fn test_observer_logic_adapter_clean_up_calls_callback() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = ObserverLogicAdapter::new(core_ptr, test_obs_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = ObserverLogicAdapter::new(core_ptr, Some(test_obs_cleanup));
 
         // Reset the flag
         unsafe {
@@ -108,15 +108,15 @@ mod tests_observer_logic_adapter {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 
     #[test]
     fn test_observer_logic_adapter_as_any_returns_self() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = ObserverLogicAdapter::new(core_ptr, test_obs_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = ObserverLogicAdapter::new(core_ptr, Some(test_obs_cleanup));
 
         // Act
         let any_ref = adapter.as_any();
@@ -126,7 +126,7 @@ mod tests_observer_logic_adapter {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
@@ -139,7 +139,7 @@ mod tests_notification_logic_adapter {
     #[test]
     fn test_notification_logic_adapter_as_any_returns_self() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
         let adapter = NotificationLogicAdapter::new(core_ptr);
 
         // Act
@@ -150,7 +150,7 @@ mod tests_notification_logic_adapter {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
@@ -163,7 +163,7 @@ mod tests_notification_logic_adapter_send_sync {
     fn test_notification_logic_adapter_is_send() {
         // Arrange — create adapter in a separate thread to verify Send trait
         let result = std::thread::spawn(move || {
-            let core_ptr = std::ptr::dangling_mut::<u8>(); // dummy pointer for testing
+            let core_ptr = std::ptr::dangling_mut::<std::ffi::c_void>(); // dummy pointer for testing
             let adapter = NotificationLogicAdapter::new(core_ptr);
             // Verify the adapter exists and has a non-null core_ptr
             !adapter.core_ptr.is_null()
@@ -226,16 +226,16 @@ mod tests_adapter_core_ptr_validation {
     use thryve_utils::traits::observer_logic::ObsLogic;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
-    extern "C" fn dummy_obs_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
 
     #[test]
     fn test_plugin_adapter_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
         let adapter =
-            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), dummy_plugin_cleanup);
+            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), Some(dummy_plugin_cleanup));
 
         // Assert — adapter should exist with null core_ptr
         assert!(
@@ -249,7 +249,7 @@ mod tests_adapter_core_ptr_validation {
     #[test]
     fn test_observer_adapter_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
-        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), dummy_obs_cleanup);
+        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), Some(dummy_obs_cleanup));
 
         // Assert — adapter should exist with null core_ptr
         assert!(
@@ -278,7 +278,7 @@ mod tests_adapter_core_ptr_validation {
     fn test_plugin_adapter_clean_up_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
         let adapter =
-            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), dummy_plugin_cleanup);
+            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), Some(dummy_plugin_cleanup));
 
         // Act — clean_up should not panic with null core_ptr
         // The callback is still called with the null pointer
@@ -292,7 +292,7 @@ mod tests_adapter_core_ptr_validation {
     #[test]
     fn test_observer_adapter_clean_up_with_null_core_ptr() {
         // Arrange — null core_ptr is valid
-        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), dummy_obs_cleanup);
+        let adapter = ObserverLogicAdapter::new(std::ptr::null_mut(), Some(dummy_obs_cleanup));
 
         // Assert — clean_up takes Arc<Observer> which we don't have
         // Just verify the adapter exists
@@ -316,28 +316,6 @@ mod tests_adapter_core_ptr_validation {
                 .downcast_ref::<NotificationLogicAdapter>()
                 .is_some()
         );
-    }
-}
-
-mod tests_obs_core_ptr {
-    use thryve_ffi::ObsCorePtr;
-
-    // Helper function to check Send trait at compile time
-    fn is_send<T: Send>() {}
-
-    // Helper function to check Sync trait at compile time
-    fn is_sync<T: Sync>() {}
-
-    #[test]
-    fn test_obs_core_ptr_is_send() {
-        // Compile-time check: ObsCorePtr should be Send
-        is_send::<ObsCorePtr>();
-    }
-
-    #[test]
-    fn test_obs_core_ptr_is_sync() {
-        // Compile-time check: ObsCorePtr should be Sync
-        is_sync::<ObsCorePtr>();
     }
 }
 
@@ -389,19 +367,29 @@ mod tests_ffi_task_result_new_with_chain {
         thryve_task_result_new_with_chain,
     };
 
-    extern "C" fn dummy_task_job() -> thryve_ffi::ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(
+        result: *mut thryve_ffi::ThryveTaskResult,
+        _user_data: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
     fn test_ffi_task_result_new_with_chain_valid_task() {
         // Arrange — create a real task to use as chain
         let name = CString::new("TestTask").unwrap();
-        let task = unsafe { thryve_task_create(name.as_ptr(), 5, dummy_task_job) };
+        let task = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                5,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
 
         // Create result with chain
         let result_type = CString::new("Chained").unwrap();
@@ -473,15 +461,17 @@ mod tests_ffi_ctx_add_plugin_ownership {
         thryve_packet_handle_free, thryve_plugin_create, thryve_task_result_new,
     };
 
-    extern "C" fn test_plugin_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn test_plugin_entry(
+        result: *mut ThryveTaskResult,
+        _core_ptr: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -498,8 +488,8 @@ mod tests_ffi_ctx_add_plugin_ownership {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_plugin_cleanup,
-                test_plugin_entry,
+                Some(test_plugin_cleanup),
+                Some(test_plugin_entry),
             )
         };
 

@@ -51,8 +51,20 @@
 fn main() {
     // Generate the C header using cbindgen
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+
+    // cbindgen only exports a function marked `#[unsafe(no_mangle)]` as written: it doesn't look
+    // inside `cfg_attr`. The FFI functions are marked `#[cfg_attr(not(test), unsafe(no_mangle))]`,
+    // so that test and coverage builds see plain Rust functions. So cbindgen reads a copy of the
+    // sources in which the mark is plain.
+    let header_src = std::path::Path::new(&out_dir).join("header_src");
+    copy_sources_for_cbindgen(
+        &std::path::Path::new(&manifest_dir).join("src"),
+        &header_src,
+    );
+
     let builder = cbindgen::Builder::new()
-        .with_crate(&manifest_dir)
+        .with_src(header_src.join("lib.rs"))
         .with_config(
             cbindgen::Config::from_file(std::path::Path::new(&manifest_dir).join("cbindgen.toml"))
                 .unwrap_or_default(),
@@ -62,25 +74,12 @@ fn main() {
     let header = builder
         .generate()
         .expect("cbindgen failed to generate header");
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let header_path = std::path::Path::new(&out_dir).join("thryve.h");
     header.write_to_file(&header_path);
 
     println!(
         "cargo:warning=Generated header at {}",
         header_path.display()
-    );
-
-    // Post-process: replace `const uint8_t*` with `const void*` in function pointer typedefs
-    // cbindgen generates function pointers with `const uint8_t*` instead of the idiomatic `const void*`
-    // For example: typedef void (*ThryvePluginCleanUp)(const uint8_t*);
-    // Should be:    typedef void (*ThryvePluginCleanUp)(const void*);
-    let mut header_content = std::fs::read_to_string(&header_path)
-        .expect("Failed to read generated header for post-processing");
-    header_content = header_content.replace(")(const uint8_t*", ")(const void*");
-    std::fs::write(&header_path, &header_content).expect("Failed to write post-processed header");
-    println!(
-        "cargo:warning=Post-processed header: replaced const uint8_t* with const void* in function pointer typedefs"
     );
 
     // Create the C++ wrapper header with extern "C" guards
@@ -129,8 +128,33 @@ fn main() {
         out_dir_crate.display()
     );
 
-    // Re-run if cbindgen.toml, Cargo.toml, or lib.rs changes
+    // Re-run if cbindgen.toml, Cargo.toml, or any source file changes
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=Cargo.toml");
-    println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src");
+}
+
+/// Copies the `.rs` files under `from` to `to`, keeping the folders, with every
+/// `#[cfg_attr(not(test), unsafe(no_mangle))]` written as `#[unsafe(no_mangle)]`.
+fn copy_sources_for_cbindgen(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).expect("Failed to create the folder for cbindgen's sources");
+
+    for entry in std::fs::read_dir(from).expect("Failed to read the sources' folder") {
+        let path = entry.expect("Failed to read the sources' folder").path();
+        let Some(file_name) = path.file_name() else {
+            continue;
+        };
+        let target = to.join(file_name);
+
+        if path.is_dir() {
+            copy_sources_for_cbindgen(&path, &target);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let source = std::fs::read_to_string(&path).expect("Failed to read a source file");
+            let source = source.replace(
+                "#[cfg_attr(not(test), unsafe(no_mangle))]",
+                "#[unsafe(no_mangle)]",
+            );
+            std::fs::write(&target, source).expect("Failed to write a source file for cbindgen");
+        }
+    }
 }

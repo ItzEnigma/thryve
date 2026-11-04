@@ -649,12 +649,11 @@ mod sending {
             thryve_task_create, thryve_task_result_new,
         };
 
-        extern "C" fn job() -> ThryveTaskResult {
-            thryve_task_result_new(
-                CString::new("Success").unwrap().as_ptr(),
-                CString::new("Done").unwrap().as_ptr(),
-                CString::new("Main").unwrap().as_ptr(),
-            )
+        extern "C" fn job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+            unsafe {
+                *result =
+                    thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+            };
         }
 
         #[test]
@@ -666,7 +665,9 @@ mod sending {
             thryve_ctx_free(ctx);
 
             let name = CString::new("Late").unwrap();
-            let task = unsafe { thryve_task_create(name.as_ptr(), 0, job) };
+            let task = unsafe {
+                thryve_task_create(name.as_ptr(), 0, Some(job), std::ptr::null_mut(), None)
+            };
             let task_status = thryve_packet_handle_send_task(pkt, task);
 
             let notif_type = CString::new("Late").unwrap();

@@ -106,6 +106,10 @@ git checkout -b feature/new-feature-name
 
 Follow the code style guidelines below.
 
+If you change the C API (`crates/thryve_ffi`), build it and copy the generated header,
+`crates/thryve_ffi/out/thryve.h`, over the committed one, `crates/thryve_ffi/thryve.h`. A test
+fails while the two differ.
+
 ### 4. Test Your Changes
 
 ```bash

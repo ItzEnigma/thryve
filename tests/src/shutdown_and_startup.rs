@@ -106,7 +106,7 @@ pub(crate) fn started_engine(
 
 /// Like [`started_engine`], but `load` can load more observers before the sorter starts. The
 /// context has a topology folder, `dir/topology`, for the topology handler.
-fn started_engine_with(
+pub(crate) fn started_engine_with(
     dir: &Path,
     capacity: usize,
     workers: usize,

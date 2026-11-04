@@ -12,3 +12,5 @@ pub mod error_handling;
 pub mod ffi_success_paths;
 pub mod lifecycle;
 pub mod memory;
+pub mod plain_tasks;
+pub mod typed_tasks;

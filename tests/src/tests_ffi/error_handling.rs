@@ -381,23 +381,29 @@ mod tests_ctx_errors {
 }
 
 mod tests_task_errors {
-    use std::ffi::CString;
     use thryve_ffi::{
         ThryveTaskResult, thryve_task_create, thryve_task_free, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
     fn test_task_create_with_null_name_returns_null() {
         // Act
-        let task = unsafe { thryve_task_create(std::ptr::null(), 0, dummy_task_job) };
+        let task = unsafe {
+            thryve_task_create(
+                std::ptr::null(),
+                0,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
 
         // Assert
         assert!(
@@ -421,15 +427,17 @@ mod tests_plugin_errors {
         thryve_plugin_create, thryve_plugin_free, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_plugin_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_plugin_entry(
+        result: *mut ThryveTaskResult,
+        _core_ptr: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -446,8 +454,8 @@ mod tests_plugin_errors {
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
+                Some(dummy_plugin_cleanup),
+                Some(dummy_plugin_entry),
             )
         };
 
@@ -471,8 +479,8 @@ mod tests_plugin_errors {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
+                Some(dummy_plugin_cleanup),
+                Some(dummy_plugin_entry),
             )
         };
 
@@ -498,7 +506,7 @@ mod tests_observer_errors {
         thryve_packet_handle_free,
     };
 
-    extern "C" fn dummy_obs_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
 
     extern "C" fn dummy_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
@@ -515,8 +523,8 @@ mod tests_observer_errors {
                 std::ptr::null(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_obs_cleanup,
-                dummy_obs_job,
+                Some(dummy_obs_cleanup),
+                Some(dummy_obs_job),
             )
         };
 
@@ -540,8 +548,8 @@ mod tests_observer_errors {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                dummy_obs_cleanup,
-                dummy_obs_job,
+                Some(dummy_obs_cleanup),
+                Some(dummy_obs_job),
             )
         };
 
@@ -850,12 +858,11 @@ mod tests_task_create_null_job {
         thryve_plugin_create, thryve_plugin_free, thryve_task_create, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -865,7 +872,9 @@ mod tests_task_create_null_job {
             thryve_task_create(
                 std::ptr::null(), // null name
                 5,                // priority
-                dummy_task_job,   // job
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None, // job
             )
         };
 
@@ -873,15 +882,17 @@ mod tests_task_create_null_job {
         assert!(task.is_null(), "task should be null when name is null");
     }
 
-    extern "C" fn test_plugin_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn test_plugin_entry(
+        result: *mut ThryveTaskResult,
+        _core_ptr: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -900,8 +911,8 @@ mod tests_task_create_null_job {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(), // null core_ptr
                 pkt,
-                test_plugin_cleanup,
-                test_plugin_entry,
+                Some(test_plugin_cleanup),
+                Some(test_plugin_entry),
             )
         };
 
@@ -925,21 +936,24 @@ mod tests_plugin_clean_up_failure {
     use thryve_utils::errors::{FinalizationError, ThryveError};
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
-    extern "C" fn failing_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn failing_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         ThryveStatus::OperationFail as i32
     }
 
     // Not a ThryveStatus value at all: Thryve reads the return value as a plain int, so this is
     // still safe to read, and it counts as a failure too.
-    extern "C" fn unknown_status_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn unknown_status_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         42
     }
 
     #[test]
     fn test_plugin_adapter_clean_up_failure_names_the_plugin() {
         // Arrange
-        let adapter =
-            PluginLogicAdapter::new("TestType", std::ptr::null_mut(), failing_plugin_cleanup);
+        let adapter = PluginLogicAdapter::new(
+            "TestType",
+            std::ptr::null_mut(),
+            Some(failing_plugin_cleanup),
+        );
 
         // Act
         let err = adapter
@@ -963,10 +977,156 @@ mod tests_plugin_clean_up_failure {
         let adapter = PluginLogicAdapter::new(
             "TestType",
             std::ptr::null_mut(),
-            unknown_status_plugin_cleanup,
+            Some(unknown_status_plugin_cleanup),
         );
 
         // Act + Assert
         assert!(adapter.clean_up().is_err());
+    }
+}
+
+/// A send given a NULL context or handle still takes its task or notification, as it does once the
+/// engine is gone, and every create refuses a name that isn't UTF-8, saying which argument.
+mod sends_and_names {
+    use std::ffi::{CStr, c_void};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use thryve_ffi::{
+        ThryveNotif, ThryveObserver, ThryvePacketHandle, ThryveStatus, ThryveTask,
+        ThryveTaskResult, thryve_ctx_send_notification, thryve_ctx_send_task, thryve_last_error,
+        thryve_notification_create, thryve_observer_create, thryve_packet_handle_send_notification,
+        thryve_packet_handle_send_task, thryve_plugin_create, thryve_task_create,
+    };
+    use thryve_utils::bases::notif::Notif;
+    use thryve_utils::packets::packet_handle::PacketHandle;
+    use thryve_utils::packets::task::Task;
+    use thryve_utils::res::TaskResult;
+    use thryve_utils::traits::notif_logic::NotifLogic;
+
+    /// Counts itself in when it's dropped.
+    struct DropCounter(Arc<AtomicUsize>);
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Hash, as C holds it: dropping it drops its counter.
+    fn counted_task(dropped: &Arc<AtomicUsize>) -> ThryveTask {
+        let counter = DropCounter(dropped.clone());
+        let hash = Task::new("Hash", 2, move || {
+            let _counter = &counter;
+            TaskResult::new("", String::new(), "")
+        })
+        .unwrap();
+        Box::into_raw(Box::new(hash)) as ThryveTask
+    }
+
+    /// A notification's data, dropped with it.
+    struct CountedReading(#[allow(dead_code)] DropCounter);
+
+    impl NotifLogic for CountedReading {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    /// A reading for the Readings observer, as C holds it: dropping it drops its counter.
+    fn counted_notif(dropped: &Arc<AtomicUsize>) -> ThryveNotif {
+        let reading = CountedReading(DropCounter(dropped.clone()));
+        let notif = Notif::new("Reading", "Readings", Box::new(reading)).unwrap();
+        Box::into_raw(Box::new(notif)) as ThryveNotif
+    }
+
+    fn last_error() -> String {
+        unsafe { CStr::from_ptr(thryve_last_error()) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn a_send_given_a_null_context_or_handle_still_drops_the_task() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+
+        let status = thryve_ctx_send_task(std::ptr::null_mut(), counted_task(&dropped));
+        assert_eq!(status, ThryveStatus::NullArg);
+        assert_eq!(last_error(), "ctx is NULL");
+
+        let status = thryve_packet_handle_send_task(std::ptr::null_mut(), counted_task(&dropped));
+        assert_eq!(status, ThryveStatus::NullArg);
+        assert_eq!(last_error(), "handle is NULL");
+
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_send_given_a_null_context_or_handle_still_drops_the_notification() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+
+        let status = thryve_ctx_send_notification(std::ptr::null_mut(), counted_notif(&dropped));
+        assert_eq!(status, ThryveStatus::NullArg);
+        assert_eq!(last_error(), "ctx is NULL");
+
+        let status =
+            thryve_packet_handle_send_notification(std::ptr::null_mut(), counted_notif(&dropped));
+        assert_eq!(status, ThryveStatus::NullArg);
+        assert_eq!(last_error(), "handle is NULL");
+
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    }
+
+    extern "C" fn empty_job(_result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {}
+
+    extern "C" fn plugin_clean_up(_core_ptr: *const c_void) -> i32 {
+        0
+    }
+
+    extern "C" fn observer_clean_up(_core_ptr: *const c_void) {}
+
+    extern "C" fn observer_job(_observer: ThryveObserver) {}
+
+    #[test]
+    fn every_create_refuses_a_name_that_isn_t_utf_8_and_says_which() {
+        let not_utf_8 = c"\xFF\xFE".as_ptr();
+        let (packet_handle, _mailbox) = crate::typed_tasks::handle_and_mailbox(false);
+        let tx = &packet_handle as *const PacketHandle as ThryvePacketHandle;
+
+        let task = unsafe {
+            thryve_task_create(not_utf_8, 2, Some(empty_job), std::ptr::null_mut(), None)
+        };
+        assert!(task.is_null());
+        assert_eq!(last_error(), "name isn't valid UTF-8");
+
+        let plugin = unsafe {
+            thryve_plugin_create(
+                not_utf_8,
+                std::ptr::null_mut(),
+                tx,
+                Some(plugin_clean_up),
+                Some(empty_job),
+            )
+        };
+        assert!(plugin.is_null());
+        assert_eq!(last_error(), "plg_type isn't valid UTF-8");
+
+        let observer = unsafe {
+            thryve_observer_create(
+                not_utf_8,
+                std::ptr::null_mut(),
+                tx,
+                Some(observer_clean_up),
+                Some(observer_job),
+            )
+        };
+        assert!(observer.is_null());
+        assert_eq!(last_error(), "obs_type isn't valid UTF-8");
+
+        let notif = unsafe {
+            thryve_notification_create(c"Reading".as_ptr(), not_utf_8, std::ptr::null_mut())
+        };
+        assert!(notif.is_null());
+        assert_eq!(last_error(), "notif_receiver isn't valid UTF-8");
     }
 }

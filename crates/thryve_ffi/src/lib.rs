@@ -10,20 +10,24 @@
 //! FFI-safe wrapper functions for the Thryve framework.
 //!
 //! This module provides C-compatible wrapper functions for the Thryve framework,
-//! enabling integration with other programming languages (C, C++, Python, Node.js, etc.).
+//! enabling integration with other programming languages, such as C, C++ and Python.
 //!
 //! # Design Principles
 //!
-//! - All complex Rust types are wrapped in opaque pointers (`*mut u8`) for FFI safety
+//! - All complex Rust types are wrapped in opaque pointers for FFI safety
 //! - Memory management is explicit: every `create` function has a corresponding `free` function
 //! - Functions use `extern "C"` calling convention for cross-language compatibility
-//! - Error handling uses nullable pointers and status codes
+//! - Error handling uses nullable pointers and status codes, and [`thryve_last_error`] tells why
+//!   the latest call on the thread failed
 //! - Callbacks follow a specific ownership model — see the [Callback Types](#callback-types) section
 //! - Every wrapper's body runs through `ffi_guard`, so a panic anywhere in the
 //!   call chain becomes a null/error return instead of unwinding across the FFI
 //!   boundary into the foreign caller (which is undefined behavior). Once an
 //!   engine has started, though, Thryve's panic hook logs a panic and ends the
 //!   process before the guard sees it
+//!
+//! Typed tasks, whose job returns a value or an error, and the follow-ups, joins, splits, cancels
+//! and fan-out groups built on them, are in [`typed_tasks`].
 //!
 //! # Typical Usage Sequence (Interactive Mode)
 //!
@@ -59,78 +63,67 @@
 //!
 //! ## Task and Plugin Callbacks
 //!
-//! - **`ThryveTaskJob`**: A function pointer that takes no arguments and returns a `ThryveTaskResult`.
-//!   Used for plugin entry points and task execution.
-//! - **`ThryveTaskResult`**: A pub struct containing:
-//!   - `result_type`: A null-terminated string describing the result type (e.g., "Success", "Failed")
-//!   - `message`: A null-terminated string with a human-readable result message
-//!   - `log_file`: A null-terminated string specifying the log file name for the result
-//!   - `has_chain`: A boolean indicating whether a chained task should be executed next
-//!   - `chain_task`: A pointer to the chained task (only valid if `has_chain` is true and pointer is not null)
-//! - **`ThryvePluginEntryPoint`**: Alias for `ThryveTaskJob` — used when creating plugins.
-//! - **`ThryvePluginCleanUp`**: A function pointer that takes a `*const u8` (the plugin's core pointer)
+//! - **`ThryveTaskJob`**: a plain task's job. It gets the task's result to fill in, and the user
+//!   data given to `thryve_task_create`.
+//! - **`ThryvePluginEntryPoint`**: a plugin's entry point, run once when the engine starts. It gets
+//!   a result to fill in, like a task's job, and the plugin's core pointer.
+//! - **`ThryveTaskResult`**: what a job reports, filled in through the pointer it gets. It starts
+//!   empty, which reports nothing:
+//!   - `result_type`: the result's type, such as `"Saved"`; `"Fin"` stops the engine
+//!   - `message`: a message to log
+//!   - `log_file`: the log file to write the message to, such as `"Main"`
+//!   - `has_chain`: whether `chain_task` should run next
+//!   - `chain_task`: a task to run next, which Thryve takes over
+//! - **`ThryvePluginCleanUp`**: A function pointer that takes a `const void*` (the plugin's core pointer)
 //!   and returns an `int`: `ThryveStatus_Ok` (0) if the cleanup worked, any other value if it failed.
 //!   Called once when the engine shuts down. A failure is logged to `Error.log`.
 //!
+//! Jobs and entry points fill in a result instead of returning one, so that languages whose
+//! callbacks can't return a struct, such as Python's ctypes, can write them.
+//!
+//! A task's job, a plugin's entry point and an observer's job are required: a create given NULL
+//! for one returns NULL, and [`thryve_last_error`] names it. A clean-up or a free function may be
+//! NULL, when there's nothing to clean up or free.
+//!
+//! ## Typed Task Callbacks
+//!
+//! - **`ThryveAdvJob`**, **`ThryveThenJob`**, **`ThryveSplitJob`**, **`ThryveChunkJob`**: the jobs
+//!   of typed tasks, follow-ups, joins, fan-out followers and split pieces. Each gets its user
+//!   data, and returns a `ThryveOutcome`: a value, an error, or a task to forward to.
+//! - **`ThryveFreeFn`**: frees user data, a value or a chunk once Thryve is done with it.
+//!
+//! See [`typed_tasks`] for who owns what.
+//!
 //! ## Observer Callbacks
 //!
-//! - **`ThryveObsJob`**: **Primary callback** for observer execution. Takes an `ThryveObserver` (raw pointer to `Arc<Observer>`)
-//!   and returns nothing. **The FFI implementation must convert the raw pointer back to an Arc and drop it** — see
-//!   [Observer Job Memory Safety](#observer-job-memory-safety) for details.
-//! - **`ThryveObserverCleanUp`**: A function pointer that takes a `*const u8` (the observer's core pointer).
+//! - **`ThryveObsJob`**: The observer's job: its whole loop, called once on the observer's own
+//!   thread. It gets the observer, which it borrows until it returns, and receives the observer's
+//!   notifications with [`thryve_observer_pop`] — see [Observer Jobs](#observer-jobs).
+//! - **`ThryveObserverCleanUp`**: A function pointer that takes a `const void*` (the observer's core pointer).
 //!   Called when the observer is being cleaned up.
-//! - **`ThryveObserverMainLoop`**: A function pointer that takes a `*const u8` (the observer's core pointer).
-//!   Currently **unused** in the FFI layer.
 //!
-//! ### Observer Job Memory Safety
+//! ### Observer Jobs
 //!
-//! When an observer is executed, the Rust side performs the following:
+//! The engine starts an observer's thread when it loads the observer, and the thread calls the
+//! job once. The job loops on [`thryve_observer_pop`], which waits for the next notification sent
+//! to the observer, and returns NULL once the engine shuts the observer down; the job then
+//! returns, which ends the thread.
 //!
-//! 1. Clones the `Arc<Observer>`: `observer.clone()`
-//! 2. Converts to raw pointer: `Arc::into_raw(observer_clone) as ThryveObserver`
-//! 3. Calls the `ThryveObsJob` callback with this raw pointer
-//!
-//! The FFI callback **must**:
-//!
-//! 1. Convert the raw pointer back to an `Arc`: `Arc::from_raw(obs as *const Observer as *mut Observer)`
-//! 2. Use the Arc to access the observer
-//! 3. Drop the Arc when done (automatic when it goes out of scope in C++)
-//!
-//! **C example:**
+//! The `ThryveObserver` the job gets belongs to the engine: it stays valid until the job returns,
+//! and the job must not keep it or free it. (Older versions of these docs asked the job to free it
+//! with `thryve_observer_free`; on the observer a job was given, that now does nothing.)
 //!
 //! ```c
-//! void my_observer_job(ThryveObserver obs) {
-//!     // Convert raw pointer back to Arc<Observer> (C++ style)
-//!     // In C, you may need to manage this differently
-//!     // Best practice: use C++ with RAII
-//! }
-//! ```
-//!
-//! **C++ example:**
-//!
-//! ```cpp
-//! extern "C" void my_observer_job(ThryveObserver obs) {
-//!     // Convert raw pointer back to Arc<Observer>
-//!     auto observer = std::shared_ptr<Observer>(
-//!         static_cast<Observer*>(obs),
-//!         [](Observer* p) { /* No-op: Arc will be dropped by Rust */ }
-//!     );
-//!
-//!     // Use the observer
-//!     while (!observer->exit_flag) {
-//!         // Process notifications
+//! void my_observer_job(ThryveObserver observer) {
+//!     ThryveNotif notif;
+//!     while ((notif = thryve_observer_pop(observer)) != NULL) {
+//!         Reading* reading = thryve_notification_core(notif);
+//!         record(reading);
+//!         free(reading);
+//!         thryve_notification_free(notif);
 //!     }
-//!
-//!     // Arc is automatically dropped when observer goes out of scope
 //! }
 //! ```
-//!
-//! **Critical**: If the callback crashes or leaks the Arc, the Observer will be leaked.
-//!
-//! ## Notification Callbacks
-//!
-//! - **`ThryveNotifLogic`**: A function pointer that takes a `*const u8` (the notification's core pointer).
-//!   **Currently unused**: no FFI function takes one, so Thryve never calls it.
 //!
 //! ## Threading Model
 //!
@@ -141,8 +134,10 @@
 //!   different workers.
 //! - **`ThryveObsJob`**: Runs on the observer's own thread, which Thryve starts when the engine
 //!   loads the observer. It's called once and is the observer's whole loop: when it returns, the
-//!   observer's thread ends. The Rust side clones the `Arc<Observer>`, converts it to a raw
-//!   pointer, and calls the callback with it.
+//!   observer's thread ends.
+//! - **Typed tasks' jobs** run on the plugin workers, like `ThryveTaskJob`. **`ThryveFreeFn`**
+//!   runs wherever Thryve lets the memory go, which can be the engine's own thread, so it must
+//!   only free memory: see [`typed_tasks`].
 //! - **`ThryvePluginCleanUp`**: Runs on Thryve's plugin clean-up thread during shutdown, after every
 //!   task has stopped. The plugins are cleaned up one after another on that thread.
 //! - **`ThryveObserverCleanUp`**: Runs once during shutdown, on Thryve's observer clean-up thread.
@@ -156,9 +151,10 @@
 //! # Plugin/Observer/Notification Logic
 //!
 //! The `PlgLogic`, `ObsLogic`, and `NotifLogic` traits are implemented by adapter structs
-//! (`PluginLogicAdapter`, `ObserverLogicAdapter`, `NotificationLogicAdapter`) that wrap
-//! FFI function pointers. Foreign language developers do **not** implement these traits directly —
-//! they provide function pointers to `thryve_plugin_create`, `thryve_observer_create`, or
+//! (`PluginLogicAdapter`, `ObserverLogicAdapter`, `NotificationLogicAdapter`) that hold the
+//! foreign side's core pointer and, for plugins and observers, its clean-up callback. Foreign
+//! language developers do **not** implement these traits directly — they pass a core pointer and
+//! callbacks to `thryve_plugin_create` or `thryve_observer_create`, or a core pointer to
 //! `thryve_notification_create`, and the Rust side creates the adapter.
 //!
 //! See the [`thryve_plugin_create`](#thryve_plugin_create), [`thryve_observer_create`](#thryve_observer_create),
@@ -166,19 +162,26 @@
 //!
 //! # Memory Management Rules
 //!
-//! 1. **Ownership Transfer**: When you pass a pointer to a Rust function, ownership may be transferred.
-//!    - `thryve_plugin_create`: Takes ownership of `entry_point` (wraps it in the plugin's init closure)
-//!    - `thryve_task_create`: Takes ownership of `job` (wraps it in the task's closure)
-//!    - `thryve_ctx_add_plugin`: Takes ownership of `plugin` (converts from raw pointer to Box, then clones into vector)
-//!    - `thryve_ctx_add_observer`: Takes ownership of `observer` (converts from raw pointer to Box, then clones into vector)
-//! 2. **Never free after transfer**: After calling `thryve_plugin_create` or `thryve_task_create`, do **not** free the
-//!    callback pointer — it has been transferred to Rust and will be called from there.
-//! 3. **String borrowing**: String arguments (`name`, `type`, etc.) are borrowed via `CStr::from_ptr` and
-//!    converted to `&str`. The foreign language must **not** free these pointers after passing them.
+//! 1. **Adding moves**: `thryve_ctx_add_plugin` and `thryve_ctx_add_observer` move the plugin or
+//!    observer into the context, which frees it. A plugin or observer that's never added is freed
+//!    with `thryve_plugin_free` or `thryve_observer_free`.
+//! 2. **Sending moves**: the send functions take the task or notification, even when the send
+//!    fails. Don't free it afterwards.
+//! 3. **Strings are copied**: String arguments (`name`, `type`, etc.) are read during the call and
+//!    copied. The foreign language keeps its strings, and can free them once the call returns.
 //! 4. **PacketHandle is cloned**: The PacketHandle pointer is cloned inside the Rust side, so the foreign
 //!    language can continue to use it after passing to plugin/observer creation.
+//! 5. **Core pointers stay yours**: the core pointer given to a plugin, observer or notification is
+//!    never freed by Thryve: it's handed back to your callbacks, and to [`thryve_observer_core`]
+//!    and [`thryve_notification_core`].
+//! 6. **User data, values and chunks** given to Thryve, with a plain task or a typed one, are
+//!    freed by Thryve, once, with the free function given with them. Typed tasks' handles are used
+//!    up by every call that takes them. See [`typed_tasks`].
+//! 7. **The last error**: the string [`thryve_last_error`] returns stays valid until the next
+//!    Thryve call on the same thread.
 
-use std::ffi::CStr;
+use std::cell::{Cell, RefCell};
+use std::ffi::{CStr, CString, c_void};
 use std::os::raw::{c_char, c_int};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -189,13 +192,16 @@ use thryve_utils::bases::observer::Observer;
 use thryve_utils::bases::plugin::Plugin;
 use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
-use thryve_utils::errors::{FinalizationError, StartupError, ThryveError};
+use thryve_utils::errors::{
+    FanoutError, FinalizationError, StartupError, ThryveError, get_err_oneline,
+};
 use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::packets::packet_handle::PacketHandle;
 use thryve_utils::packets::task::Task;
 use thryve_utils::traits::notif_logic::NotifLogic;
 use thryve_utils::traits::observer_logic::ObsLogic;
 use thryve_utils::traits::plugin_logic::PlgLogic;
+use thryve_utils::traits::queue::Queue;
 
 use thryve_run::run::run_interactive::{
     run_interactive as inner_run_interactive, summon_requirements as inner_summon_requirements,
@@ -204,6 +210,11 @@ use thryve_run::run::run_service::{
     create_service as inner_create_service, try_run_as_service as inner_try_run_as_service,
 };
 use thryve_utils::res::TaskResult;
+
+pub mod typed_tasks;
+pub use typed_tasks::*;
+
+use typed_tasks::UserData;
 
 // ============================================================================
 // Opaque Pointer Types
@@ -265,18 +276,113 @@ pub struct NotifHandle {}
 pub type ThryveNotif = *mut NotifHandle;
 
 // ============================================================================
-// Panic Safety
+// Panic Safety and Errors
 // ============================================================================
 
 /// Runs `f`, catching any panic instead of letting it unwind out of this
 /// `extern "C"` function. Unwinding across an FFI boundary into a foreign
 /// caller is undefined behavior (e.g. a malformed config file can trigger an
 /// internal `assert!`/`unwrap()` several calls deep) — every wrapper in this
-/// file routes its body through here so a caught panic becomes `on_panic`
+/// crate routes its body through here so a caught panic becomes `on_panic`
 /// instead of crossing into C. Once an engine has started, Thryve's panic hook
 /// ends the process first (it calls `exit(1)`), so nothing reaches this catch.
-fn ffi_guard<T>(on_panic: T, f: impl FnOnce() -> T) -> T {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(on_panic)
+///
+/// It clears the thread's last error first, so that [`thryve_last_error`] only ever tells why the
+/// latest call failed. A caught panic becomes the last error.
+pub(crate) fn ffi_guard<T>(on_panic: T, f: impl FnOnce() -> T) -> T {
+    let _ = LAST_ERROR.try_with(|last| last.borrow_mut().take());
+
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(returned) => returned,
+        Err(payload) => {
+            // A panic's message is a `&str` or a `String`.
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|message| message.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            fail(on_panic, format!("Thryve panicked: {message}"))
+        }
+    }
+}
+
+thread_local! {
+    /// Why the latest Thryve call on this thread failed, for [`thryve_last_error`].
+    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+
+    /// The observer whose job runs on this thread, while it runs: see [`thryve_observer_free`].
+    static OBSERVER_IN_JOB: Cell<ThryveObserver> = const { Cell::new(std::ptr::null_mut()) };
+}
+
+/// Records why the current call failed, for [`thryve_last_error`].
+pub(crate) fn set_last_error(message: impl Into<String>) {
+    // A C string can't hold a NUL, so a NUL in the message becomes a space.
+    let message = CString::new(message.into().replace('\0', " ")).unwrap_or_default();
+    let _ = LAST_ERROR.try_with(|last| *last.borrow_mut() = Some(message));
+}
+
+/// Records why the current call failed, and returns `failed`: what the call returns then.
+pub(crate) fn fail<T>(failed: T, message: impl Into<String>) -> T {
+    set_last_error(message);
+    failed
+}
+
+/// Reads the C string argument named `what`. Fails, once it has recorded why, with `NullArg` if
+/// it's NULL, and with `StrConvError` if it isn't valid UTF-8.
+///
+/// # Safety
+///
+/// `arg` must be NULL or a valid null-terminated C string that outlives `'a`.
+pub(crate) unsafe fn str_arg<'a>(arg: *const c_char, what: &str) -> Result<&'a str, ThryveStatus> {
+    if arg.is_null() {
+        return Err(fail(ThryveStatus::NullArg, format!("{what} is NULL")));
+    }
+
+    // Safety: the caller guarantees a valid C string.
+    unsafe { CStr::from_ptr(arg) }.to_str().map_err(|_| {
+        fail(
+            ThryveStatus::StrConvError,
+            format!("{what} isn't valid UTF-8"),
+        )
+    })
+}
+
+/// The status for an error Thryve returned: `InvalidState` if the engine isn't running, or a
+/// fan-out group has nothing to send, and `OperationFail` otherwise.
+pub(crate) fn status_of(error: &ThryveError) -> ThryveStatus {
+    match error {
+        ThryveError::EngineNotRunning(_)
+        | ThryveError::Fanout(FanoutError::MonitorsZeroInputs { .. }) => ThryveStatus::InvalidState,
+        _ => ThryveStatus::OperationFail,
+    }
+}
+
+/// Why the latest Thryve call on this thread failed, as a null-terminated C string, or NULL if it
+/// didn't fail.
+///
+/// Every Thryve call clears it first, so read it right after the call that failed. The string
+/// stays valid until the next Thryve call on the same thread. For an error Thryve returned, it's
+/// the error's text with its causes, as the logs show it.
+///
+/// # Example
+///
+/// ```c
+/// ThryveTask task = thryve_task_create("", 2, my_job, NULL, NULL);
+/// if (task == NULL) {
+///     fprintf(stderr, "no task: %s\n", thryve_last_error());
+/// }
+/// ```
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub extern "C" fn thryve_last_error() -> *const c_char {
+    LAST_ERROR
+        .try_with(|last| {
+            last.try_borrow()
+                .ok()
+                .and_then(|last| last.as_ref().map(|message| message.as_ptr()))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(std::ptr::null())
 }
 
 /// FFI-safe status code for operations.
@@ -297,61 +403,57 @@ pub enum ThryveStatus {
     StrConvError = 5,
 }
 
-/// FFI-safe result for task execution.
+/// What a plain task's job or a plugin's entry point reports, filled in through the pointer the
+/// job gets.
 ///
-/// This pub struct represents the result of a task or plugin execution, allowing the
-/// foreign language implementation to communicate the outcome back to the Rust runtime.
+/// The result starts empty, every field NULL or false, which reports nothing. A NULL string is an
+/// empty one, as in Rust's `TaskResult::new("", String::new(), "")`.
 ///
 /// # Fields
 ///
-/// - `result_type`: A null-terminated string describing the result type (e.g., "Success", "Failed")
-/// - `message`: A null-terminated string with a human-readable result message
-/// - `log_file`: A null-terminated string specifying the log file name for the result
-/// - `has_chain`: Indicates whether a chained task should be executed next
-/// - `chain_task`: Pointer to the chained task (only valid if `has_chain` is true)
+/// - `result_type`: the result's type, such as `"Saved"`. `"Fin"` stops the engine.
+/// - `message`: a message to write to `log_file`. It needs a result type: without one, `Error.log`
+///   gets an error instead.
+/// - `log_file`: the log file to write the message to, such as `"Main"`. A message for a log file
+///   that wasn't registered goes to `Error.log`, with a note.
+/// - `has_chain`: whether `chain_task` should run next
+/// - `chain_task`: the task to run next, made with `thryve_task_create`
 ///
-/// # Constructing a Task Result
+/// # Filling in a Result
 ///
-/// In C, you create the result with zero-initialized memory:
-///
-/// ```c
-/// ThryveTaskResult result = {0};  // has_chain = false, chain_task = NULL
-/// result.result_type = "Success";
-/// result.message = "Task completed";
-/// result.log_file = "Main";
-/// ```
-///
-/// If you want to return a chained task:
+/// A job with nothing to report leaves the result alone. One with something to say fills it in:
 ///
 /// ```c
-/// ThryveTaskResult result = {0};
-/// result.result_type = "Chained";
-/// result.message = "Chaining to next task";
-/// result.log_file = "Main";
-/// result.has_chain = 1;
-/// result.chain_task = my_chained_task;  // Pointer to a ThryveTask created by thryve_task_create
+/// void save(ThryveTaskResult* result, void* report) {
+///     if (!save_report(report)) {
+///         result->result_type = "SaveFailed";
+///         result->message = "the report couldn't be saved";
+///         result->log_file = "Main";
+///     }
+/// }
 /// ```
 ///
-/// **Important**: The `chain_task` pointer must point to a valid `ThryveTask` that has been
-/// created (e.g., via `thryve_task_create`). The Rust side will take ownership of this task
-/// when `has_chain` is true and the pointer is not NULL.
+/// To run another task next:
+///
+/// ```c
+/// result->has_chain = true;
+/// result->chain_task = thryve_task_create("Upload", 2, upload, NULL, NULL);
+/// ```
 ///
 /// # Memory Management
 ///
-/// - String fields (`result_type`, `message`, `log_file`) should point to static/const strings
-///   or strings that remain valid for the lifetime of the result. Do NOT free these pointers
-///   after returning the result.
-/// - The `chain_task` pointer, if provided, is owned by the Rust side after the result is returned.
-///   Do NOT free the chained task manually.
+/// - Thryve copies the strings as soon as the job returns, so they must still be valid then:
+///   string literals work, a buffer local to the job doesn't.
+/// - The chained task is Thryve's once the job returns: don't free it.
 #[repr(C)]
 pub struct ThryveTaskResult {
-    /// The result's type (a null-terminated C string). NULL, or text that isn't valid UTF-8,
+    /// The result's type (a null-terminated C string). NULL is empty; text that isn't valid UTF-8
     /// becomes `"Error"`.
     pub result_type: *const c_char,
-    /// The message to log (a null-terminated C string). NULL becomes `"No message"`.
+    /// The message to log (a null-terminated C string). NULL is empty: nothing is logged.
     pub message: *const c_char,
-    /// The log file to write the message to (a null-terminated C string). NULL, or text that isn't
-    /// valid UTF-8, becomes `"Main"`.
+    /// The log file to write the message to (a null-terminated C string). NULL is empty; text that
+    /// isn't valid UTF-8 becomes `"Main"`.
     pub log_file: *const c_char,
     /// Whether `chain_task` holds a follow-up task to run next.
     pub has_chain: bool,
@@ -390,13 +492,7 @@ impl ThryveTaskResult {
     /// # Example (C)
     ///
     /// ```c
-    /// ThryveTaskResult result = thryve_task_result_new("Success", "Task completed", "Main");
-    /// ```
-    ///
-    /// # Example (C++)
-    ///
-    /// ```cpp
-    /// ThryveTaskResult result = thryve_task_result_new("Success", "Task completed", "Main");
+    /// *result = thryve_task_result_new("Saved", "Report saved", "Main");
     /// ```
     pub fn new(
         result_type: *const c_char,
@@ -428,7 +524,7 @@ impl ThryveTaskResult {
     /// # Example (C)
     ///
     /// ```c
-    /// ThryveTaskResult result = thryve_task_result_new_with_chain("Chained", "Chaining to next task", "Main", my_chained_task);
+    /// *result = thryve_task_result_new_with_chain("Saved", "Report saved", "Main", upload_task);
     /// ```
     pub fn new_with_chain(
         result_type: *const c_char,
@@ -446,12 +542,11 @@ impl ThryveTaskResult {
     }
 }
 
-/// Converts an `ThryveTaskResult` to a `TaskResult`.
+/// Converts the result a C job filled in to a `TaskResult`.
 ///
-/// This function takes the FFI result pub struct and converts it into a proper
-/// `TaskResult` that the Rust runtime can use. If the result contains a
-/// chained task pointer, that task is taken ownership of and chained
-/// to the result.
+/// A NULL string is an empty one, so a result left as it started reports nothing, as Rust's
+/// `TaskResult::new("", String::new(), "")` does. A result type that isn't valid UTF-8 becomes
+/// `"Error"`, and a log file that isn't becomes `"Main"`.
 ///
 /// # Arguments
 ///
@@ -463,9 +558,9 @@ impl ThryveTaskResult {
 /// If `has_chain` is true and `chain_task` is not NULL, the chained task
 /// is taken ownership of and attached to the result.
 pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
-    // Extract the string fields from FFI result, falling back to defaults
+    // A NULL string is an empty one; text that isn't valid UTF-8 falls back to a default.
     let result_type = if result.result_type.is_null() {
-        String::from("Error")
+        String::new()
     } else {
         // Safety: result_type is only valid if not NULL, and the foreign language
         // guarantees the string remains valid for the lifetime of the result.
@@ -477,7 +572,7 @@ pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
     };
 
     let message = if result.message.is_null() {
-        String::from("No message")
+        String::new()
     } else {
         // Safety: result.message is only valid if not NULL
         unsafe { CStr::from_ptr(result.message) }
@@ -486,7 +581,7 @@ pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
     };
 
     let log_file = if result.log_file.is_null() {
-        String::from("Main")
+        String::new()
     } else {
         // Safety: result.log_file is only valid if not NULL
         unsafe { CStr::from_ptr(result.log_file) }
@@ -507,9 +602,9 @@ pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
     res
 }
 
-/// Creates a new ThryveTaskResult with the specified result type, message, and log file.
+/// Creates a new ThryveTaskResult with the specified result type, message, and log file, for a
+/// job to copy into the result it's given.
 ///
-/// This is a helper function for foreign language code to create task results.
 /// All string parameters must be null-terminated C strings that remain valid for
 /// the lifetime of the result. Use static/const strings to avoid lifetime issues.
 ///
@@ -526,7 +621,9 @@ pub fn ffi_result_to_result(result: ThryveTaskResult) -> TaskResult {
 /// # Example (C)
 ///
 /// ```c
-/// ThryveTaskResult result = thryve_task_result_new("Success", "Task completed", "Main");
+/// void finish(ThryveTaskResult* result, void* user_data) {
+///     *result = thryve_task_result_new("Fin", "", "Main");  // stops the engine
+/// }
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_task_result_new(
@@ -555,7 +652,8 @@ pub extern "C" fn thryve_task_result_new(
 /// # Example (C)
 ///
 /// ```c
-/// ThryveTaskResult result = thryve_task_result_new_with_chain("Chained", "Chaining to next task", "Main", my_chained_task);
+/// ThryveTask upload = thryve_task_create("Upload", 2, upload_report, NULL, NULL);
+/// *result = thryve_task_result_new_with_chain("Saved", "Report saved", "Main", upload);
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_task_result_new_with_chain(
@@ -569,11 +667,24 @@ pub extern "C" fn thryve_task_result_new_with_chain(
     })
 }
 
-/// FFI-safe function pointer for task job — takes no arguments and returns a `ThryveTaskResult`.
+/// A plain task's job: runs once, on a worker. It gets the task's result to fill in, which starts
+/// empty and reports nothing if left alone, and the user data given to [`thryve_task_create`].
 ///
-/// Used for plugin entry points and task execution. The foreign language implementation
-/// should return a `ThryveTaskResult` with `has_chain` set to `false` if no chained task follows.
-pub type ThryveTaskJob = extern "C" fn() -> ThryveTaskResult;
+/// It fills in the result instead of returning one, so that languages whose callbacks can't
+/// return a struct can write it. See [`ThryveTaskResult`].
+pub type ThryveTaskJob =
+    Option<extern "C" fn(result: *mut ThryveTaskResult, user_data: *mut c_void)>;
+
+/// Runs a plain task's job or a plugin's entry point: it fills in a result that starts empty,
+/// which then becomes the task's `TaskResult`.
+fn run_filling_job(
+    job: extern "C" fn(*mut ThryveTaskResult, *mut c_void),
+    user_data: *mut c_void,
+) -> TaskResult {
+    let mut result = ThryveTaskResult::default();
+    job(&mut result, user_data);
+    ffi_result_to_result(result)
+}
 
 /// FFI-safe function pointer for plugin cleanup — takes a pointer to the plugin's core data and
 /// reports whether the cleanup worked.
@@ -586,41 +697,31 @@ pub type ThryveTaskJob = extern "C" fn() -> ThryveTaskResult;
 /// logs that the plugin failed to clean up to `Error.log`, then goes on with the other plugins
 /// and the shutdown. The return type is a plain `int` rather than `ThryveStatus`, so that any
 /// value the callback returns is safe for Thryve to read.
-pub type ThryvePluginCleanUp = extern "C" fn(*const u8) -> c_int;
-
-/// FFI-safe function pointer for plugin entry point — returns a task result.
 ///
-/// Used by `thryve_plugin_create` as the `entry_point` parameter. This function is called
-/// when the plugin's task is executed.
-pub type ThryvePluginEntryPoint = extern "C" fn() -> ThryveTaskResult;
+/// NULL: the plugin has nothing to clean up.
+pub type ThryvePluginCleanUp = Option<extern "C" fn(*const c_void) -> c_int>;
+
+/// A plugin's entry point: runs once, on a worker, when the engine starts.
+///
+/// Like a task's job, it gets a result to fill in, which starts empty, and it gets the plugin's
+/// core pointer, the `plg_core_ptr` given to `thryve_plugin_create`.
+pub type ThryvePluginEntryPoint =
+    Option<extern "C" fn(result: *mut ThryveTaskResult, plg_core_ptr: *mut c_void)>;
 
 /// FFI-safe function pointer for observer cleanup — takes a pointer to the observer's core data.
 ///
 /// Called once during shutdown, on Thryve's observer clean-up thread. The `core_ptr` is the same
-/// pointer that was passed to `thryve_observer_create` as `obs_core_ptr`.
-pub type ThryveObserverCleanUp = extern "C" fn(*const u8);
+/// pointer that was passed to `thryve_observer_create` as `obs_core_ptr`. NULL: the observer has
+/// nothing to clean up.
+pub type ThryveObserverCleanUp = Option<extern "C" fn(*const c_void)>;
 
-/// FFI-safe function pointer for observer main loop — takes a pointer to the observer's core data.
+/// FFI-safe function pointer for an observer's job: its whole loop, called once on the observer's
+/// own thread.
 ///
-/// **Currently unused** in the FFI layer. The primary observer callback is `ThryveObsJob`.
-pub type ThryveObserverMainLoop = extern "C" fn(*const u8);
-
-/// FFI-safe function pointer for observer job — takes an `ThryveObserver` handle and returns nothing.
-///
-/// This is the **primary callback** for observer execution. When an observer's main loop runs,
-/// the Rust side:
-/// 1. Clones the `Arc<Observer>` and converts to raw pointer
-/// 2. Calls this function with the raw pointer
-/// 3. The FFI implementation must convert the raw pointer back to an Arc and drop it when done
-///
-/// See the module-level documentation for the [Observer Job Memory Safety](#observer-job-memory-safety) details.
-pub type ThryveObsJob = extern "C" fn(ThryveObserver);
-
-/// FFI-safe function pointer for notification logic — takes a pointer to the notification's core data.
-///
-/// **Currently unused**: no FFI function takes one, so Thryve never calls it. A notification's
-/// core data is passed to `thryve_notification_create` as `notif_core_ptr`.
-pub type ThryveNotifLogic = extern "C" fn(*const u8);
+/// It gets the observer, which it borrows until it returns: it receives the observer's
+/// notifications with [`thryve_observer_pop`] until that returns NULL, then returns. It must not
+/// keep or free the observer. See [Observer Jobs](#observer-jobs).
+pub type ThryveObsJob = Option<extern "C" fn(ThryveObserver)>;
 
 // ============================================================================
 // Config Wrappers
@@ -679,17 +780,14 @@ pub extern "C" fn thryve_config_default() -> ThryveConfig {
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn thryve_config_from_file(path: *const c_char) -> ThryveConfig {
     ffi_guard(std::ptr::null_mut(), || {
-        if path.is_null() {
-            return std::ptr::null_mut();
-        }
-
         // Invalid UTF-8 can't name the file here, so it's rejected like a missing file.
-        let Ok(path_str) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        let Ok(path_str) = (unsafe { str_arg(path, "path") }) else {
             return std::ptr::null_mut();
         };
 
-        let Ok(config) = Config::load_config_from_file(path_str) else {
-            return std::ptr::null_mut();
+        let config = match Config::load_config_from_file(path_str) {
+            Ok(config) => config,
+            Err(error) => return fail(std::ptr::null_mut(), get_err_oneline(&error)),
         };
         let boxed = Box::into_raw(Box::new(config)) as ThryveConfig;
         if boxed.is_null() {
@@ -757,7 +855,7 @@ pub extern "C" fn thryve_packet_handle_free(handle: ThryvePacketHandle) {
 pub extern "C" fn thryve_packet_handle_clone(handle: ThryvePacketHandle) -> ThryvePacketHandle {
     ffi_guard(std::ptr::null_mut(), || {
         if handle.is_null() {
-            return std::ptr::null_mut();
+            return fail(std::ptr::null_mut(), "handle is NULL");
         }
 
         let ph = unsafe { &*(handle as *const PacketHandle) };
@@ -805,7 +903,7 @@ pub extern "C" fn thryve_packet_handle_clone(handle: ThryvePacketHandle) -> Thry
 pub extern "C" fn thryve_ctx_create(config: ThryveConfig) -> ThryveCtx {
     ffi_guard(std::ptr::null_mut(), || {
         if config.is_null() {
-            return std::ptr::null_mut();
+            return fail(std::ptr::null_mut(), "config is NULL");
         }
 
         let config = unsafe { &*(config as *const Config) };
@@ -847,22 +945,22 @@ pub extern "C" fn thryve_ctx_free(ctx: ThryveCtx) {
 /// # Arguments
 ///
 /// * `ctx` - The opaque pointer to the Ctx instance
-/// * `plugin` - The opaque pointer to the Plugin instance
+/// * `plugin` - The opaque pointer to the Plugin instance. It's moved into the context: don't use
+///   or free it afterwards
 ///
 /// # Examples
 ///
 /// ```c
 /// ThryveCtx ctx = thryve_ctx_create(config);
 /// ThryvePlugin plugin = thryve_plugin_create(...);
-/// thryve_ctx_add_plugin(ctx, plugin);
-/// thryve_plugin_free(plugin);
+/// thryve_ctx_add_plugin(ctx, plugin); // ctx owns the plugin now
 /// thryve_ctx_free(ctx);
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_ctx_add_plugin(ctx: ThryveCtx, plugin: ThryvePlugin) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
         if ctx.is_null() || plugin.is_null() {
-            return ThryveStatus::NullArg;
+            return fail(ThryveStatus::NullArg, "ctx or plugin is NULL");
         }
 
         unsafe {
@@ -880,15 +978,15 @@ pub extern "C" fn thryve_ctx_add_plugin(ctx: ThryveCtx, plugin: ThryvePlugin) ->
 /// # Arguments
 ///
 /// * `ctx` - The opaque pointer to the Ctx instance
-/// * `observer` - The opaque pointer to the Observer instance
+/// * `observer` - The opaque pointer to the Observer instance. It's moved into the context: don't
+///   use or free it afterwards
 ///
 /// # Examples
 ///
 /// ```c
 /// ThryveCtx ctx = thryve_ctx_create(config);
 /// ThryveObserver observer = thryve_observer_create(...);
-/// thryve_ctx_add_observer(ctx, observer);
-/// thryve_observer_free(observer);
+/// thryve_ctx_add_observer(ctx, observer); // ctx owns the observer now
 /// thryve_ctx_free(ctx);
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
@@ -898,7 +996,7 @@ pub extern "C" fn thryve_ctx_add_observer(
 ) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
         if ctx.is_null() || observer.is_null() {
-            return ThryveStatus::NullArg;
+            return fail(ThryveStatus::NullArg, "ctx or observer is NULL");
         }
 
         unsafe {
@@ -916,8 +1014,14 @@ pub extern "C" fn thryve_ctx_add_observer(
 /// # Arguments
 ///
 /// * `ctx` - The opaque pointer to the Ctx instance
-/// * `file_names` - Array of null-terminated C strings
+/// * `file_names` - Array of null-terminated C strings; NULL entries are skipped
 /// * `count` - Number of file names
+///
+/// # Returns
+///
+/// * `ThryveStatus::Ok` once every name is added
+/// * `ThryveStatus::NullArg` if `ctx` or `file_names` is NULL, or `count` isn't above 0
+/// * `ThryveStatus::StrConvError` if a name isn't valid UTF-8; none of the names is added then
 ///
 /// # Safety
 ///
@@ -943,22 +1047,31 @@ pub unsafe extern "C" fn thryve_ctx_set_logging_file_names(
 ) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
         if ctx.is_null() || file_names.is_null() || count <= 0 {
-            return ThryveStatus::NullArg;
+            return fail(
+                ThryveStatus::NullArg,
+                "ctx or file_names is NULL, or count isn't above 0",
+            );
         }
 
-        unsafe {
-            let ctx = &mut *(ctx as *mut Ctx);
-            for i in 0..count {
-                let name_ptr = *file_names.offset(i as isize);
-                if !name_ptr.is_null() {
-                    let name_str = CStr::from_ptr(name_ptr as *const c_char)
-                        .to_str()
-                        .unwrap_or("")
-                        .to_string();
-                    ctx.logging_file_names.push(name_str);
-                }
+        // Every name is read first, so that one that isn't UTF-8 adds none of them.
+        let mut names = Vec::with_capacity(count as usize);
+        for i in 0..count as usize {
+            // Safety: the caller guarantees `count` entries.
+            let name_ptr = unsafe { *file_names.add(i) };
+            if name_ptr.is_null() {
+                continue;
+            }
+
+            // Safety: the caller guarantees each entry is NULL or a valid C string.
+            match unsafe { str_arg(name_ptr, &format!("file_names[{i}]")) } {
+                Ok(name) => names.push(name.to_string()),
+                Err(status) => return status,
             }
         }
+
+        // Safety: the caller guarantees a valid `ctx`.
+        let ctx = unsafe { &mut *(ctx as *mut Ctx) };
+        ctx.logging_file_names.extend(names);
 
         ThryveStatus::Ok
     })
@@ -967,12 +1080,12 @@ pub unsafe extern "C" fn thryve_ctx_set_logging_file_names(
 /// Turns the result of sending a task or notification into a status for C.
 ///
 /// A send fails only once the engine is gone (it stopped, or its context was freed without
-/// starting it), which is `InvalidState`. The task or notification is dropped either way.
+/// starting it), which is `InvalidState`, and records why. The task or notification is dropped
+/// either way.
 fn send_result_status(result: Result<(), ThryveError>) -> ThryveStatus {
     match result {
         Ok(()) => ThryveStatus::Ok,
-        Err(ThryveError::EngineNotRunning(_)) => ThryveStatus::InvalidState,
-        Err(_) => ThryveStatus::OperationFail,
+        Err(error) => fail(status_of(&error), get_err_oneline(&error)),
     }
 }
 
@@ -986,20 +1099,22 @@ fn send_result_status(result: Result<(), ThryveError>) -> ThryveStatus {
 /// # Returns
 ///
 /// * `ThryveStatus::Ok` if the task was sent successfully
-/// * `ThryveStatus::NullArg` if ctx or task is NULL
+/// * `ThryveStatus::NullArg` if ctx or task is NULL; a task is dropped
 /// * `ThryveStatus::InvalidState` if the engine isn't running; the task is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_ctx_send_task(ctx: ThryveCtx, task: ThryveTask) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
-        if ctx.is_null() || task.is_null() {
-            return ThryveStatus::NullArg;
+        if task.is_null() {
+            return fail(ThryveStatus::NullArg, "task is NULL");
+        }
+        // Taken first, so that it's dropped whatever happens next.
+        let task = unsafe { Box::from_raw(task as *mut Task) };
+        if ctx.is_null() {
+            return fail(ThryveStatus::NullArg, "ctx is NULL");
         }
 
-        unsafe {
-            let ctx = &*(ctx as *const Ctx);
-            let task = Box::from_raw(task as *mut Task);
-            send_result_status(ctx.packet_handle().send_task(*task))
-        }
+        let ctx = unsafe { &*(ctx as *const Ctx) };
+        send_result_status(ctx.packet_handle().send_task(*task))
     })
 }
 
@@ -1036,7 +1151,7 @@ pub extern "C" fn thryve_ctx_send_task(ctx: ThryveCtx, task: ThryveTask) -> Thry
 pub extern "C" fn thryve_ctx_get_packet_handle(ctx: ThryveCtx) -> ThryvePacketHandle {
     ffi_guard(std::ptr::null_mut(), || {
         if ctx.is_null() {
-            return std::ptr::null_mut();
+            return fail(std::ptr::null_mut(), "ctx is NULL");
         }
 
         unsafe {
@@ -1065,7 +1180,7 @@ pub extern "C" fn thryve_ctx_get_packet_handle(ctx: ThryveCtx) -> ThryvePacketHa
 /// # Returns
 ///
 /// * `ThryveStatus::Ok` if the task was sent successfully
-/// * `ThryveStatus::NullArg` if handle or task is NULL
+/// * `ThryveStatus::NullArg` if handle or task is NULL; a task is dropped
 /// * `ThryveStatus::InvalidState` if the engine isn't running; the task is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_packet_handle_send_task(
@@ -1073,15 +1188,17 @@ pub extern "C" fn thryve_packet_handle_send_task(
     task: ThryveTask,
 ) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
-        if handle.is_null() || task.is_null() {
-            return ThryveStatus::NullArg;
+        if task.is_null() {
+            return fail(ThryveStatus::NullArg, "task is NULL");
+        }
+        // Taken first, so that it's dropped whatever happens next.
+        let task = unsafe { Box::from_raw(task as *mut Task) };
+        if handle.is_null() {
+            return fail(ThryveStatus::NullArg, "handle is NULL");
         }
 
-        unsafe {
-            let pkt = &*(handle as *const PacketHandle);
-            let task = Box::from_raw(task as *mut Task);
-            send_result_status(pkt.send_task(*task))
-        }
+        let pkt = unsafe { &*(handle as *const PacketHandle) };
+        send_result_status(pkt.send_task(*task))
     })
 }
 
@@ -1096,7 +1213,7 @@ pub extern "C" fn thryve_packet_handle_send_task(
 /// # Returns
 ///
 /// * `ThryveStatus::Ok` if the notification was sent successfully
-/// * `ThryveStatus::NullArg` if handle or notif is NULL
+/// * `ThryveStatus::NullArg` if handle or notif is NULL; a notification is dropped
 /// * `ThryveStatus::InvalidState` if the engine isn't running; the notification is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_packet_handle_send_notification(
@@ -1104,15 +1221,17 @@ pub extern "C" fn thryve_packet_handle_send_notification(
     notif: ThryveNotif,
 ) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
-        if handle.is_null() || notif.is_null() {
-            return ThryveStatus::NullArg;
+        if notif.is_null() {
+            return fail(ThryveStatus::NullArg, "notif is NULL");
+        }
+        // Taken first, so that it's dropped whatever happens next.
+        let notif = unsafe { Box::from_raw(notif as *mut Notif) };
+        if handle.is_null() {
+            return fail(ThryveStatus::NullArg, "handle is NULL");
         }
 
-        unsafe {
-            let pkt = &*(handle as *const PacketHandle);
-            let n = Box::from_raw(notif as *mut Notif);
-            send_result_status(pkt.send_notification(*n))
-        }
+        let pkt = unsafe { &*(handle as *const PacketHandle) };
+        send_result_status(pkt.send_notification(*notif))
     })
 }
 
@@ -1120,56 +1239,72 @@ pub extern "C" fn thryve_packet_handle_send_notification(
 // Task Wrappers
 // ============================================================================
 
-/// Creates a new task with the specified parameters.
+/// Creates a plain task: its job fills in the task's result.
 ///
 /// # Arguments
 ///
-/// * `name` - The task name (null-terminated C string)
-/// * `priority` - The task priority (0-14)
-/// * `job` - The task job function pointer
+/// * `name` - The task name (null-terminated C string), copied
+/// * `priority` - The task priority: higher is more urgent. The engine caps it at the configured
+///   `max_priority`, which is 14 at most
+/// * `job` - Runs once, on a worker, with the task's result to fill in, which starts empty, and
+///   `user_data`. See [`ThryveTaskJob`]
+/// * `user_data` - Passed to `job`
+/// * `free_user_data` - Frees `user_data` once the job has run, or with the task if it never runs.
+///   NULL: never freed
 ///
 /// # Returns
 ///
-/// An opaque pointer to the Task instance, or NULL on failure, including when
-/// `name` is empty or contains control characters.
+/// An opaque pointer to the Task instance, or NULL if `name` or `job` is NULL, or the name is
+/// empty, has a control character or isn't valid UTF-8; [`thryve_last_error`] says which.
+/// `user_data` is freed either way.
 ///
 /// # Safety
 ///
 /// `name` must be either null or a valid pointer to a null-terminated C
-/// string, valid for reads for the duration of this call. `job` must be a
-/// valid, non-null function pointer that is safe to call with no arguments.
+/// string, valid for reads for the duration of this call. `job` and `free_user_data` must be safe
+/// to call from any thread.
+///
+/// # Example
+///
+/// ```c
+/// void save(ThryveTaskResult* result, void* report) {
+///     if (!save_report(report)) {
+///         result->result_type = "SaveFailed";
+///         result->message = "the report couldn't be saved";
+///         result->log_file = "Main";
+///     }
+/// }
+///
+/// ThryveTask task = thryve_task_create("Save", 2, save, strdup("report.txt"), free);
+/// thryve_packet_handle_send_task(packet_handle, task);
+/// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn thryve_task_create(
     name: *const c_char,
     priority: u8,
     job: ThryveTaskJob,
+    user_data: *mut c_void,
+    free_user_data: ThryveFreeFn,
 ) -> ThryveTask {
     ffi_guard(std::ptr::null_mut(), || {
-        if name.is_null() {
+        // Taken first, so that it's freed even when the task isn't made.
+        let user_data = UserData::new(user_data, free_user_data);
+
+        let Ok(task_name) = (unsafe { str_arg(name, "name") }) else {
             return std::ptr::null_mut();
-        }
+        };
+        let Some(job) = job else {
+            return fail(std::ptr::null_mut(), "job is NULL");
+        };
 
-        unsafe {
-            let task_name = CStr::from_ptr(name)
-                .to_str()
-                .unwrap_or("Unknown")
-                .to_string();
-            // Wrap the FFI function pointer in a closure that converts its result
-            let task_job = move || {
-                let ffi_result = (job)();
-                // Convert ThryveTaskResult to TaskResult
-                ffi_result_to_result(ffi_result)
-            };
-            let Ok(task) = Task::new(&task_name, priority, task_job) else {
-                return std::ptr::null_mut();
-            };
+        // The closure owns the user data, which is freed once it has run, or with the task.
+        let task_job = move || run_filling_job(job, user_data.get());
+        let task = match Task::new(task_name, priority, task_job) {
+            Ok(task) => task,
+            Err(error) => return fail(std::ptr::null_mut(), get_err_oneline(&error)),
+        };
 
-            let boxed = Box::into_raw(Box::new(task)) as ThryveTask;
-            if boxed.is_null() {
-                return std::ptr::null_mut();
-            }
-            boxed
-        }
+        Box::into_raw(Box::new(task)) as ThryveTask
     })
 }
 
@@ -1228,7 +1363,7 @@ pub extern "C" fn thryve_task_free(task: ThryveTask) {
 pub extern "C" fn thryve_run_interactive_start(ctx: ThryveCtx) -> ThryveRunHandle {
     ffi_guard(std::ptr::null_mut(), || {
         if ctx.is_null() {
-            return std::ptr::null_mut();
+            return fail(std::ptr::null_mut(), "ctx is NULL");
         }
 
         let ctx = unsafe { Box::from_raw(ctx as *mut Ctx) };
@@ -1244,7 +1379,7 @@ pub extern "C" fn thryve_run_interactive_start(ctx: ThryveCtx) -> ThryveRunHandl
                 }
                 boxed
             }
-            Err(_) => std::ptr::null_mut(),
+            Err(error) => fail(std::ptr::null_mut(), get_err_oneline(&error)),
         }
     })
 }
@@ -1273,7 +1408,7 @@ pub extern "C" fn thryve_run_interactive_start(ctx: ThryveCtx) -> ThryveRunHandl
 pub extern "C" fn thryve_run_interactive_free(handle: ThryveRunHandle) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
         if handle.is_null() {
-            return ThryveStatus::NullArg;
+            return fail(ThryveStatus::NullArg, "handle is NULL");
         }
 
         unsafe {
@@ -1337,6 +1472,7 @@ pub extern "C" fn thryve_service_create(config: ThryveConfig) -> ThryveServiceCr
         },
         || {
             if config.is_null() {
+                set_last_error("config is NULL");
                 return ThryveServiceCreateResult {
                     service: std::ptr::null_mut(),
                     ctx: std::ptr::null_mut(),
@@ -1391,7 +1527,7 @@ pub extern "C" fn thryve_service_create(config: ThryveConfig) -> ThryveServiceCr
 pub extern "C" fn thryve_service_run(service: ThryveService, ctx: ThryveCtx) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
         if service.is_null() || ctx.is_null() {
-            return ThryveStatus::NullArg;
+            return fail(ThryveStatus::NullArg, "service or ctx is NULL");
         }
 
         // Take ownership of the service and ctx
@@ -1403,8 +1539,10 @@ pub extern "C" fn thryve_service_run(service: ThryveService, ctx: ThryveCtx) -> 
             Ok(()) => ThryveStatus::Ok,
             // The service manager didn't start this process, so the call was made in the wrong
             // situation.
-            Err(ThryveError::Startup(StartupError::Service { .. })) => ThryveStatus::InvalidState,
-            Err(_) => ThryveStatus::OperationFail,
+            Err(error @ ThryveError::Startup(StartupError::Service { .. })) => {
+                fail(ThryveStatus::InvalidState, get_err_oneline(&error))
+            }
+            Err(error) => fail(ThryveStatus::OperationFail, get_err_oneline(&error)),
         }
     })
 }
@@ -1447,28 +1585,30 @@ pub extern "C" fn thryve_service_free(service: ThryveService) {
 /// # Arguments
 ///
 /// * `plg_type` - The plugin type (null-terminated C string), which identifies the plugin and must be
-///   unique. **Consumed** — do not free after calling.
+///   unique. It's copied.
 /// * `plg_core_ptr` - An opaque pointer to the plugin core data maintained by the foreign language.
 ///   This pointer is passed back to `clean_up` and is available to the plugin's logic.
 /// * `tx` - The opaque pointer to the PacketHandle instance. This is **cloned** inside the plugin,
 ///   so the PacketHandle remains valid after this call and can be used elsewhere.
 /// * `clean_up` - Function pointer called once when the engine shuts down, with `plg_core_ptr`
 ///   as its argument. It returns `ThryveStatus_Ok` if the cleanup worked, and any other value if
-///   it failed; a failure is logged to `Error.log`. See [`ThryvePluginCleanUp`].
-/// * `entry_point` - Function pointer that returns the task execution result.
-///   **Takes ownership** — do not free this pointer after calling.
+///   it failed; a failure is logged to `Error.log`. NULL: nothing to clean up. See
+///   [`ThryvePluginCleanUp`].
+/// * `entry_point` - Runs once, on a worker, when the engine starts, with a result to fill in and
+///   `plg_core_ptr`. See [`ThryvePluginEntryPoint`].
 ///
 /// # Returns
 ///
-/// An opaque pointer to the Plugin instance, or NULL on failure, including when
-/// `plg_type` is empty or contains control characters.
+/// An opaque pointer to the Plugin instance, or NULL if `plg_type`, `tx` or `entry_point` is NULL,
+/// or `plg_type` is empty, has a control character or isn't valid UTF-8; [`thryve_last_error`]
+/// says which.
 ///
 /// # Safety
 ///
 /// `plg_type` must be either null or a valid pointer to a null-terminated
 /// C string, valid for reads for the duration of this call. `tx` must be a valid, non-null `ThryvePacketHandle`. `plg_core_ptr`
 /// is an opaque pointer whose validity for the plugin's entire lifetime is
-/// the caller's responsibility. `clean_up` and `entry_point` must be valid
+/// the caller's responsibility. `clean_up` and `entry_point` must be NULL or
 /// function pointers matching their declared signatures, safe to call from
 /// any thread for as long as the returned plugin is alive.
 ///
@@ -1510,10 +1650,8 @@ pub extern "C" fn thryve_service_free(service: ThryveService) {
 ///     return ThryveStatus_Ok;
 /// }
 ///
-/// ThryveTaskResult my_plugin_entry_point(void) {
-///     ThryveTaskResult result = {0};
-///     // Execute plugin logic here
-///     return result;
+/// void my_plugin_entry_point(ThryveTaskResult* result, void* core_ptr) {
+///     // Start the plugin's work here. Leaving `result` alone reports nothing.
 /// }
 ///
 /// // Then create the plugin:
@@ -1528,49 +1666,43 @@ pub extern "C" fn thryve_service_free(service: ThryveService) {
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn thryve_plugin_create(
     plg_type: *const c_char,
-    plg_core_ptr: *mut u8,
+    plg_core_ptr: *mut c_void,
     tx: ThryvePacketHandle,
     clean_up: ThryvePluginCleanUp,
     entry_point: ThryvePluginEntryPoint,
 ) -> ThryvePlugin {
     ffi_guard(std::ptr::null_mut(), || {
-        if plg_type.is_null() || tx.is_null() {
+        let Ok(plg_type) = (unsafe { str_arg(plg_type, "plg_type") }) else {
             return std::ptr::null_mut();
+        };
+        if tx.is_null() {
+            return fail(std::ptr::null_mut(), "tx is NULL");
         }
-
-        let plg_type = unsafe { CStr::from_ptr(plg_type) }
-            .to_str()
-            .unwrap_or("Unknown");
+        let Some(entry_point) = entry_point else {
+            return fail(std::ptr::null_mut(), "entry_point is NULL");
+        };
 
         // Create the packet handle clone
         let packet_handle = unsafe { &*(tx as *const PacketHandle) }.clone();
 
-        // Wrap the FFI function pointer in a closure that converts its result
-        let task_job = move || {
-            let ffi_result = (entry_point)();
-            // Convert ThryveTaskResult to TaskResult
-            ffi_result_to_result(ffi_result)
-        };
+        // The entry point gets the core pointer, which stays the caller's: no free function.
+        let core = UserData::new(plg_core_ptr, None);
+        let task_job = move || run_filling_job(entry_point, core.get());
 
         // Create the PlgLogic adapter - PluginLogicAdapter already implements PlgLogic
         let adapter: Arc<dyn PlgLogic> =
             Arc::new(PluginLogicAdapter::new(plg_type, plg_core_ptr, clean_up));
 
-        let Ok(plugin) = Plugin::new(plg_type, adapter, packet_handle, task_job) else {
-            return std::ptr::null_mut();
+        let plugin = match Plugin::new(plg_type, adapter, packet_handle, task_job) {
+            Ok(plugin) => plugin,
+            Err(error) => return fail(std::ptr::null_mut(), get_err_oneline(&error)),
         };
 
-        let boxed = Box::into_raw(Box::new(plugin)) as ThryvePlugin;
-
-        if boxed.is_null() {
-            println!("  boxed is null!");
-            return std::ptr::null_mut();
-        }
-        boxed
+        Box::into_raw(Box::new(plugin)) as ThryvePlugin
     })
 }
 
-/// Frees a plugin instance.
+/// Frees a plugin that was never added to a context: once added, the context owns it.
 ///
 /// # Arguments
 ///
@@ -1581,8 +1713,9 @@ pub unsafe extern "C" fn thryve_plugin_create(
 ///
 /// ```c
 /// ThryvePlugin plugin = thryve_plugin_create(...);
-/// thryve_ctx_add_plugin(ctx, plugin);
-/// thryve_plugin_free(plugin);
+/// if (thryve_ctx_add_plugin(ctx, plugin) != ThryveStatus_Ok) {
+///     thryve_plugin_free(plugin); // never added, so it's still yours
+/// }
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_plugin_free(plugin: ThryvePlugin) {
@@ -1609,29 +1742,29 @@ pub extern "C" fn thryve_plugin_free(plugin: ThryvePlugin) {
 /// # Arguments
 ///
 /// * `obs_type` - The observer type (null-terminated C string), which identifies the observer and
-///   must be unique. **Consumed** — do not free after calling.
+///   must be unique. It's copied.
 /// * `obs_core_ptr` - An opaque pointer to the observer core data maintained by the foreign language.
-///   This pointer is passed back to `clean_up`.
+///   This pointer is passed back to `clean_up`, and the job reads it with [`thryve_observer_core`].
 /// * `tx` - The opaque pointer to the PacketHandle instance. This is **cloned** inside the observer,
 ///   so the PacketHandle remains valid after this call and can be used elsewhere.
 /// * `clean_up` - Function pointer called when the observer is cleaned up.
-///   The `obs_core_ptr` is passed as an argument.
-/// * `obs_job_fn` - Function pointer for the observer job (takes `ThryveObserver`, returns nothing).
-///   **This is the primary callback** for observer execution. The `ThryveObserver` handle is a raw pointer
-///   to an `Arc<Observer>` — see [Observer Job Memory Safety](#observer-job-memory-safety) for details.
+///   The `obs_core_ptr` is passed as an argument. NULL: nothing to clean up.
+/// * `obs_job_fn` - The observer's job, its whole loop: called once on the observer's own thread
+///   with the observer, which it borrows until it returns. See [Observer Jobs](#observer-jobs).
 ///
 /// # Returns
 ///
-/// An opaque pointer to the Observer instance, or NULL on failure, including when
-/// `obs_type` is empty or contains control characters.
+/// An opaque pointer to the Observer instance, or NULL if `obs_type`, `tx` or `obs_job_fn` is
+/// NULL, or `obs_type` is empty, has a control character or isn't valid UTF-8;
+/// [`thryve_last_error`] says which.
 ///
 /// # Safety
 ///
 /// `obs_type` must be either null or a valid pointer to a null-terminated
 /// C string, valid for reads for the duration of this call. `tx` must be a valid, non-null `ThryvePacketHandle`. `obs_core_ptr`
 /// is an opaque pointer whose validity for the observer's entire lifetime
-/// is the caller's responsibility. `clean_up` and `obs_job_fn` must be
-/// valid function pointers matching their declared signatures, safe to
+/// is the caller's responsibility. `clean_up` and `obs_job_fn` must be NULL
+/// or function pointers matching their declared signatures, safe to
 /// call from any thread for as long as the returned observer is alive.
 ///
 /// # PacketHandle Usage
@@ -1668,8 +1801,12 @@ pub extern "C" fn thryve_plugin_free(plugin: ThryvePlugin) {
 ///     // Cleanup logic here
 /// }
 ///
-/// void my_observer_job(ThryveObserver obs) {
-///     // Observer job logic here
+/// void my_observer_job(ThryveObserver observer) {
+///     ThryveNotif notif;
+///     while ((notif = thryve_observer_pop(observer)) != NULL) {
+///         // Handle the notification here, then free it.
+///         thryve_notification_free(notif);
+///     }
 /// }
 ///
 /// // Then create the observer:
@@ -1684,56 +1821,54 @@ pub extern "C" fn thryve_plugin_free(plugin: ThryvePlugin) {
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn thryve_observer_create(
     obs_type: *const c_char,
-    obs_core_ptr: *mut u8,
+    obs_core_ptr: *mut c_void,
     tx: ThryvePacketHandle,
     clean_up: ThryveObserverCleanUp,
     obs_job_fn: ThryveObsJob,
 ) -> ThryveObserver {
     ffi_guard(std::ptr::null_mut(), || {
-        if obs_type.is_null() || tx.is_null() {
+        let Ok(obs_type) = (unsafe { str_arg(obs_type, "obs_type") }) else {
             return std::ptr::null_mut();
+        };
+        if tx.is_null() {
+            return fail(std::ptr::null_mut(), "tx is NULL");
         }
-
-        let obs_type = unsafe { CStr::from_ptr(obs_type) }
-            .to_str()
-            .unwrap_or("Unknown");
+        let Some(obs_job_fn) = obs_job_fn else {
+            return fail(std::ptr::null_mut(), "obs_job_fn is NULL");
+        };
 
         // Create the packet handle clone
         let packet_handle = unsafe { &*(tx as *const PacketHandle) }.clone();
 
-        // Wrap the raw pointer in ObsCorePtr to make it Send + Sync for the closure
-        let obs_core_ptr_wrapper = ObsCorePtr(obs_core_ptr);
-
         // Create the ObsJob wrapper - capture the FFI function pointer
         let obs_job = ObsJob::new(move |observer: Arc<Observer>| {
-            // Clone the Arc before passing the raw pointer to the FFI callback.
-            // This ensures the original Arc is dropped when the closure returns,
-            // even if the FFI callback crashes (preventing memory leaks).
-            // The FFI callback owns the cloned Arc and must drop it when done.
-            let ffi_observer = Arc::into_raw(observer.clone()) as ThryveObserver;
+            // The job borrows the observer: `observer` keeps it alive until the job returns. The
+            // pointer is remembered on this thread while the job runs, so that freeing it there
+            // does nothing (see `thryve_observer_free`).
+            let ffi_observer = Arc::as_ptr(&observer) as ThryveObserver;
+            OBSERVER_IN_JOB.with(|in_job| in_job.set(ffi_observer));
             (obs_job_fn)(ffi_observer);
-            // The original Arc is dropped here, but the FFI callback still holds
-            // its copy, so the Observer stays alive during the callback execution.
+            OBSERVER_IN_JOB.with(|in_job| in_job.set(std::ptr::null_mut()));
         });
 
         // Create the ObsLogic adapter - ObserverLogicAdapter already implements ObsLogic
         let adapter: Arc<dyn ObsLogic> =
-            Arc::new(ObserverLogicAdapter::new(obs_core_ptr_wrapper.0, clean_up));
+            Arc::new(ObserverLogicAdapter::new(obs_core_ptr, clean_up));
 
         // Create the Observer
-        let Ok(observer) = Observer::new(obs_type, adapter, obs_job, packet_handle) else {
-            return std::ptr::null_mut();
+        let observer = match Observer::new(obs_type, adapter, obs_job, packet_handle) {
+            Ok(observer) => observer,
+            Err(error) => return fail(std::ptr::null_mut(), get_err_oneline(&error)),
         };
 
-        let boxed = Box::into_raw(Box::new(observer)) as ThryveObserver;
-        if boxed.is_null() {
-            return std::ptr::null_mut();
-        }
-        boxed
+        Box::into_raw(Box::new(observer)) as ThryveObserver
     })
 }
 
-/// Frees an observer instance.
+/// Frees an observer that was never added to a context: once added, the context owns it.
+///
+/// The observer a job was given belongs to the engine: freeing it from the job does nothing,
+/// and [`thryve_last_error`] says so.
 ///
 /// # Arguments
 ///
@@ -1744,17 +1879,103 @@ pub unsafe extern "C" fn thryve_observer_create(
 ///
 /// ```c
 /// ThryveObserver observer = thryve_observer_create(...);
-/// thryve_ctx_add_observer(ctx, observer);
-/// thryve_observer_free(observer);
+/// if (thryve_ctx_add_observer(ctx, observer) != ThryveStatus_Ok) {
+///     thryve_observer_free(observer); // never added, so it's still yours
+/// }
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_observer_free(observer: ThryveObserver) {
     ffi_guard((), || {
-        if !observer.is_null() {
-            unsafe {
-                let _ = Box::from_raw(observer as *mut Observer);
-            }
+        if observer.is_null() {
+            return;
         }
+
+        // The observer a job was given is the engine's, not the caller's.
+        let is_in_job = OBSERVER_IN_JOB
+            .try_with(|in_job| in_job.get() == observer)
+            .unwrap_or(false);
+        if is_in_job {
+            set_last_error("the observer belongs to the engine while its job runs");
+            return;
+        }
+
+        unsafe {
+            let _ = Box::from_raw(observer as *mut Observer);
+        }
+    })
+}
+
+/// Waits for the next notification sent to the observer, and returns it.
+///
+/// It's for the observer's job, which is the observer's whole loop: the job calls it until it
+/// returns NULL, which happens once the engine shuts the observer down, even if notifications are
+/// still queued. The job should then return, which ends the observer's thread.
+///
+/// # Arguments
+///
+/// * `observer` - The observer the job was given
+///
+/// # Returns
+///
+/// The notification, for the job to free with [`thryve_notification_free`]: read the data it
+/// carries with [`thryve_notification_core`]. NULL once the observer is shut down, or if
+/// `observer` is NULL.
+///
+/// # Example
+///
+/// ```c
+/// void my_observer_job(ThryveObserver observer) {
+///     ThryveNotif notif;
+///     while ((notif = thryve_observer_pop(observer)) != NULL) {
+///         Reading* reading = thryve_notification_core(notif);
+///         record(reading);
+///         free(reading);
+///         thryve_notification_free(notif);
+///     }
+/// }
+/// ```
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub extern "C" fn thryve_observer_pop(observer: ThryveObserver) -> ThryveNotif {
+    ffi_guard(std::ptr::null_mut(), || {
+        if observer.is_null() {
+            return fail(std::ptr::null_mut(), "observer is NULL");
+        }
+
+        // Safety: a non-NULL observer is the one a job was given, or one from
+        // `thryve_observer_create`.
+        let observer = unsafe { &*(observer as *const Observer) };
+        match observer.obs_queue.pop() {
+            Some(notif) => Box::into_raw(Box::new(notif)) as ThryveNotif,
+            None => std::ptr::null_mut(),
+        }
+    })
+}
+
+/// The data an observer was created with: the `obs_core_ptr` given to
+/// [`thryve_observer_create`], for its job to reach. Thryve never frees it.
+///
+/// The shutdown calls the observer's `clean_up` before [`thryve_observer_pop`] returns NULL to the
+/// job. So if `clean_up` frees this data, the job must not use it once `thryve_observer_pop` has
+/// returned NULL.
+///
+/// # Returns
+///
+/// The pointer, or NULL if `observer` is NULL.
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub extern "C" fn thryve_observer_core(observer: ThryveObserver) -> *mut c_void {
+    ffi_guard(std::ptr::null_mut(), || {
+        if observer.is_null() {
+            return fail(std::ptr::null_mut(), "observer is NULL");
+        }
+
+        // Safety: a non-NULL observer is the one a job was given, or one from
+        // `thryve_observer_create`.
+        let observer = unsafe { &*(observer as *const Observer) };
+        observer
+            .obs_core
+            .as_any()
+            .downcast_ref::<ObserverLogicAdapter>()
+            .map_or(std::ptr::null_mut(), |adapter| adapter.core_ptr)
     })
 }
 
@@ -1764,9 +1985,8 @@ pub extern "C" fn thryve_observer_free(observer: ThryveObserver) {
 
 /// Creates a new notification with the specified parameters.
 ///
-/// This function allows foreign languages to create notifications by providing
-/// a function pointer for the notification logic. The foreign language implementation
-/// should maintain a pointer to its own notification core data.
+/// The notification carries the foreign language's own data as `notif_core_ptr`: the observer
+/// it's sent to reads it with [`thryve_notification_core`]. Thryve never frees it.
 ///
 /// # Arguments
 ///
@@ -1777,7 +1997,7 @@ pub extern "C" fn thryve_observer_free(observer: ThryveObserver) {
 /// # Returns
 ///
 /// An opaque pointer to the Notif instance, or NULL on failure, including when
-/// `notif_type` or `notif_receiver` is empty or contains control characters.
+/// `notif_type` or `notif_receiver` is empty, contains control characters or isn't valid UTF-8.
 ///
 /// # Safety
 ///
@@ -1789,50 +2009,37 @@ pub extern "C" fn thryve_observer_free(observer: ThryveObserver) {
 /// # Examples
 ///
 /// ```c
-/// // In C, you would define your notification logic function:
-/// void my_notif_logic(const void* core_ptr) {
-///     // Notification processing logic here
-/// }
-///
-/// // Then create the notification:
-/// ThryveNotif notif = thryve_notification_create(
-///     "MyNotifType",
-///     "MyReceiverType",
-///     my_core_data
-/// );
+/// // A reading for the "Readings" observer, which frees it once it has read it.
+/// Reading* reading = malloc(sizeof *reading);
+/// reading->celsius = 21.5;
+/// ThryveNotif notif = thryve_notification_create("Reading", "Readings", reading);
+/// thryve_packet_handle_send_notification(packet_handle, notif);
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn thryve_notification_create(
     notif_type: *const c_char,
     notif_receiver: *const c_char,
-    notif_core_ptr: *mut u8,
+    notif_core_ptr: *mut c_void,
 ) -> ThryveNotif {
     ffi_guard(std::ptr::null_mut(), || {
-        if notif_type.is_null() || notif_receiver.is_null() {
+        let Ok(notif_type) = (unsafe { str_arg(notif_type, "notif_type") }) else {
             return std::ptr::null_mut();
-        }
-
-        let notif_type = unsafe { CStr::from_ptr(notif_type) }
-            .to_str()
-            .unwrap_or("Unknown");
-        let notif_receiver = unsafe { CStr::from_ptr(notif_receiver) }
-            .to_str()
-            .unwrap_or("Unknown");
+        };
+        let Ok(notif_receiver) = (unsafe { str_arg(notif_receiver, "notif_receiver") }) else {
+            return std::ptr::null_mut();
+        };
 
         // Create the NotifLogic adapter
         let notif_core: Box<dyn NotifLogic> =
             Box::new(NotificationLogicAdapter::new(notif_core_ptr));
 
         // Create the notification
-        let Ok(notif) = Notif::new(notif_type, notif_receiver, notif_core) else {
-            return std::ptr::null_mut();
+        let notif = match Notif::new(notif_type, notif_receiver, notif_core) {
+            Ok(notif) => notif,
+            Err(error) => return fail(std::ptr::null_mut(), get_err_oneline(&error)),
         };
 
-        let boxed = Box::into_raw(Box::new(notif)) as ThryveNotif;
-        if boxed.is_null() {
-            return std::ptr::null_mut();
-        }
-        boxed
+        Box::into_raw(Box::new(notif)) as ThryveNotif
     })
 }
 
@@ -1861,6 +2068,30 @@ pub extern "C" fn thryve_notification_free(notif: ThryveNotif) {
     })
 }
 
+/// The data a notification carries: the `notif_core_ptr` it was created with by
+/// [`thryve_notification_create`]. Thryve never frees it.
+///
+/// # Returns
+///
+/// The pointer, or NULL if `notif` is NULL, or wasn't created from C (Thryve's own log lines,
+/// say).
+#[cfg_attr(not(test), unsafe(no_mangle))]
+pub extern "C" fn thryve_notification_core(notif: ThryveNotif) -> *mut c_void {
+    ffi_guard(std::ptr::null_mut(), || {
+        if notif.is_null() {
+            return fail(std::ptr::null_mut(), "notif is NULL");
+        }
+
+        // Safety: a non-NULL notification comes from Thryve.
+        let notif = unsafe { &*(notif as *const Notif) };
+        notif
+            .notif_core
+            .as_any()
+            .downcast_ref::<NotificationLogicAdapter>()
+            .map_or(std::ptr::null_mut(), |adapter| adapter.core_ptr)
+    })
+}
+
 /// Sends a notification to the engine via the context's packet handle.
 ///
 /// # Arguments
@@ -1871,20 +2102,22 @@ pub extern "C" fn thryve_notification_free(notif: ThryveNotif) {
 /// # Returns
 ///
 /// * `ThryveStatus::Ok` if the notification was sent successfully
-/// * `ThryveStatus::NullArg` if ctx or notif is NULL
+/// * `ThryveStatus::NullArg` if ctx or notif is NULL; a notification is dropped
 /// * `ThryveStatus::InvalidState` if the engine isn't running; the notification is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_ctx_send_notification(ctx: ThryveCtx, notif: ThryveNotif) -> ThryveStatus {
     ffi_guard(ThryveStatus::OperationFail, || {
-        if ctx.is_null() || notif.is_null() {
-            return ThryveStatus::NullArg;
+        if notif.is_null() {
+            return fail(ThryveStatus::NullArg, "notif is NULL");
+        }
+        // Taken first, so that it's dropped whatever happens next.
+        let notif = unsafe { Box::from_raw(notif as *mut Notif) };
+        if ctx.is_null() {
+            return fail(ThryveStatus::NullArg, "ctx is NULL");
         }
 
-        unsafe {
-            let ctx = &*(ctx as *const Ctx);
-            let notif = Box::from_raw(notif as *mut Notif);
-            send_result_status(ctx.packet_handle().send_notification(*notif))
-        }
+        let ctx = unsafe { &*(ctx as *const Ctx) };
+        send_result_status(ctx.packet_handle().send_notification(*notif))
     })
 }
 
@@ -1897,14 +2130,14 @@ pub struct PluginLogicAdapter {
     /// The plugin's type, which a failed cleanup names in its error.
     pub plg_type: String,
     /// The foreign plugin's own data, passed back to `clean_up`.
-    pub core_ptr: *mut u8,
-    /// The foreign cleanup callback, called with `core_ptr`.
+    pub core_ptr: *mut c_void,
+    /// The foreign cleanup callback, called with `core_ptr`; `None` if there's nothing to clean up.
     pub clean_up: ThryvePluginCleanUp,
 }
 
 impl PluginLogicAdapter {
     /// Wraps a foreign plugin's type, data pointer and cleanup callback.
-    pub fn new(plg_type: &str, core_ptr: *mut u8, clean_up: ThryvePluginCleanUp) -> Self {
+    pub fn new(plg_type: &str, core_ptr: *mut c_void, clean_up: ThryvePluginCleanUp) -> Self {
         Self {
             plg_type: plg_type.to_string(),
             core_ptr,
@@ -1924,8 +2157,11 @@ impl PlgLogic for PluginLogicAdapter {
     /// Returns [`FinalizationError::PluginCleanup`], naming the plugin's type, if the callback
     /// returns anything other than `ThryveStatus_Ok`.
     fn clean_up(&self) -> Result<(), ThryveError> {
-        // Function pointers are always valid if defined, no null check needed
-        let status = (self.clean_up)(self.core_ptr);
+        // A plugin created without a clean-up has nothing to clean up.
+        let Some(clean_up) = self.clean_up else {
+            return Ok(());
+        };
+        let status = clean_up(self.core_ptr);
 
         if status != ThryveStatus::Ok as c_int {
             return Err(FinalizationError::PluginCleanup {
@@ -1945,14 +2181,14 @@ impl PlgLogic for PluginLogicAdapter {
 /// Adapter for ObsLogic trait to support FFI callbacks.
 pub struct ObserverLogicAdapter {
     /// The foreign observer's own data, passed back to `clean_up`.
-    pub core_ptr: *mut u8,
-    /// The foreign cleanup callback, called with `core_ptr`.
+    pub core_ptr: *mut c_void,
+    /// The foreign cleanup callback, called with `core_ptr`; `None` if there's nothing to clean up.
     pub clean_up: ThryveObserverCleanUp,
 }
 
 impl ObserverLogicAdapter {
     /// Wraps a foreign observer's data pointer and cleanup callback.
-    pub fn new(core_ptr: *mut u8, clean_up: ThryveObserverCleanUp) -> Self {
+    pub fn new(core_ptr: *mut c_void, clean_up: ThryveObserverCleanUp) -> Self {
         Self { core_ptr, clean_up }
     }
 }
@@ -1962,8 +2198,10 @@ unsafe impl Sync for ObserverLogicAdapter {}
 
 impl ObsLogic for ObserverLogicAdapter {
     fn clean_up(&self, _observer: Arc<Observer>) {
-        // Function pointers are always valid if defined, no null check needed
-        (self.clean_up)(self.core_ptr);
+        // An observer created without a clean-up has nothing to clean up.
+        if let Some(clean_up) = self.clean_up {
+            clean_up(self.core_ptr);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1974,12 +2212,12 @@ impl ObsLogic for ObserverLogicAdapter {
 /// Adapter for NotifLogic trait to support FFI callbacks.
 pub struct NotificationLogicAdapter {
     /// The foreign notification's own data.
-    pub core_ptr: *mut u8,
+    pub core_ptr: *mut c_void,
 }
 
 impl NotificationLogicAdapter {
     /// Wraps a foreign notification's data pointer.
-    pub fn new(core_ptr: *mut u8) -> Self {
+    pub fn new(core_ptr: *mut c_void) -> Self {
         Self { core_ptr }
     }
 }
@@ -1992,10 +2230,3 @@ impl thryve_utils::traits::notif_logic::NotifLogic for NotificationLogicAdapter 
         self
     }
 }
-
-/// Wrapper for *mut u8 that implements Send + Sync so it can be captured by closures
-/// used in ObsJob (which requires Send + Sync).
-pub struct ObsCorePtr(pub *mut u8);
-
-unsafe impl Send for ObsCorePtr {}
-unsafe impl Sync for ObsCorePtr {}

@@ -101,15 +101,20 @@ mod tests_ctx_lifecycle {
         let pkt = thryve_ctx_get_packet_handle(ctx);
 
         // Create plugin
-        extern "C" fn test_entry() -> thryve_ffi::ThryveTaskResult {
-            thryve_ffi::thryve_task_result_new(
-                std::ffi::CString::new("Success").unwrap().as_ptr(),
-                std::ffi::CString::new("Done").unwrap().as_ptr(),
-                std::ffi::CString::new("Main").unwrap().as_ptr(),
-            )
+        extern "C" fn test_entry(
+            result: *mut thryve_ffi::ThryveTaskResult,
+            _core_ptr: *mut std::ffi::c_void,
+        ) {
+            unsafe {
+                *result = thryve_ffi::thryve_task_result_new(
+                    c"Success".as_ptr(),
+                    c"Done".as_ptr(),
+                    c"Main".as_ptr(),
+                )
+            };
         }
 
-        extern "C" fn test_cleanup(_core_ptr: *const u8) -> i32 {
+        extern "C" fn test_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
             thryve_ffi::ThryveStatus::Ok as i32
         }
 
@@ -118,8 +123,8 @@ mod tests_ctx_lifecycle {
                 std::ffi::CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_cleanup,
-                test_entry,
+                Some(test_cleanup),
+                Some(test_entry),
             )
         };
 
@@ -142,7 +147,7 @@ mod tests_ctx_lifecycle {
         let ctx = thryve_ctx_create(config);
         let pkt = thryve_ctx_get_packet_handle(ctx);
 
-        extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {}
+        extern "C" fn test_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
         extern "C" fn test_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
         // Create observer
@@ -151,8 +156,8 @@ mod tests_ctx_lifecycle {
                 std::ffi::CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_obs_cleanup,
-                test_obs_job,
+                Some(test_obs_cleanup),
+                Some(test_obs_job),
             )
         };
 
@@ -177,15 +182,17 @@ mod tests_plugin_lifecycle {
         thryve_plugin_create, thryve_plugin_free, thryve_task_result_new,
     };
 
-    extern "C" fn test_plugin_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn test_plugin_entry(
+        result: *mut ThryveTaskResult,
+        _core_ptr: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -202,8 +209,8 @@ mod tests_plugin_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_plugin_cleanup,
-                test_plugin_entry,
+                Some(test_plugin_cleanup),
+                Some(test_plugin_entry),
             )
         };
 
@@ -229,8 +236,8 @@ mod tests_plugin_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(), // NULL packet handle
-                test_plugin_cleanup,
-                test_plugin_entry,
+                Some(test_plugin_cleanup),
+                Some(test_plugin_entry),
             )
         };
 
@@ -253,7 +260,7 @@ mod tests_observer_lifecycle {
         thryve_packet_handle_free,
     };
 
-    extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn test_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
     extern "C" fn test_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
     #[test]
@@ -269,8 +276,8 @@ mod tests_observer_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_obs_cleanup,
-                test_obs_job,
+                Some(test_obs_cleanup),
+                Some(test_obs_job),
             )
         };
 
@@ -296,8 +303,8 @@ mod tests_observer_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(), // NULL packet handle
-                test_obs_cleanup,
-                test_obs_job,
+                Some(test_obs_cleanup),
+                Some(test_obs_job),
             )
         };
 
@@ -324,12 +331,11 @@ mod tests_task_lifecycle {
         ThryveTaskResult, thryve_task_create, thryve_task_free, thryve_task_result_new,
     };
 
-    extern "C" fn test_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn test_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -339,7 +345,9 @@ mod tests_task_lifecycle {
             thryve_task_create(
                 CString::new("TestTask").unwrap().as_ptr(),
                 5, // priority
-                test_task_job,
+                Some(test_task_job),
+                std::ptr::null_mut(),
+                None,
             )
         };
 
@@ -356,7 +364,9 @@ mod tests_task_lifecycle {
             thryve_task_create(
                 std::ptr::null(), // NULL name
                 5,                // priority
-                test_task_job,
+                Some(test_task_job),
+                std::ptr::null_mut(),
+                None,
             )
         };
 
@@ -379,15 +389,14 @@ mod tests_full_interactive_lifecycle {
         thryve_packet_handle_free, thryve_plugin_create, thryve_task_result_new,
     };
 
-    extern "C" fn test_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn test_entry(result: *mut ThryveTaskResult, _core_ptr: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn test_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -414,8 +423,8 @@ mod tests_full_interactive_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_cleanup,
-                test_entry,
+                Some(test_cleanup),
+                Some(test_entry),
             )
         };
 
@@ -435,7 +444,7 @@ mod tests_full_interactive_lifecycle {
 
     #[test]
     fn test_full_interactive_with_observer() {
-        extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {}
+        extern "C" fn test_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
         extern "C" fn test_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
         // 1. Create config
@@ -453,8 +462,8 @@ mod tests_full_interactive_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_cleanup,
-                test_entry,
+                Some(test_cleanup),
+                Some(test_entry),
             )
         };
 
@@ -467,8 +476,8 @@ mod tests_full_interactive_lifecycle {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                test_obs_cleanup,
-                test_obs_job,
+                Some(test_obs_cleanup),
+                Some(test_obs_job),
             )
         };
 
@@ -607,7 +616,7 @@ mod tests_full_interactive_lifecycle {
         #[test]
         fn test_notification_create_with_core_ptr() {
             // Arrange — create a valid core pointer
-            let core_data = Box::into_raw(Box::new(42u32)) as *mut u8;
+            let core_data = Box::into_raw(Box::new(42u32)) as *mut std::ffi::c_void;
 
             // Act — create notification with core pointer
             let notif = unsafe {
@@ -633,12 +642,14 @@ mod tests_full_interactive_lifecycle {
             thryve_task_result_new_with_chain,
         };
 
-        extern "C" fn dummy_task_job() -> ThryveTaskResult {
-            thryve_task_result_new(
-                CString::new("Success").unwrap().as_ptr(),
-                CString::new("Done").unwrap().as_ptr(),
-                CString::new("Main").unwrap().as_ptr(),
-            )
+        extern "C" fn dummy_task_job(
+            result: *mut ThryveTaskResult,
+            _user_data: *mut std::ffi::c_void,
+        ) {
+            unsafe {
+                *result =
+                    thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+            };
         }
 
         #[test]
@@ -669,7 +680,15 @@ mod tests_full_interactive_lifecycle {
 
             // Create a task to chain
             let task_name = CString::new("ChainedTask").unwrap();
-            let task = unsafe { thryve_task_create(task_name.as_ptr(), 5, dummy_task_job) };
+            let task = unsafe {
+                thryve_task_create(
+                    task_name.as_ptr(),
+                    5,
+                    Some(dummy_task_job),
+                    std::ptr::null_mut(),
+                    None,
+                )
+            };
 
             // Act — create FFI result with chain and convert
             let ffi_result = thryve_task_result_new_with_chain(

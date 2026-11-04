@@ -32,20 +32,17 @@ mod tests_ffi_full_lifecycle {
 
     static TASK_RAN: AtomicUsize = AtomicUsize::new(0);
 
-    extern "C" fn finishing_job() -> ThryveTaskResult {
+    extern "C" fn finishing_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
         TASK_RAN.fetch_add(1, Ordering::SeqCst);
-        // "Fin" is the magic result_type the engine checks for in
-        // handle_result to know it should shut down (thryve_core's engine.rs).
+        // "Fin" is the result type the engine shuts down on.
         //
-        // Must be 'static C-string literals, not `CString::new(...).unwrap()`:
-        // the caller (thryve_task_create's wrapper) reads these pointers via
-        // ffi_result_to_result *after* this function has already returned, so
-        // any CString local to this function's scope would already be dropped
-        // (its buffer freed) by then. thryve_task_result_new's own docs call this
-        // out ("Use static/const strings to avoid lifetime issues") - a
-        // dangling read here is exactly what caused this test to hang: the
-        // engine silently never saw "Fin" and looped forever.
-        thryve_task_result_new(c"Fin".as_ptr(), c"done via FFI".as_ptr(), c"Main".as_ptr())
+        // C string literals, not `CString::new(...).unwrap()`: Thryve reads these pointers after
+        // the job returns, when a CString local to the job would already be freed. A dangling
+        // read here once made this test hang: the engine never saw "Fin" and looped forever.
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Fin".as_ptr(), c"done via FFI".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -82,7 +79,9 @@ mod tests_ffi_full_lifecycle {
             thryve_task_create(
                 CString::new("ThryveShutdown").unwrap().as_ptr(),
                 0,
-                finishing_job,
+                Some(finishing_job),
+                std::ptr::null_mut(),
+                None,
             )
         };
         assert!(!task.is_null(), "task should not be null");

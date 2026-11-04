@@ -24,9 +24,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Release-only build. This is what produces target/release/thryve_ffi.dll
-      # and .lib, and also regenerates crates/thryve_ffi/out/thryve.h and
-      # thryve_ffi.h fresh from this exact build (via build.rs), so the
-      # packaged header always matches the packaged binary.
+      # and its import library, thryve_ffi.dll.lib, and also regenerates
+      # crates/thryve_ffi/out/thryve.h and thryve_ffi.h fresh from this exact
+      # build (via build.rs), so the packaged header always matches the packaged
+      # binary.
       - run: cargo build --release -p thryve_ffi
 
       - name: Assemble dist folder
@@ -40,7 +41,10 @@ jobs:
           Copy-Item "crates/thryve_ffi/out/thryve.h" "$dist/include/thryve.h"
           Copy-Item "crates/thryve_ffi/out/thryve_ffi.h" "$dist/include/thryve_ffi.h"
           Copy-Item "target/release/thryve_ffi.dll" "$dist/bin/thryve_ffi.dll"
-          Copy-Item "target/release/thryve_ffi.lib" "$dist/lib/thryve_ffi.lib"
+          # The DLL's import library, under the name C linkers look for. The build's own
+          # thryve_ffi.lib is the static library, which would build the whole library into
+          # the program and never use the DLL.
+          Copy-Item "target/release/thryve_ffi.dll.lib" "$dist/lib/thryve_ffi.lib"
 
       - name: Zip dist folder
         shell: pwsh

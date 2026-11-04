@@ -135,18 +135,19 @@ mod tests_ffi_task_result {
     }
 
     #[test]
-    fn test_ffi_result_to_result_with_null_strings_uses_defaults() {
-        // Arrange
+    fn a_result_left_with_null_strings_reports_nothing() {
+        // Arrange: a result as a job gets it, which it leaves alone
         let ffi_result =
             thryve_task_result_new(std::ptr::null(), std::ptr::null(), std::ptr::null());
 
         // Act
         let internal_result = ffi_result_to_result(ffi_result);
 
-        // Assert
-        assert_eq!(internal_result.result_type(), "Error");
-        assert_eq!(internal_result.message, "No message");
-        assert_eq!(internal_result.log_msg_to_file(), "Main");
+        // Assert: empty strings, as Rust's TaskResult::new("", String::new(), ""), which the
+        // engine logs nothing for
+        assert_eq!(internal_result.result_type(), "");
+        assert_eq!(internal_result.message, "");
+        assert_eq!(internal_result.log_msg_to_file(), "");
     }
 
     #[test]
@@ -160,9 +161,9 @@ mod tests_ffi_task_result {
         // Act
         let internal_result = ffi_result_to_result(ffi_result);
 
-        // Assert — invalid UTF-8 should fall back to "Error"
+        // Assert — invalid UTF-8 should fall back to "Error", and the NULL message is empty
         assert_eq!(internal_result.result_type(), "Error");
-        assert_eq!(internal_result.message, "No message");
+        assert_eq!(internal_result.message, "");
     }
 
     #[test]

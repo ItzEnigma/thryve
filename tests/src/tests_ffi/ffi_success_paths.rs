@@ -63,25 +63,30 @@ mod tests_ffi_ctx_set_logging_file_names_success {
     }
 
     #[test]
-    fn test_ctx_set_logging_file_names_with_invalid_utf8() {
-        // Arrange
+    fn test_ctx_set_logging_file_names_with_invalid_utf8_adds_none_of_them() {
+        // Arrange — a valid name, then one that isn't UTF-8
         let config = thryve_config_default();
         let ctx = thryve_ctx_create(config);
-        // Create a C string with invalid UTF-8 (3 bytes + null terminator)
-        let invalid_utf8_bytes = b"\xFF\xFE\x00";
-        let invalid_path = std::ffi::CStr::from_bytes_with_nul(invalid_utf8_bytes).unwrap();
+        let invalid_utf8 = c"\xFF\xFE";
+        let names = [c"ImgCompression".as_ptr(), invalid_utf8.as_ptr()];
 
         // Act
-        let status = unsafe {
-            thryve_ctx_set_logging_file_names(ctx, &invalid_path.as_ptr() as *const *const i8, 1)
-        };
+        let status = unsafe { thryve_ctx_set_logging_file_names(ctx, names.as_ptr(), 2) };
+        let error = unsafe { std::ffi::CStr::from_ptr(thryve_ffi::thryve_last_error()) }
+            .to_string_lossy()
+            .into_owned();
+        let added = unsafe { &*(ctx as *const thryve_utils::cfg::ctx::Ctx) }
+            .logging_file_names
+            .len();
 
         // Cleanup
         thryve_ctx_free(ctx);
         thryve_config_free(config);
 
-        // Assert — should still succeed, just won't add the file
-        assert_eq!(status, ThryveStatus::Ok);
+        // Assert — refused, and the valid name wasn't added either
+        assert_eq!(status, ThryveStatus::StrConvError);
+        assert_eq!(error, "file_names[1] isn't valid UTF-8");
+        assert_eq!(added, 0);
     }
 }
 
@@ -91,12 +96,11 @@ mod tests_ffi_task_create_success {
         ThryveTaskResult, thryve_task_create, thryve_task_free, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -105,7 +109,15 @@ mod tests_ffi_task_create_success {
         let name = CString::new("TestTask").unwrap();
 
         // Act
-        let task = unsafe { thryve_task_create(name.as_ptr(), 5, dummy_task_job) };
+        let task = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                5,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
 
         // Cleanup
         thryve_task_free(task);
@@ -117,13 +129,37 @@ mod tests_ffi_task_create_success {
         let name = CString::new("TestTask").unwrap();
 
         // Act — create tasks with different priorities
-        let task_low = unsafe { thryve_task_create(name.as_ptr(), 0, dummy_task_job) };
+        let task_low = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                0,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
         thryve_task_free(task_low);
 
-        let task_mid = unsafe { thryve_task_create(name.as_ptr(), 7, dummy_task_job) };
+        let task_mid = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                7,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
         thryve_task_free(task_mid);
 
-        let task_high = unsafe { thryve_task_create(name.as_ptr(), 14, dummy_task_job) };
+        let task_high = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                14,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
         thryve_task_free(task_high);
     }
 
@@ -131,7 +167,15 @@ mod tests_ffi_task_create_success {
     fn test_task_free_success() {
         // Arrange
         let name = CString::new("TestTask").unwrap();
-        let task = unsafe { thryve_task_create(name.as_ptr(), 5, dummy_task_job) };
+        let task = unsafe {
+            thryve_task_create(
+                name.as_ptr(),
+                5,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
+            )
+        };
 
         // Act — free the task
         thryve_task_free(task);
@@ -146,15 +190,17 @@ mod tests_ffi_plugin_create_success {
         thryve_plugin_create, thryve_plugin_free, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_plugin_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_plugin_entry(
+        result: *mut ThryveTaskResult,
+        _core_ptr: *mut std::ffi::c_void,
+    ) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn dummy_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -171,8 +217,8 @@ mod tests_ffi_plugin_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
+                Some(dummy_plugin_cleanup),
+                Some(dummy_plugin_entry),
             )
         };
 
@@ -193,7 +239,7 @@ mod tests_ffi_plugin_create_success {
         let ctx = thryve_ctx_create(config);
         let pkt = thryve_ctx_get_packet_handle(ctx);
         let core_data = CString::new("CoreData").unwrap();
-        let core_ptr = core_data.as_ptr() as *mut u8;
+        let core_ptr = core_data.as_ptr() as *mut std::ffi::c_void;
 
         // Act
         let plugin = unsafe {
@@ -201,8 +247,8 @@ mod tests_ffi_plugin_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 core_ptr,
                 pkt,
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
+                Some(dummy_plugin_cleanup),
+                Some(dummy_plugin_entry),
             )
         };
 
@@ -229,8 +275,8 @@ mod tests_ffi_plugin_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_plugin_cleanup,
-                dummy_plugin_entry,
+                Some(dummy_plugin_cleanup),
+                Some(dummy_plugin_entry),
             )
         };
 
@@ -276,7 +322,7 @@ mod tests_ffi_notification_create_success {
         let notif_type = CString::new("TestNotifType").unwrap();
         let notif_receiver = CString::new("TestReceiver").unwrap();
         let core_data = CString::new("CoreData").unwrap();
-        let core_ptr = core_data.as_ptr() as *mut u8;
+        let core_ptr = core_data.as_ptr() as *mut std::ffi::c_void;
 
         // Act
         let notif = unsafe {
@@ -318,7 +364,7 @@ mod tests_ffi_observer_create_success {
         thryve_packet_handle_free,
     };
 
-    extern "C" fn dummy_obs_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_obs_cleanup(_core_ptr: *const std::ffi::c_void) {}
     extern "C" fn dummy_obs_job(_observer: thryve_ffi::ThryveObserver) {}
 
     #[test]
@@ -334,8 +380,8 @@ mod tests_ffi_observer_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_obs_cleanup,
-                dummy_obs_job,
+                Some(dummy_obs_cleanup),
+                Some(dummy_obs_job),
             )
         };
 
@@ -356,7 +402,7 @@ mod tests_ffi_observer_create_success {
         let ctx = thryve_ctx_create(config);
         let pkt = thryve_ctx_get_packet_handle(ctx);
         let core_data = CString::new("CoreData").unwrap();
-        let core_ptr = core_data.as_ptr() as *mut u8;
+        let core_ptr = core_data.as_ptr() as *mut std::ffi::c_void;
 
         // Act
         let observer = unsafe {
@@ -364,8 +410,8 @@ mod tests_ffi_observer_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 core_ptr,
                 pkt,
-                dummy_obs_cleanup,
-                dummy_obs_job,
+                Some(dummy_obs_cleanup),
+                Some(dummy_obs_job),
             )
         };
 
@@ -392,8 +438,8 @@ mod tests_ffi_observer_create_success {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_obs_cleanup,
-                dummy_obs_job,
+                Some(dummy_obs_cleanup),
+                Some(dummy_obs_job),
             )
         };
 
@@ -453,15 +499,14 @@ mod tests_ffi_service_create_ctx_wiring {
         thryve_service_free, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_entry() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_entry(result: *mut ThryveTaskResult, _core_ptr: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
-    extern "C" fn dummy_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn dummy_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
@@ -499,8 +544,8 @@ mod tests_ffi_service_create_ctx_wiring {
                 CString::new("TestType").unwrap().as_ptr(),
                 std::ptr::null_mut(),
                 pkt,
-                dummy_cleanup,
-                dummy_entry,
+                Some(dummy_cleanup),
+                Some(dummy_entry),
             )
         };
 
@@ -566,12 +611,11 @@ mod tests_ffi_ctx_send_task_success {
         thryve_packet_handle_free, thryve_task_create, thryve_task_result_new,
     };
 
-    extern "C" fn dummy_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -584,7 +628,9 @@ mod tests_ffi_ctx_send_task_success {
             thryve_task_create(
                 CString::new("TestTask").unwrap().as_ptr(),
                 5,
-                dummy_task_job,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
             )
         };
 
@@ -647,12 +693,11 @@ mod tests_ffi_packet_handle_send_task_success {
         thryve_task_result_new,
     };
 
-    extern "C" fn dummy_task_job() -> ThryveTaskResult {
-        thryve_task_result_new(
-            CString::new("Success").unwrap().as_ptr(),
-            CString::new("Done").unwrap().as_ptr(),
-            CString::new("Main").unwrap().as_ptr(),
-        )
+    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
+        unsafe {
+            *result =
+                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
+        };
     }
 
     #[test]
@@ -665,7 +710,9 @@ mod tests_ffi_packet_handle_send_task_success {
             thryve_task_create(
                 CString::new("TestTask").unwrap().as_ptr(),
                 5,
-                dummy_task_job,
+                Some(dummy_task_job),
+                std::ptr::null_mut(),
+                None,
             )
         };
 
@@ -725,7 +772,7 @@ mod tests_ffi_plugin_clean_up_success {
     // Track if cleanup was called
     static mut CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_plugin_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn test_plugin_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         unsafe {
             CLEANUP_CALLED = true;
         }
@@ -735,8 +782,8 @@ mod tests_ffi_plugin_clean_up_success {
     #[test]
     fn test_plugin_logic_adapter_clean_up_calls_callback() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new("TestType", core_ptr, test_plugin_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, Some(test_plugin_cleanup));
 
         // Reset the flag
         unsafe {
@@ -756,7 +803,7 @@ mod tests_ffi_plugin_clean_up_success {
 
         // Cleanup: drop the core pointer
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
@@ -773,7 +820,7 @@ mod tests_ffi_observer_clean_up_success {
     // Track if cleanup was called
     static mut OBS_CLEANUP_CALLED: bool = false;
 
-    extern "C" fn test_obs_cleanup(_core_ptr: *const u8) {
+    extern "C" fn test_obs_cleanup(_core_ptr: *const std::ffi::c_void) {
         unsafe {
             OBS_CLEANUP_CALLED = true;
         }
@@ -782,8 +829,8 @@ mod tests_ffi_observer_clean_up_success {
     #[test]
     fn test_observer_logic_adapter_clean_up_calls_callback() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = ObserverLogicAdapter::new(core_ptr, test_obs_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = ObserverLogicAdapter::new(core_ptr, Some(test_obs_cleanup));
 
         // Reset the flag
         unsafe {
@@ -821,7 +868,7 @@ mod tests_ffi_observer_clean_up_success {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 
@@ -839,15 +886,15 @@ mod tests_ffi_plugin_logic_adapter_as_any {
     use thryve_ffi::PluginLogicAdapter;
     use thryve_utils::traits::plugin_logic::PlgLogic;
 
-    extern "C" fn dummy_cleanup(_core_ptr: *const u8) -> i32 {
+    extern "C" fn dummy_cleanup(_core_ptr: *const std::ffi::c_void) -> i32 {
         thryve_ffi::ThryveStatus::Ok as i32
     }
 
     #[test]
     fn test_plugin_logic_adapter_as_any_returns_self() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
-        let adapter = PluginLogicAdapter::new("TestType", core_ptr, dummy_cleanup);
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
+        let adapter = PluginLogicAdapter::new("TestType", core_ptr, Some(dummy_cleanup));
 
         // Act
         let any_ref = adapter.as_any();
@@ -857,7 +904,7 @@ mod tests_ffi_plugin_logic_adapter_as_any {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
@@ -866,13 +913,13 @@ mod tests_ffi_observer_adapter_as_any {
     use thryve_ffi::ObserverLogicAdapter;
     use thryve_utils::traits::observer_logic::ObsLogic;
 
-    extern "C" fn dummy_cleanup(_core_ptr: *const u8) {}
+    extern "C" fn dummy_cleanup(_core_ptr: *const std::ffi::c_void) {}
 
     #[test]
     fn test_observer_adapter_as_any_returns_self() {
         // Arrange
         let core_ptr = std::ptr::null_mut();
-        let adapter = ObserverLogicAdapter::new(core_ptr, dummy_cleanup);
+        let adapter = ObserverLogicAdapter::new(core_ptr, Some(dummy_cleanup));
 
         // Act
         let any_ref = adapter.as_any();
@@ -890,7 +937,7 @@ mod tests_ffi_notification_adapter_as_any {
     #[test]
     fn test_notification_logic_adapter_as_any_returns_self() {
         // Arrange
-        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut u8;
+        let core_ptr = Arc::into_raw(Arc::new(0u8)) as *mut std::ffi::c_void;
         let adapter = NotificationLogicAdapter::new(core_ptr);
 
         // Act
@@ -901,7 +948,7 @@ mod tests_ffi_notification_adapter_as_any {
 
         // Cleanup
         unsafe {
-            let _ = Arc::from_raw(core_ptr);
+            let _ = Arc::from_raw(core_ptr as *const u8);
         }
     }
 }
