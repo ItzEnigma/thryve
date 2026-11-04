@@ -484,8 +484,8 @@ pub mod jobs {
         }
     }
 
-    /// What a task runs: a job it can run now, one that waits for another task's handoff, or a
-    /// join's, which waits for several.
+    /// What a task runs: a job it can run now, one that waits for another task's handoff, a join's,
+    /// which waits for several, or a fan-out group's follower's, which waits for its share of one.
     pub(crate) enum Job {
         /// Runs as soon as a worker takes the task.
         TaskReady(TaskJob),
@@ -516,6 +516,20 @@ pub mod jobs {
             /// Takes the slots' handoffs, in order, some of them still empty if a task failed
             /// first, and returns this task's result.
             input_job: Box<dyn FnOnce(Vec<Option<SealedHandoff>>) -> TaskResult + Send>,
+        },
+
+        /// A follower declared on a fan-out group: like a follow-up, it waits for one task's
+        /// result, but several followers can wait on the same task. The engine gives it a share of
+        /// the result ([`SealedHandoff::FanoutShare`]), which makes it ready.
+        TaskFanout {
+            /// The id of the task whose result it shares.
+            pre_fanout_task_id: u64,
+            /// Whether its priority was inherited from that task (the group's `then`), rather than
+            /// given (`then_with_priority`). An inherited priority is capped below realtime when
+            /// the task becomes ready.
+            inherits_priority: bool,
+            /// Takes its share of the result, and returns this task's result.
+            fanout_job: Box<dyn FnOnce(SealedHandoff) -> TaskResult + Send>,
         },
     }
 }

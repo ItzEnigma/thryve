@@ -35,6 +35,7 @@ use std::any::Any;
 use std::fmt::Display;
 use std::panic::Location;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::errors::{self, JoinError, TaskError};
 use crate::extras::thread_local;
@@ -109,6 +110,7 @@ impl Display for TaskResult {
                     SealedHandoff::Finished { .. } => {
                         self.handoff_error_text().unwrap_or(String::from("a value"))
                     }
+                    SealedHandoff::FanoutShare { .. } => String::from("fanned out"),
                     SealedHandoff::Forward { to } => format!("forwarded to task {to}"),
                     SealedHandoff::Cancelled => String::from("cancelled"),
                 }
@@ -377,6 +379,10 @@ impl TaskResult {
 /// the task whose outcome becomes its own. Nothing in it is sealed; the engine reads the id and
 /// links the two tasks, so a follow-up never gets a forward.
 ///
+/// A fan-out group's follower gets a [`FanoutShare`](Self::FanoutShare) instead of the sealed box:
+/// its share of a result that several followers read. The engine makes the share once, from the
+/// task's own handoff, with the group's converter, and no worker ever hands one over.
+///
 /// A task cancelled before it started hands over [`Cancelled`](Self::Cancelled): the worker sends
 /// it in place of running the task, and it carries nothing.
 ///
@@ -390,6 +396,14 @@ pub enum SealedHandoff {
         /// The error's text, written on the worker while the type was still known, so the engine
         /// can log an error that nobody handles. `None` when the task returned a value.
         error_text: Option<String>,
+    },
+
+    /// A fan-out group's follower's input: its share of the result of the task the group follows.
+    /// Each follower gets a clone of the same share.
+    FanoutShare {
+        /// The task's result as `Handoff<T, Arc<E>>`, in an `Arc` whose type is hidden. Cloning
+        /// it copies a pointer, never the result.
+        share: Arc<dyn Any + Send + Sync>,
     },
 
     /// The task forwarded: its closure returned the handle of another task, whose outcome becomes
@@ -411,6 +425,9 @@ pub enum SealedHandoff {
 /// `Handoff<T, E>`, where `T` and `E` are the task's types. The error is the task's own, typed,
 /// with its fields and causes. Once a follow-up gets it, the engine doesn't write it to
 /// `Error.log`: what happens to it is up to the follow-up.
+///
+/// A fan-out group's followers share one result instead: each gets `Arc<Handoff<T, Arc<E>>>`
+/// (see [`FanoutGroup`](crate::packets::task::FanoutGroup)).
 #[derive(Debug)]
 pub enum Handoff<T: Send + 'static, E: std::error::Error + Send + 'static> {
     /// The task returned `Ok`: its value.
@@ -496,6 +513,27 @@ impl SealedHandoff {
             _ => None,
         }
     }
+
+    /// Opens a share as the `Arc<Handoff<T, Arc<E>>>` a fan-out group's follower gets: the same
+    /// `Arc`, typed again, with nothing copied. `None` if it isn't a share of a
+    /// `Handoff<T, Arc<E>>`, which only a bug in Thryve can cause: a group ties its followers'
+    /// types to the task's.
+    pub(crate) fn open_share<T, E>(self) -> Option<Arc<Handoff<T, Arc<E>>>>
+    where
+        T: Send + Sync + 'static,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        match self {
+            SealedHandoff::FanoutShare { share, .. } => {
+                let share_downcasted_opt = share.downcast::<Handoff<T, Arc<E>>>().ok();
+
+                let share_downcasted = share_downcasted_opt?;
+                Some(share_downcasted)
+            }
+
+            _ => None,
+        }
+    }
 }
 
 impl<T, E> From<Result<T, E>> for Handoff<T, E>
@@ -507,6 +545,22 @@ where
         match value {
             Ok(adv_task) => Handoff::Value(adv_task),
             Err(e) => Handoff::Error(e),
+        }
+    }
+}
+
+impl<T, E> Handoff<T, E>
+where
+    T: Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    /// Gives the error an `Arc` of its own, so each of a fan-out group's followers can pass it on
+    /// as its own error without copying it. The group's converter calls it before it shares the
+    /// result.
+    pub(crate) fn into_shared(self) -> Handoff<T, Arc<E>> {
+        match self {
+            Handoff::Value(v) => Handoff::Value(v),
+            Handoff::Error(e) => Handoff::Error(Arc::new(e)),
         }
     }
 }

@@ -307,6 +307,9 @@ mod declaring {
                 StatusMsg::HandleRelease(id) => id,
                 StatusMsg::LogLine(_) => panic!("expected only releases"),
                 StatusMsg::Cancel(id) => panic!("expected only releases, got a cancel of {id}"),
+                StatusMsg::GroupUsageGuide { .. } => {
+                    panic!("expected only releases, got a fan-out group")
+                }
             })
             .collect();
         assert_eq!(released, row_ids);
@@ -870,9 +873,9 @@ mod failing {
         // Row 2's error triggered Save, which was queued, not held. The kept results of Rows 3
         // and 4 came after it, so they were let go; Rows 1 and 5 got a follower each, before the
         // error and after it alike. Row 2's error text is kept until Save reports, in case Save
-        // is cancelled before it runs.
+        // is cancelled before it runs: under Row 2's id, with a pointer to it under Save's.
         assert!(engine.check_tasks(), "the engine didn't get Save");
-        assert_eq!(engine.wait_table_len(), 3);
+        assert_eq!(engine.wait_table_len(), 4);
 
         let (position, error) = the_error(run_until_received(&mut engine, &got_rx));
         assert_eq!(position, 1);

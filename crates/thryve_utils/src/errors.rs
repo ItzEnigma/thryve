@@ -85,6 +85,11 @@ pub enum ThryveError {
     /// Work couldn't be split: it was asked for 0 pieces. [`SplitError`] says so.
     #[error("split failed")]
     Split(#[from] SplitError),
+
+    /// A fan-out group failed: it was sent with no follower, or its converter got a result of
+    /// another type. [`FanoutError`] says which.
+    #[error("fanout failed")]
+    Fanout(#[from] FanoutError),
 }
 
 /// Why starting Thryve failed.
@@ -400,6 +405,38 @@ pub enum SplitError {
     ZeroPieces {
         /// The pieces' name.
         split_name: String,
+    },
+}
+
+/// Why a fan-out group failed: it was sent with no follower, or its converter got a result of
+/// another type.
+///
+/// [`send_fanout`](crate::packets::task::FanoutGroup::send_fanout) refuses a group with no
+/// follower by returning [`MonitorsZeroInputs`](Self::MonitorsZeroInputs) inside
+/// [`ThryveError::Fanout`]. The other case comes from the converter that the engine runs on the
+/// result, and only a bug in Thryve can cause it, since a group ties its converter's types to the
+/// task's. Either error names the task the group follows by its id.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum FanoutError {
+    /// The group was sent with no follower declared.
+    #[error(
+        "fanout group for pre fanout task id '{}' sent while monitoring 0 inputs",
+        pre_fanout_task_id
+    )]
+    MonitorsZeroInputs {
+        /// The id of the task whose result the group was for.
+        pre_fanout_task_id: u64,
+    },
+
+    /// The converter got a result that isn't the `Result<T, E>` of the task the group follows.
+    #[error(
+        "handoff for pre fanout task id '{}' failed to downcast properly",
+        pre_fanout_task_id
+    )]
+    SealedHandoffFailedDowncast {
+        /// The id of the task whose result it got.
+        pre_fanout_task_id: u64,
     },
 }
 

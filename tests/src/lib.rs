@@ -50,3 +50,6 @@ pub mod gate_t5;
 
 #[cfg(test)]
 pub mod gate_t6;
+
+#[cfg(test)]
+pub mod gate_fanout;

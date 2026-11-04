@@ -1503,6 +1503,9 @@ mod tests_observer_manager_init {
                 StatusMsg::Cancel(id) => {
                     panic!("expected a status line, got a cancel of {id}")
                 }
+                StatusMsg::GroupUsageGuide { .. } => {
+                    panic!("expected a status line, got a fan-out group")
+                }
             })
             .collect();
         assert_eq!(
@@ -2204,6 +2207,9 @@ mod tests_plugin_manager {
                 }
                 StatusMsg::Cancel(id) => {
                     panic!("expected a status line, got a cancel of {id}")
+                }
+                StatusMsg::GroupUsageGuide { .. } => {
+                    panic!("expected a status line, got a fan-out group")
                 }
             })
             .collect();

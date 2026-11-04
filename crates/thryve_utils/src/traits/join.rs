@@ -41,9 +41,10 @@ where
     ///   the handles;
     /// - [`Error`](JoinHandoff::Error) when one failed: its position among the handles, counted from
     ///   0, and its own error. A join fails fast: it runs as soon as one task fails, without waiting for the
-    ///   rest. The tasks it was still waiting for are cancelled: those that haven't started never
-    ///   run, and those already running finish, with nobody to take their results: an error is
-    ///   written to `Error.log`, and a value is dropped.
+    ///   rest. The tasks it was still waiting for are cancelled, with whatever only they needed (see
+    ///   [`cancel`](AdvTaskHandle::cancel)): those that haven't started never run, and those
+    ///   already running finish, with nobody to take their results: an error is written to
+    ///   `Error.log`, and a value is dropped.
     ///
     /// A task that forwards fills its slot with the result of the task it forwarded to, whether it
     /// forwarded before the join was declared or after.

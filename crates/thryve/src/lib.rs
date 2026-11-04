@@ -21,7 +21,7 @@ pub use thryve_run::run;
 pub mod prelude {
     pub use thryve_utils::errors::ThryveError;
     pub use thryve_utils::packets::packet_handle::PacketHandle;
-    pub use thryve_utils::packets::task::{AdvTask, AdvTaskHandle};
+    pub use thryve_utils::packets::task::{AdvTask, AdvTaskHandle, FanoutGroup};
     pub use thryve_utils::res::{Handoff, JoinHandoff};
     pub use thryve_utils::traits::join::Joinable;
 }
@@ -59,6 +59,7 @@ pub mod utils {
         pub use thryve_utils::errors::ConfigError;
         pub use thryve_utils::errors::ConfigViolations;
         pub use thryve_utils::errors::EngineNotRunningError;
+        pub use thryve_utils::errors::FanoutError;
         pub use thryve_utils::errors::FinalizationError;
         pub use thryve_utils::errors::JoinError;
         pub use thryve_utils::errors::NameInputType;

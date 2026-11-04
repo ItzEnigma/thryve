@@ -228,6 +228,9 @@ pub(crate) fn open<T: 'static, E: 'static>(
             panic!("expected a finished handoff, got a forward to task {to}")
         }
         SealedHandoff::Cancelled => panic!("expected a finished handoff, got a cancelled one"),
+        SealedHandoff::FanoutShare { .. } => {
+            panic!("expected a finished handoff, got a follower's share")
+        }
     }
 }
 
@@ -1029,12 +1032,13 @@ mod forwarding {
             .unwrap();
 
         // The engine takes in `Process` and `Upload`, which waits for it. `Process` forwards to
-        // `Answer`, held back, so `Upload` moves on to wait for `Answer`.
+        // `Answer`, held back, so `Upload` moves on to wait for `Answer`, and the `WaitingOn`
+        // under its own id now names `Answer`.
         take_in_and_handle_a_result(&mut engine);
         assert_eq!(
             engine.wait_table_len(),
-            1,
-            "only Upload, waiting for Answer"
+            2,
+            "only Upload, waiting for Answer, and its `WaitingOn`"
         );
 
         go_tx.send(()).unwrap();

@@ -40,11 +40,13 @@
 //! counter. This ID can be used to track task execution and correlate
 //! results with their originating tasks.
 
+use std::any::Any;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::errors::{
-    JoinError, NameInputType, NamingError, TaskError, ThryveError, get_err_oneline,
+    FanoutError, JoinError, NameInputType, NamingError, TaskError, ThryveError, get_err_oneline,
 };
 use crate::extras::jobs::Job;
 use crate::extras::{jobs::TaskJob, named_input::NamedInput};
@@ -59,6 +61,18 @@ use crate::traits::packets::Packet;
 /// This global static variable is safe to use across threads.
 /// It starts at 1 and increments by 1 for each new task.
 static COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// The converter a fan-out group carries to the engine: it opens the result of the task the group
+/// follows, once, and returns it as the share every follower gets.
+///
+/// [`fan_out`](AdvTaskHandle::fan_out) builds it while `T` and `E` are still known. It opens the
+/// sealed box as `Result<T, E>`, and returns `Handoff<T, Arc<E>>` inside an `Arc` whose type is
+/// hidden again, so the engine can hold it and clone it once per follower. It fails with
+/// [`FanoutError::SealedHandoffFailedDowncast`] if the box holds another type, which only a bug in
+/// Thryve can cause.
+#[doc(hidden)]
+pub type Converter =
+    dyn FnOnce(SealedHandoff) -> Result<Arc<dyn Any + Send + Sync>, ThryveError> + Send;
 
 /// A unit of work for the Thryve engine.
 ///
@@ -279,6 +293,34 @@ impl Task {
         })
     }
 
+    /// Creates a fan-out group's follower. Like [`new_wait`](Self::new_wait)'s follow-up, it waits
+    /// for the task with id `pre_fanout_task_id`, but its own job variant tells the engine it
+    /// belongs to a group, so several followers can wait on the same task. Its input is a share
+    /// ([`SealedHandoff::FanoutShare`]), which [`with_input`](Self::with_input) hands to
+    /// `fn_to_exec`.
+    ///
+    /// `inherits_priority` says whether `task_priority` was inherited from that task, in which
+    /// case it's capped below realtime when the follower becomes ready.
+    fn new_fanout(
+        task_name: &str,
+        task_priority: u8,
+        inherits_priority: bool,
+        pre_fanout_task_id: u64,
+        fn_to_exec: impl FnOnce(SealedHandoff) -> TaskResult + Send + 'static,
+    ) -> Result<Self, NamingError> {
+        Ok(Self {
+            id: next_id(),
+            callsite: None,
+            task_name: NamedInput::new(task_name, NameInputType::TaskName)?,
+            base_priority: task_priority,
+            job: Job::TaskFanout {
+                pre_fanout_task_id,
+                inherits_priority,
+                fanout_job: Box::new(fn_to_exec),
+            },
+        })
+    }
+
     /// Creates a plugin's init task, named after the plugin's type.
     ///
     /// The plugin manager sends it when it loads the plugin. The type was checked when the plugin
@@ -322,10 +364,12 @@ impl Task {
     }
 
     /// Makes a waiting task ready: puts the sealed handoff of the task it waited on into its job.
+    /// The task is a follow-up, or a fan-out group's follower, whose handoff is its share
+    /// ([`SealedHandoff::FanoutShare`]).
     ///
-    /// If its priority was inherited (it was declared with [`then`](AdvTaskHandle::then)), it's
-    /// lowered to just below realtime when it's realtime or higher, so a chain never runs as
-    /// realtime by inheritance. A priority given with
+    /// If its priority was inherited (it was declared with [`then`](AdvTaskHandle::then) or
+    /// [`FanoutGroup::then`]), it's lowered to just below realtime when it's realtime or higher, so
+    /// a chain never runs as realtime by inheritance. A priority given with
     /// [`then_with_priority`](AdvTaskHandle::then_with_priority) is kept as it is. A task that
     /// isn't waiting comes back unchanged.
     ///
@@ -341,6 +385,11 @@ impl Task {
             inherits_priority,
             input_job,
             ..
+        }
+        | Job::TaskFanout {
+            inherits_priority,
+            fanout_job: input_job,
+            ..
         } = self.job
         {
             if inherits_priority && let Some(cap) = inherited_priority_cap(max_priority) {
@@ -348,6 +397,7 @@ impl Task {
             }
             self.job = Job::TaskReady(TaskJob::new(move || input_job(sealed)));
         }
+
         self
     }
 
@@ -442,6 +492,32 @@ impl Task {
         self
     }
 
+    #[doc(hidden)]
+    pub fn with_group_share(
+        mut self,
+        group_share: Arc<dyn Any + Send + Sync>,
+        max_priority: u8,
+    ) -> Self {
+        if let Job::TaskFanout {
+            inherits_priority,
+            fanout_job,
+            ..
+        } = self.job
+        {
+            if inherits_priority && let Some(cap) = inherited_priority_cap(max_priority) {
+                self.base_priority = self.base_priority.min(cap);
+            }
+
+            let group_share_handoff = SealedHandoff::FanoutShare {
+                share: group_share.clone(),
+            };
+
+            self.job = Job::TaskReady(TaskJob::new(move || fanout_job(group_share_handoff)));
+        }
+
+        self
+    }
+
     /// Returns the size of this task in bytes.
     ///
     /// This method returns the memory footprint of the task struct
@@ -468,12 +544,19 @@ impl Task {
 
     /// The id of the task this one waits on, or `None` for a task that can run now.
     ///
+    /// A follow-up and a fan-out group's follower both wait on one task, and several followers can
+    /// wait on the same one, so the engine tells them apart with
+    /// [`is_job_task_fanout`](Self::is_job_task_fanout) before it holds either.
+    ///
     /// For Thryve's engine, which holds a waiting task instead of queueing it. Not part of the
     /// public API.
     #[doc(hidden)]
     pub fn waiting_on_id(&self) -> Option<u64> {
         match self.job {
             Job::TaskWait { on, .. } => Some(on),
+            Job::TaskFanout {
+                pre_fanout_task_id, ..
+            } => Some(pre_fanout_task_id),
             _ => None,
         }
     }
@@ -504,6 +587,24 @@ impl Task {
         }
 
         None
+    }
+
+    /// Whether this is a follow-up declared with `then` on a handle: the only task that waits for
+    /// the result of the task it follows.
+    ///
+    /// For Thryve's engine. Not part of the public API.
+    #[doc(hidden)]
+    pub fn is_job_task_wait(&self) -> bool {
+        matches!(self.job, Job::TaskWait { .. })
+    }
+
+    /// Whether this is a follower declared on a fan-out group: it waits for its share of one
+    /// task's result, which other followers may wait on too.
+    ///
+    /// For Thryve's engine. Not part of the public API.
+    #[doc(hidden)]
+    pub fn is_job_task_fanout(&self) -> bool {
+        matches!(self.job, Job::TaskFanout { .. })
     }
 }
 
@@ -624,6 +725,55 @@ pub struct AdvTaskHandle<T: Send + 'static, E: std::error::Error + Send + 'stati
     is_used: bool,
     /// Ties `T` and `E` to the handle, like [`AdvTask`]'s marker.
     _marker: PhantomData<fn() -> (T, E)>,
+}
+
+/// The followers of one task's result, declared together: what
+/// [`fan_out`](AdvTaskHandle::fan_out) returns.
+///
+/// A task's result normally goes to one follow-up, since [`then`](AdvTaskHandle::then) uses its
+/// handle up. A group lets several followers share it instead: say LoadImg decodes photo.png, and
+/// Thumbnail, Compress and Metadata all need its pixels. Call [`then`](Self::then) on the group once
+/// per follower, then [`send_fanout`](Self::send_fanout). Each follower gets
+/// `Arc<Handoff<T, Arc<E>>>`: the one result, behind an `Arc` they all hold, so the pixels are never
+/// copied, and they're freed when the last follower is done with them. The error has an `Arc` of
+/// its own, so a follower can pass it on as its own error.
+///
+/// Each `then` returns the follower's handle at once, an ordinary [`AdvTaskHandle`], while the
+/// follower itself waits in the group until `send_fanout`. A group dropped without `send_fanout` is
+/// sent anyway, so every follower declared runs, as a follow-up does: work may already be chained
+/// onto a follower's handle. A group with no follower sends nothing, and its task's result is
+/// released, as a dropped handle releases it.
+///
+/// A group can't be sent to another thread, so a task's closure can't capture one. A group dropped
+/// on the engine's thread would have to wait there for room in the task mailbox, which only the
+/// engine empties. A task's closure can still make a group and send it while it runs.
+///
+/// ```compile_fail,E0277
+/// # use crossbeam::channel::{bounded, unbounded};
+/// # use thryve_utils::packets::packet_handle::PacketHandle;
+/// use thryve_utils::packets::task::AdvTask;
+///
+/// # let (task_tx, _task_rx) = bounded(10);
+/// # let handle = PacketHandle::new(task_tx, bounded(1).0, unbounded().0, false);
+/// let load = AdvTask::new("LoadImg", 2, || std::fs::read("photo.png"))?;
+/// let group = handle.send_adv_task(load)?.fan_out();
+///
+/// // Publish's closure can't capture the group: a group isn't `Send`.
+/// let publish = AdvTask::new("Publish", 2, move || group.send_fanout())?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub struct FanoutGroup<T: Send + Sync + 'static, E: std::error::Error + Send + Sync + 'static> {
+    /// The handle of the task whose result the followers share. The group uses it up: it's marked
+    /// used once the group is sent, and a group with no follower drops it, which releases the
+    /// result.
+    pre_fanout_task: AdvTaskHandle<T, E>,
+    /// The followers declared so far, in order. They're sent with the group.
+    followers: Vec<Task>,
+    /// Opens the task's result for the engine, once (see [`Converter`]). Taken out when the group
+    /// is sent, so it's sent once.
+    converter: Option<Box<Converter>>,
+    /// Makes the group neither `Send` nor `Sync`, so that no task's closure can hold one.
+    _not_send: PhantomData<*const ()>,
 }
 
 impl<T, E> Drop for AdvTaskHandle<T, E>
@@ -942,7 +1092,12 @@ where
     /// already running can't be stopped, so it finishes, and its result is let go: an error is
     /// still written to `Error.log`, and a value is dropped. The same goes for a task that has
     /// already finished. If the task forwarded, the cancel goes on to the task it forwarded to.
-    /// Cancelling a follow-up doesn't stop the task it follows, which still runs.
+    ///
+    /// The work that only this task needed stops too. Cancelling a follow-up also cancels the
+    /// task it follows, since `then` used that task's handle up and nobody else can take its
+    /// result, and so on up the chain: if Save follows LoadImg, which follows Hash, cancelling
+    /// Save cancels LoadImg and Hash too, as long as they haven't started. A fan-out follower only
+    /// withdraws from its group: the task the group follows is cancelled once every follower is.
     ///
     /// Cancelling a join that's still waiting for its tasks also cancels the ones it waits for,
     /// and the joins among them, all the way in; the values already in it are dropped. If a
@@ -1032,6 +1187,251 @@ where
 
         self.tx.send_task(task)?;
         Ok(handle)
+    }
+}
+
+impl<T, E> AdvTaskHandle<T, E>
+where
+    T: Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    /// Starts a fan-out group on this task's result, so that several followers can share it: see
+    /// [`FanoutGroup`].
+    ///
+    /// It uses the handle up, like [`then`](Self::then): the group holds it until the group is sent.
+    /// Only fan-out asks for `T` and `E` to be `Sync`, since its followers can read the result at
+    /// the same time, on different workers. It also builds the converter that the engine runs to
+    /// open the result for them, while `T` and `E` are still known.
+    ///
+    /// Each follower's handle is an ordinary handle. Cancelling a follower cancels only that
+    /// follower: this task still runs for the others, and it's cancelled only once every follower
+    /// is, if it hasn't started by then.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use crossbeam::channel::{bounded, unbounded};
+    /// # use thryve_utils::packets::packet_handle::PacketHandle;
+    /// use thryve_utils::packets::task::AdvTask;
+    /// use thryve_utils::res::Handoff;
+    ///
+    /// # let (task_tx, _task_rx) = bounded(10);
+    /// # let handle = PacketHandle::new(task_tx, bounded(1).0, unbounded().0, false);
+    /// let load = AdvTask::new("LoadImg", 2, || std::fs::read("photo.png"))?;
+    ///
+    /// let mut group = handle.send_adv_task(load)?.fan_out();
+    /// group.then("Thumbnail", |pixels| match &*pixels {
+    ///     Handoff::Value(bytes) => Ok(bytes.len() / 4),
+    ///     // LoadImg's own error, passed on: one more count on its `Arc`, not a copy.
+    ///     Handoff::Error(error) => Err(error.clone()),
+    /// })?;
+    /// group.then("Compress", |pixels| match &*pixels {
+    ///     Handoff::Value(bytes) => Ok(bytes.iter().map(|byte| u64::from(*byte)).sum::<u64>()),
+    ///     Handoff::Error(error) => Err(error.clone()),
+    /// })?;
+    /// group.send_fanout()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn fan_out(self) -> FanoutGroup<T, E> {
+        let pre_fanout_task_id = self.task_id;
+
+        let converter = move |sealed_handoff: SealedHandoff| {
+            if let Some(handoff) = sealed_handoff.open::<T, E>() {
+                let shared_handoff = handoff.into_shared();
+                let handoff_any_arc: Arc<dyn Any + Send + Sync> = Arc::new(shared_handoff);
+                return Ok(handoff_any_arc);
+            }
+
+            Err(FanoutError::SealedHandoffFailedDowncast { pre_fanout_task_id }.into())
+        };
+
+        FanoutGroup::new(self, Box::new(converter))
+    }
+}
+
+impl<T, E> FanoutGroup<T, E>
+where
+    T: Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn new(pre_fanout_task: AdvTaskHandle<T, E>, converter: Box<Converter>) -> Self {
+        Self {
+            pre_fanout_task,
+            followers: Vec::new(),
+            converter: Some(converter),
+            _not_send: PhantomData,
+        }
+    }
+
+    /// Declares a follower: a task that runs with the group's shared result once the group is sent.
+    ///
+    /// Like [`AdvTaskHandle::then`], the follower inherits the task's priority, capped below
+    /// realtime, and its handle comes back at once. Unlike it, this borrows the group, so it can be
+    /// called once per follower, and the follower waits in the group until
+    /// [`send_fanout`](Self::send_fanout).
+    ///
+    /// The closure gets `Arc<Handoff<T, Arc<E>>>`: the task's value or its own error, read-only,
+    /// behind the `Arc` every follower holds. To pass the error on as the follower's own, return
+    /// `Err(Arc::clone(error))`; the follower's error type is then `Arc<E>`.
+    ///
+    /// `#[track_caller]`, so graph mode records the line of this call, not the line that sends the
+    /// group.
+    ///
+    /// # Errors
+    ///
+    /// [`ThryveError::Naming`] if `task_name` is empty or contains a control character. The group
+    /// is left as it was.
+    #[track_caller]
+    pub fn then<U, E2>(
+        &mut self,
+        task_name: &str,
+        fn_to_exec: impl FnOnce(Arc<Handoff<T, Arc<E>>>) -> Result<U, E2> + Send + 'static,
+    ) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+    where
+        U: Send + 'static,
+        E2: std::error::Error + Send + 'static,
+    {
+        self.create_fanout_task(
+            task_name,
+            true,
+            self.pre_fanout_task.base_priority,
+            fn_to_exec,
+        )
+    }
+
+    /// Like [`then`](Self::then), but the follower runs at `base_priority` instead of inheriting
+    /// the task's priority. It's kept as given, so it can be realtime.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`then`](Self::then).
+    #[track_caller]
+    pub fn then_with_priority<U, E2>(
+        &mut self,
+        task_name: &str,
+        base_priority: u8,
+        fn_to_exec: impl FnOnce(Arc<Handoff<T, Arc<E>>>) -> Result<U, E2> + Send + 'static,
+    ) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+    where
+        U: Send + 'static,
+        E2: std::error::Error + Send + 'static,
+    {
+        self.create_fanout_task(task_name, false, base_priority, fn_to_exec)
+    }
+
+    /// What [`then`](Self::then) and [`then_with_priority`](Self::then_with_priority) share: wraps
+    /// the closure in the job that opens the follower's share, builds the follower, records its
+    /// line in graph mode, and keeps it in the group.
+    ///
+    /// `#[track_caller]`, like them, so graph mode records the plugin's line.
+    #[track_caller]
+    fn create_fanout_task<U, E2>(
+        &mut self,
+        task_name: &str,
+        inherits_priority: bool,
+        base_priority: u8,
+        fn_to_exec: impl FnOnce(Arc<Handoff<T, Arc<E>>>) -> Result<U, E2> + Send + 'static,
+    ) -> Result<AdvTaskHandle<U, E2>, ThryveError>
+    where
+        U: Send + 'static,
+        E2: std::error::Error + Send + 'static,
+    {
+        let name_as_string = String::from(task_name);
+        let job = move |sealed: SealedHandoff| match sealed.open_share() {
+            Some(result) => seal_result(name_as_string, fn_to_exec(result)),
+            None => TaskError::SealedHandoffFailedDowncast {
+                task_name: name_as_string,
+            }
+            .into(),
+        };
+
+        let mut task = Task::new_fanout(
+            task_name,
+            base_priority,
+            inherits_priority,
+            self.pre_fanout_task.task_id,
+            job,
+        )?;
+
+        self.pre_fanout_task.tx.set_callsite(&mut task);
+
+        let handle = AdvTaskHandle::new(&task, self.pre_fanout_task.tx.clone());
+
+        self.followers.push(task);
+
+        Ok(handle)
+    }
+
+    /// Sends the group to the engine: each follower as its own task, then the group's data, which
+    /// tells the engine who's in the group and carries the converter that opens the result for
+    /// them.
+    ///
+    /// The followers go on the task mailbox, so a sender faster than the engine waits, as with any
+    /// task. The data goes on the status mailbox. The task's handle is used up, so it sends no
+    /// release.
+    ///
+    /// # Errors
+    ///
+    /// - [`FanoutError::MonitorsZeroInputs`] if no follower was declared. Nothing is sent, and the
+    ///   task's result is released, as a dropped handle releases it.
+    /// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+    pub fn send_fanout(mut self) -> Result<(), ThryveError> {
+        if self.followers.is_empty() {
+            return Err(FanoutError::MonitorsZeroInputs {
+                pre_fanout_task_id: self.pre_fanout_task.task_id,
+            }
+            .into());
+        }
+
+        self.send_fanout_inner()?;
+
+        Ok(())
+    }
+
+    /// What [`send_fanout`](Self::send_fanout) and the group's `Drop` share: takes the converter
+    /// and the followers out, sends each follower, then the group's data, and marks the task's
+    /// handle used. It does nothing if the group was already sent, since the converter is gone.
+    ///
+    /// A follower is sent without recording its line again: graph mode recorded the line of its
+    /// `then` already. It takes `&mut self`, since `Drop` only has that, and it takes the fields
+    /// out instead of moving them, since nothing can be moved out of a type that has `Drop`.
+    fn send_fanout_inner(&mut self) -> Result<(), ThryveError> {
+        if let Some(converter) = self.converter.take() {
+            let mut fanout_tasks_ids = vec![0; self.followers.len()];
+            let tx = &self.pre_fanout_task.tx;
+
+            for (i, task) in self.followers.drain(..).enumerate() {
+                let fanout_task_id = task.id;
+                tx.send_fanout_task(task)?;
+
+                fanout_tasks_ids[i] = fanout_task_id;
+            }
+
+            tx.send_status_fanout_group(converter, self.pre_fanout_task.task_id, fanout_tasks_ids);
+
+            self.pre_fanout_task.is_used = true;
+        }
+
+        Ok(())
+    }
+}
+
+impl<T, E> Drop for FanoutGroup<T, E>
+where
+    T: Send + Sync + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    /// Sends a group dropped without [`send_fanout`](FanoutGroup::send_fanout), if it has
+    /// followers: they run, just as a follow-up declared with `then` runs, since work may already
+    /// be chained onto a follower's handle. A group with no follower sends nothing, and the task's
+    /// handle, dropped with it, releases the result.
+    ///
+    /// Sending can wait for room in the task mailbox, like any send. That's safe because a group
+    /// never reaches the engine's thread: it isn't `Send`, so no task's closure can hold one.
+    fn drop(&mut self) {
+        if !self.followers.is_empty() {
+            let _ = self.send_fanout_inner();
+        }
     }
 }
 

@@ -31,8 +31,8 @@ Thryve is designed around three main pillars:
 ### Key Features
 
 - **Priority-based scheduling** with aging mechanism to prevent task starvation
-- **Typed tasks with follow-ups, splits and joins**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, and several tasks share one follow-up with `join`, so plugins combine without knowing each other
-- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and cancelling a join cancels the tasks it still waits for
+- **Typed tasks with follow-ups, splits, joins and fan-out**: a task's value, or its own error, goes to the task declared after it with `then`; work splits over several tasks with `split_into`, several tasks share one follow-up with `join`, and several follow-ups share one result with `fan_out`, so plugins combine without knowing each other
+- **Cancelling**: `cancel` on a typed task's handle keeps a task that hasn't started from running, and the work that only it needed stops too: the tasks a join still waits for, and the tasks a follow-up's chain was waiting on
 - **Graceful shutdown** with pause/resume capabilities
 - **Thread-safe** concurrent data structures using `crossbeam`
 - **Configurable** via TOML with sensible defaults
@@ -158,6 +158,38 @@ fn total_size(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
 - **Priority:** the join inherits the highest priority among its tasks, capped below realtime. `join_with_priority` gives it its own.
 - **Splitting has a cost:** joins of joins let work be split, and split again: ten images, each split into rows, and the rows' results archived into one zip. But every piece is a task of its own, with its own trip through the queue, its own result and its own slot, and every join adds one more task. Splitting finer than the work needs adds that overhead without making anything faster, so aim for a balance: enough pieces to keep the workers busy, each big enough to be worth a task.
 
+### Fan-out
+
+Several follow-ups can share one task's result: `fan_out` on a typed task's handle uses the handle up and returns a group, `then` on the group declares each follower, and `send_fanout` sends them. Every follower gets the same result, shared rather than copied: an `Arc<Handoff<T, Arc<E>>>`, holding the task's value or its own error:
+
+```rust
+use thryve::prelude::*;
+
+fn photo_opened(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let load = AdvTask::new("LoadImg", 2, || std::fs::read("photo.png"))?;
+
+    let mut group = handle.send_adv_task(load)?.fan_out();
+    group.then("Thumbnail", |pixels| match &*pixels {
+        Handoff::Value(bytes) => Ok(bytes.len() / 4),
+        // LoadImg's own error, passed on: one more count on its `Arc`, not a copy.
+        Handoff::Error(error) => Err(error.clone()),
+    })?;
+    group.then("Compress", |pixels| match &*pixels {
+        Handoff::Value(bytes) => Ok(bytes.iter().map(|byte| u64::from(*byte)).sum::<u64>()),
+        Handoff::Error(error) => Err(error.clone()),
+    })?;
+    group.send_fanout()?;
+
+    Ok(())
+}
+```
+
+- **One result, read in place:** every follower reads the same result, and the last one done with it frees it. Only fan-out asks for the value and the error to be `Sync`, since followers can read them at the same time, on different workers.
+- **Ordinary handles:** the group's `then` returns each follower's handle, so a follower can be followed with `then`, forwarded, cancelled, or joined with followers of its own type. A follower inherits the task's priority, capped below realtime; `then_with_priority` gives it its own.
+- **Sent even if dropped:** a group dropped without `send_fanout` is sent all the same, and a group with no follower is refused.
+- **One error, written once at most:** if the task fails, every follower gets its error. Once any follower takes it, nothing is written to `Error.log`; if every follower was cancelled, it's written once.
+- **Cancelling a follower** cancels only that follower: the task still runs for the others, and it's cancelled only once every follower is, if it hasn't started by then (see [Cancelling](#cancelling)).
+
 ### Splitting Work
 
 `split_into` on the `PacketHandle` cuts a list into pieces and sends one typed task per piece, all with the same name, priority and closure. It returns their handles in order, ready to be joined:
@@ -213,7 +245,8 @@ fn photo_closed(handle: &PacketHandle) -> Result<(), Box<dyn std::error::Error>>
 
 - **Before it starts:** a task that hasn't started never runs: the worker that takes it skips it. A follow-up still waiting for its task, and a join still waiting for its tasks, never run either.
 - **Too late:** a task that's already running can't be stopped. It finishes, and its result is let go: an error is still written to `Error.log`, and a value is dropped. The same goes for a task that has already finished.
-- **Through forwards and joins:** if the task forwarded, the cancel goes on to the task it forwarded to. Cancelling a join that's still waiting also cancels the tasks it waits for, and the joins among them, all the way in. Cancelling a follow-up doesn't stop the task it follows, which still runs.
+- **Through forwards and joins:** if the task forwarded, the cancel goes on to the task it forwarded to. Cancelling a join that's still waiting also cancels the tasks it waits for, and the joins among them, all the way in.
+- **Up the chain:** the work that only the cancelled task needed stops too. Cancelling a follow-up also cancels the task it follows, since `then` used that task's handle up and nobody else can take its result, and so on up: if Save follows LoadImg, which follows Hash, cancelling Save cancels LoadImg and Hash too, as long as they haven't started. A fan-out follower only withdraws from its group: the task the group follows is cancelled once every follower is.
 - **No error is lost:** if a follow-up or a join had already been given an error by the task before it, that error is still written to `Error.log`, since nobody takes it now.
 - **Quiet:** cancelling never fails and writes nothing to the logs, even once the engine is gone. At shutdown, a cancelled task isn't counted as lost work.
 

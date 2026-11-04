@@ -43,7 +43,7 @@ use crate::bases::notif::Notif;
 use crate::errors::{EngineNotRunningError, SplitError, ThryveError};
 use crate::extras::thread_local;
 use crate::graphs::callsite::TaskCallSite;
-use crate::packets::task::{AdvTask, AdvTaskHandle, Task};
+use crate::packets::task::{AdvTask, AdvTaskHandle, Converter, Task};
 use crate::traits::packets::Packet;
 
 use crossbeam::channel::Sender;
@@ -206,22 +206,25 @@ impl PacketHandle {
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     #[track_caller]
-    pub fn send_task(&self, mut task: Task) -> Result<(), ThryveError> {
-        if self.graph_mode_on() {
-            let caller = Location::caller();
-            let file_path = PathBuf::from(caller.file().to_string());
-            let line_num = caller.line();
-            let task_name = task.task_name().to_string();
+    pub fn send_task(&self, task: Task) -> Result<(), ThryveError> {
+        self.send_task_inner(task, true)
+    }
 
-            let mut callsite = TaskCallSite::new(file_path, line_num, task_name);
+    /// Sends a fan-out group's follower, like [`send_task`](Self::send_task), but without recording
+    /// a call site: graph mode recorded the line of the follower's `then` already, and recording
+    /// here would replace it with the line that sent the group.
+    #[track_caller]
+    pub(crate) fn send_fanout_task(&self, task: Task) -> Result<(), ThryveError> {
+        self.send_task_inner(task, false)
+    }
 
-            let child_fingerprint = callsite.fingerprint();
-            let current_task_fingerprint = thread_local::tl_get_current_task_fingerprint();
-
-            callsite.this_callsite_fingerprint = child_fingerprint;
-            callsite.current_executing_task_fingerprint = current_task_fingerprint;
-
-            task.set_callsite(callsite.clone());
+    /// What `send_task` and `send_fanout_task` share: records the call site in graph mode when
+    /// `create_callsite` says so, then sends. `#[track_caller]`, so the line recorded is the
+    /// caller's.
+    #[track_caller]
+    fn send_task_inner(&self, mut task: Task, create_callsite: bool) -> Result<(), ThryveError> {
+        if create_callsite {
+            self.set_callsite(&mut task);
         }
 
         // A send fails only once the engine is gone (its receiving end was dropped). The error
@@ -297,6 +300,28 @@ impl PacketHandle {
         self.send_status_helper(StatusMsg::LogLine(notif));
     }
 
+    /// Sends a fan-out group's data on the status mailbox, after its followers: with it, the
+    /// engine knows who's in the group, and has the converter that opens the result they share. A
+    /// failed send is dropped without an error: the engine is gone.
+    ///
+    /// # Arguments
+    ///
+    /// * `converter` - Opens the result of the task the followers share, once
+    /// * `pre_fanout_task_id` - The id of that task
+    /// * `fanout_tasks_ids` - The followers' ids, in the order they were declared
+    pub(crate) fn send_status_fanout_group(
+        &self,
+        converter: Box<Converter>,
+        pre_fanout_task_id: u64,
+        fanout_tasks_ids: Vec<u64>,
+    ) {
+        self.send_status_helper(StatusMsg::GroupUsageGuide {
+            converter,
+            pre_fanout_task_id,
+            fanout_tasks_ids,
+        });
+    }
+
     /// Tells the engine that the handle of the task `handle_id` is gone without a follow-up, so
     /// nobody will take the task's result: the engine lets it go, and writes an error to
     /// `Error.log`.
@@ -355,6 +380,32 @@ impl PacketHandle {
     pub fn turn_graph_mode_off(&self) -> bool {
         self.is_graph_visualization_enabled
             .swap(false, Ordering::SeqCst)
+    }
+
+    /// Records the call site on `task` when graph mode is on: the caller's file and line, through
+    /// `#[track_caller]`, the task's name, and the task running on this thread, if any, as its
+    /// parent.
+    ///
+    /// [`send_task`](Self::send_task) calls it as it sends. A fan-out group's `then` calls it when
+    /// it declares a follower, since the follower is sent later, from another line.
+    #[track_caller]
+    pub(crate) fn set_callsite(&self, task: &mut Task) {
+        if self.graph_mode_on() {
+            let caller = Location::caller();
+            let file_path = PathBuf::from(caller.file().to_string());
+            let line_num = caller.line();
+            let task_name = task.task_name().to_string();
+
+            let mut callsite = TaskCallSite::new(file_path, line_num, task_name);
+
+            let child_fingerprint = callsite.fingerprint();
+            let current_task_fingerprint = thread_local::tl_get_current_task_fingerprint();
+
+            callsite.this_callsite_fingerprint = child_fingerprint;
+            callsite.current_executing_task_fingerprint = current_task_fingerprint;
+
+            task.set_callsite(callsite.clone());
+        }
     }
 }
 
@@ -564,6 +615,16 @@ impl PacketHandle {
 pub enum StatusMsg {
     /// A status line, such as "ThreadPool Finalized", for the logger.
     LogLine(Notif),
+    /// A fan-out group's data, sent after its followers: who's in the group, so the engine knows
+    /// when it has all of them, and the converter that opens the result they share.
+    GroupUsageGuide {
+        /// Opens the result of the task the followers share, once.
+        converter: Box<Converter>,
+        /// The id of the task whose result the followers share.
+        pre_fanout_task_id: u64,
+        /// The followers' ids, in the order they were declared.
+        fanout_tasks_ids: Vec<u64>,
+    },
     /// The handle of the task with this id was dropped without a follow-up, so nobody will take
     /// the task's result.
     HandleRelease(u64),

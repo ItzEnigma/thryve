@@ -94,11 +94,11 @@ use crate::gate_t4::{
 };
 
 /// How long a test waits for a report, or for a shutdown.
-const WAIT: Duration = Duration::from_secs(10);
+pub(crate) const WAIT: Duration = Duration::from_secs(10);
 
 /// Calls `check` on the engine until it says something came in, for up to 5 seconds. With
 /// `Engine::check_status`, `check_tasks` or `check_results`, it reads that one mailbox only.
-fn until(engine: &mut Engine, check: impl Fn(&mut Engine) -> bool, what: &str) {
+pub(crate) fn until(engine: &mut Engine, check: impl Fn(&mut Engine) -> bool, what: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !check(engine) {
         assert!(Instant::now() < deadline, "{what} never came");
@@ -136,12 +136,12 @@ fn gated_row(
 }
 
 /// Whether `Error.log` in `dir` mentions a cancel at all: a cancel is never an error.
-fn error_log_mentions_a_cancel(dir: &std::path::Path) -> bool {
+pub(crate) fn error_log_mentions_a_cancel(dir: &std::path::Path) -> bool {
     read_log(dir, "Error.log").to_lowercase().contains("cancel")
 }
 
 /// How many times `text` was written to `Error.log` in `dir`.
-fn times_logged(dir: &Path, text: &str) -> usize {
+pub(crate) fn times_logged(dir: &Path, text: &str) -> usize {
     read_log(dir, "Error.log").matches(text).count()
 }
 
@@ -149,7 +149,7 @@ fn times_logged(dir: &Path, text: &str) -> usize {
 type Joined = JoinHandoff<Vec<u32>, std::io::Error>;
 
 /// A task that fails at once with `error`.
-fn failing_row(name: &str, error: &'static str) -> AdvTask<u32, std::io::Error> {
+pub(crate) fn failing_row(name: &str, error: &'static str) -> AdvTask<u32, std::io::Error> {
     AdvTask::new(name, 2, move || Err(std::io::Error::other(error))).unwrap()
 }
 
@@ -169,7 +169,7 @@ fn forwarding_on_go(
 }
 
 /// A follow-up's closure that tells `ran` it ran, by `name`.
-fn telling_follow_up(
+pub(crate) fn telling_follow_up(
     name: &'static str,
     ran: &Sender<&'static str>,
 ) -> impl FnOnce(Handoff<u32, std::io::Error>) -> Result<u32, std::io::Error> + Send + 'static {
@@ -208,7 +208,7 @@ fn reporting_error(
 /// Sends Row 1, which holds the engine's only worker until the test lets it go on, and waits
 /// until it has started. Its handle is dropped, so its release waits in the status mailbox, and
 /// its value is let go. Returns what lets it go on.
-fn holding_the_worker(engine: &mut Engine, packet_handle: &PacketHandle) -> Sender<()> {
+pub(crate) fn holding_the_worker(engine: &mut Engine, packet_handle: &PacketHandle) -> Sender<()> {
     let (started_tx, started_rx) = unbounded();
     let (go_tx, go_rx) = unbounded();
     let row_1 = gated_row("Row1", started_tx, go_rx, None);
@@ -386,6 +386,7 @@ mod cancelling {
                 StatusMsg::Cancel(id) => format!("cancel {id}"),
                 StatusMsg::HandleRelease(id) => format!("release {id}"),
                 StatusMsg::LogLine(_) => String::from("a status line"),
+                StatusMsg::GroupUsageGuide { .. } => String::from("a fan-out group"),
             })
             .collect();
         assert_eq!(sent, vec![format!("cancel {id}")]);
@@ -580,7 +581,9 @@ mod follow_ups {
 
         load.cancel();
         until(&mut engine, Engine::check_status, "the cancel");
-        assert_eq!(engine.cancelled_tasks.len(), 1);
+        // LoadImg, and Hash, which nobody needs any more. Hash is already running, so it still
+        // fails, and its report takes its id out of the set.
+        assert_eq!(engine.cancelled_tasks.len(), 2);
 
         // Hash's error arrives: LoadImg isn't queued, and nobody takes the error.
         go_tx.send(()).unwrap();
@@ -638,13 +641,18 @@ mod follow_ups {
         until(&mut engine, Engine::check_results, "Hash's error");
 
         // LoadImg gets Hash's error at once, and waits in the queue behind Row 1. The engine
-        // keeps the error's text, since the worker can't open what LoadImg carries.
+        // keeps the error's text, since the worker can't open what LoadImg carries: under Hash's
+        // id, with a pointer to it under LoadImg's.
         let go_tx = holding_the_worker(&mut engine, &packet_handle);
         let load = hash
             .then("LoadImg", telling_follow_up("LoadImg", &ran_tx))
             .unwrap();
         until(&mut engine, Engine::check_tasks, "LoadImg");
-        assert_eq!(engine.wait_table_len(), 1, "the error's text is kept");
+        assert_eq!(
+            engine.wait_table_len(),
+            2,
+            "the error's text and its pointer are kept"
+        );
 
         load.cancel();
         until(&mut engine, Engine::check_status, "the cancel");
@@ -880,14 +888,15 @@ mod joins {
             started_rx.recv_timeout(WAIT).expect("a row never started");
         }
 
-        // Row 417's error queues Save at once, and Row 418, which Save no longer waits for, is
-        // cancelled.
+        // Row 417's error queues Save at once. Row 418, which Save no longer waits for, is
+        // cancelled, and so is Load, which only fed Row 418. Load is already running, so it
+        // still finishes, and its report takes its id out of the set.
         row_go_tx.send(()).unwrap();
         assert_eq!(
             run_until_received(&mut engine, &got_rx),
             "0: row 417 is corrupt"
         );
-        assert_eq!(engine.cancelled_tasks.len(), 1);
+        assert_eq!(engine.cancelled_tasks.len(), 2);
 
         // Load finishes, and Row 418 is caught before it's queued.
         load_go_tx.send(()).unwrap();
@@ -921,7 +930,8 @@ mod joins {
         until(&mut engine, Engine::check_tasks, "Row 418");
 
         // Row 417's kept error queues Save at once, and Row 418 is cancelled. The engine keeps
-        // the error's text until Save reports.
+        // the error's text under Row 417's id until Save reports, with a pointer to it under
+        // Save's.
         let save = vec![row_417, row_418]
             .join("Save", telling_join("Save", &joins_ran_tx))
             .unwrap();
@@ -929,8 +939,8 @@ mod joins {
         assert_eq!(engine.cancelled_tasks.len(), 1);
         assert_eq!(
             engine.wait_table_len(),
-            2,
-            "Row 418's follower and the error's text"
+            3,
+            "Row 418's follower, and the error's text and its pointer"
         );
 
         // Save is cancelled in the queue: the worker skips it, so nobody takes Row 417's error.
@@ -1098,7 +1108,11 @@ mod shutdown {
             .then("Retry", telling_follow_up("Retry", &ran_tx))
             .unwrap();
         until(&mut engine, Engine::check_tasks, "Thumbnail and Retry");
-        assert_eq!(engine.wait_table_len(), 2, "both errors' texts are kept");
+        assert_eq!(
+            engine.wait_table_len(),
+            4,
+            "both errors' texts and their pointers are kept"
+        );
         retry.cancel();
         until(&mut engine, Engine::check_status, "the cancel");
 
@@ -1187,7 +1201,11 @@ mod shutdown {
             got_rx.recv_timeout(WAIT).expect("Thumbnail never ran"),
             "Thumbnail didn't get Hash's error"
         );
-        assert_eq!(engine.wait_table_len(), 1, "the error's text is still kept");
+        assert_eq!(
+            engine.wait_table_len(),
+            2,
+            "the error's text and its pointer are still kept"
+        );
 
         assert!(finalize_within(engine, WAIT).is_some());
 
