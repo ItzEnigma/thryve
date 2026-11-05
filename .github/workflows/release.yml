@@ -19,7 +19,7 @@ env:
   CARGO_TERM_COLOR: always
   # The Topology release that ships with this one, and where it's published.
   TOPOLOGY_VERSION: "0.1.0"
-  TOPOLOGY_REPO: thryveframework/ThryveVisualization
+  TOPOLOGY_REPO: thryveframework/thryve-topology
 
 permissions:
   contents: write
