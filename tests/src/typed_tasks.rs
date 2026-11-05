@@ -251,6 +251,10 @@ where
 
 /// Drives the engine until it has taken in the tasks sent to it and handled a result. It never
 /// reads the status mailbox, so no release is handled.
+///
+/// One read takes in every task already sent, including one a worker sends while the read is
+/// still going, so a test can't count calls when a task sends another: it waits for the state it
+/// expects instead (see `until`).
 fn take_in_and_handle_a_result(engine: &mut Engine) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !engine.check_tasks() {
@@ -971,6 +975,7 @@ mod late_then_and_release {
 mod forwarding {
     use super::*;
 
+    use crate::cancelling::until;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1091,19 +1096,23 @@ mod forwarding {
         let dir = fresh_dir("typed_tasks_forward_stacked");
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 10);
 
-        // `Process` forwards to `Save`, which forwards to `Answer`. Each sends the next before it
-        // finishes, so the engine takes them in one at a time.
+        // `Process` forwards to `Save`, which forwards to `Answer`; each sends the next while it
+        // runs. How many reads the engine needs depends on the worker's timing: one read takes in
+        // every task already sent, so it can take in `Save` right behind `Process`. So the engine
+        // reads tasks and results (never the status mailbox) until Answer's value is kept at the
+        // end of the two links.
         let save = forwarding("Save", &packet_handle, answer());
         let handle = packet_handle
             .send_adv_task(forwarding("Process", &packet_handle, save))
             .unwrap();
-        for _ in 0..3 {
-            take_in_and_handle_a_result(&mut engine);
-        }
-        assert_eq!(
-            engine.wait_table_len(),
-            3,
-            "two links, and Answer's value kept"
+        until(
+            &mut engine,
+            |engine| {
+                engine.check_tasks();
+                engine.check_results();
+                engine.wait_table_len() == 3
+            },
+            "two links, and Answer's value kept,",
         );
 
         let (got_tx, got_rx) = bounded(1);
