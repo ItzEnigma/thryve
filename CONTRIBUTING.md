@@ -30,15 +30,16 @@ Thank you for your interest in contributing to Thryve! This document provides gu
 
 ### Prerequisites
 
-- **Rust, latest stable** - [Install Rust](https://rustup.rs/). The code uses Rust 2024's let chains, so nothing older than 1.88 can build it.
+- **Windows** - Thryve builds on Windows only, for now.
+- **Rust, latest stable** - [Install Rust](https://rustup.rs/). Nothing older than 1.98 can build it: the code uses `Path::is_empty`, new in 1.98.
 - **Git** - Version control
 - **GitHub account** - For submitting pull requests
 
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/JoJoAbdellatif/Thryve.git
-cd Thryve
+git clone https://github.com/thryveframework/thryve.git
+cd thryve
 ```
 
 ### Verify Installation
@@ -71,7 +72,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### Finding Issues to Work On
 
-1. Check the [Issues](https://github.com/JoJoAbdellatif/Thryve/issues) tab
+1. Check the [Issues](https://github.com/thryveframework/thryve/issues) tab
 2. Look for issues labeled `good first issue` or `help wanted`
 3. Comment on issues you'd like to work on
 

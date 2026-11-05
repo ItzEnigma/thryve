@@ -52,6 +52,8 @@ The FFI layer handles:
 
 ## Quick Start
 
+The library comes prebuilt for Windows on Thryve's [release page](https://github.com/thryveframework/thryve/releases/latest): `thryve_ffi-<version>-windows-x86_64` has the headers and the library, and `thryve-<version>-windows-x86_64` adds `Topology.exe` next to the DLL. Each comes as .zip and .tar.gz. To build it yourself, see [Building](#building).
+
 Here's a minimal C example showing how to use the FFI layer. Note that a `PacketHandle` (obtained from `ctx`) is required for plugin creation:
 
 ```c
@@ -629,10 +631,10 @@ The headers are generated in the build script's `OUT_DIR` and copied to `crates/
 |----------|----------------|--------------|
 | Windows, MSVC toolchain | `thryve_ffi.dll` | `thryve_ffi.dll.lib`, the DLL's import library |
 | Windows, GNU toolchain | `thryve_ffi.dll` | `libthryve_ffi.dll.a`, or the DLL itself with gcc |
-| Linux | `libthryve_ffi.so` | `-lthryve_ffi` |
-| macOS | `libthryve_ffi.dylib` | `-lthryve_ffi` |
 
-`thryve_ffi.lib` and `libthryve_ffi.a` are static libraries: they build the whole library into your program, and need Rust's system libraries to link, so link the shared library instead. The release zip (`include/`, `lib/`, `bin/`) has the import library renamed `thryve_ffi.lib`, next to `thryve_ffi.dll`.
+Thryve builds on Windows only, for now.
+
+`thryve_ffi.lib` and `libthryve_ffi.a` are static libraries: they build the whole library into your program, and need Rust's system libraries to link, so link the shared library instead. The release downloads hold `include/`, `bin/` (with `thryve_ffi.dll`) and `lib/`, where the import library is renamed `thryve_ffi.lib`.
 
 ### The Committed Header
 

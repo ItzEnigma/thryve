@@ -9,6 +9,10 @@
     description = "Runtime logic for the Thryve runtime. Handles interactive and service logic and initialization."   # per-crate, not shared
     keywords = ["initialization", "interactive", "service", "internal"]
 
+# Thryve builds on Windows only, for now, so docs.rs documents it for Windows.
+[package.metadata.docs.rs]
+    default-target = "x86_64-pc-windows-msvc"
+    targets = ["x86_64-pc-windows-msvc"]
 
 [dependencies]
     thryve_core = { path = "../thryve_core" , version = "0.1.0"}

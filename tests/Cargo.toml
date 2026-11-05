@@ -6,6 +6,7 @@
     homepage.workspace = true
     repository.workspace = true
     readme.workspace = true
+    publish = false
     description = "tests the entire Thryve workspace to make sure all tested scenarios run normally."   # per-crate, not shared
 
 

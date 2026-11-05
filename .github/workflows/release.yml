@@ -1,0 +1,127 @@
+name: Release
+
+# Publishing a release on GitHub's website (which makes its tag) builds Thryve's downloads and attaches
+# them to that release, each as .zip and .tar.gz:
+#   thryve-<version>-<platform>                    the C library, with Topology next to it
+#   thryve_ffi-<version>-<platform>                the C library only
+#   thryve-topology-<TOPOLOGY_VERSION>-<platform>  Topology only
+# <version> is the release's tag without its "v" (v0.1.0 gives 0.1.0).
+#
+# A manual run from the Actions tab builds and packages on any branch without touching a release: the
+# archives stay on the run's page, named after the branch. Either way, Topology's release
+# (TOPOLOGY_VERSION below) must already exist, since Topology is taken from it.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The Topology release that ships with this one, and where it's published.
+  TOPOLOGY_VERSION: "0.1.0"
+  TOPOLOGY_REPO: thryveframework/ThryveVisualization
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build and package (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          # One entry per platform. Thryve builds on Windows only, for now.
+          - platform: windows-x86_64
+            os: windows-latest
+            topology_archive: zip
+            topology_program: Topology.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Release-only build. This is what produces the C library (on Windows, thryve_ffi.dll and its
+      # import library, thryve_ffi.dll.lib), and also regenerates crates/thryve_ffi/out/thryve.h and
+      # thryve_ffi.h fresh from this exact build (via build.rs), so the packaged headers always match
+      # the packaged library.
+      - run: cargo build --release -p thryve_ffi
+
+      # Topology's own archive for this platform, from its release, unpacked into topology/. The archive
+      # holds one folder, named like it: Topology's program, README, LICENSE and CHANGELOG.
+      - name: Fetch Topology
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="thryve-topology-${TOPOLOGY_VERSION}-${{ matrix.platform }}.${{ matrix.topology_archive }}"
+          gh release download "v${TOPOLOGY_VERSION}" --repo "$TOPOLOGY_REPO" --pattern "$asset" --dir topology
+          case "$asset" in
+            *.zip) 7z x "topology/$asset" -otopology > /dev/null ;;
+            *) tar -xzf "topology/$asset" -C topology ;;
+          esac
+
+      # The three downloads, each as a folder in dist/, named like its archives.
+      - name: Assemble
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ffi="dist/thryve_ffi-${version}-${{ matrix.platform }}"
+          everything="dist/thryve-${version}-${{ matrix.platform }}"
+          topology="topology/thryve-topology-${TOPOLOGY_VERSION}-${{ matrix.platform }}"
+
+          # The C library: the headers, the library, and Thryve's licenses.
+          mkdir -p "$ffi/include" "$ffi/lib"
+          cp crates/thryve_ffi/out/thryve.h crates/thryve_ffi/out/thryve_ffi.h "$ffi/include/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            mkdir -p "$ffi/bin"
+            cp target/release/thryve_ffi.dll "$ffi/bin/"
+            # The DLL's import library, under the name C linkers look for. The build's own
+            # thryve_ffi.lib is the static library, which would build the whole library into the
+            # program and never use the DLL.
+            cp target/release/thryve_ffi.dll.lib "$ffi/lib/thryve_ffi.lib"
+          else
+            cp target/release/libthryve_ffi.so "$ffi/lib/"
+          fi
+          cp LICENSE COMMERCIAL.md "$ffi/"
+
+          # Everything: the same, with Topology's program next to the library, where Thryve looks for
+          # it, and Topology's license.
+          cp -r "$ffi" "$everything"
+          mkdir -p "$everything/bin"
+          cp "$topology/${{ matrix.topology_program }}" "$everything/bin/"
+          cp "$topology/LICENSE" "$everything/Topology-LICENSE"
+
+          # Topology only, as its own release ships it.
+          cp -r "$topology" dist/
+
+      # Each folder as .zip and .tar.gz, in out/.
+      - name: Archive
+        shell: bash
+        run: |
+          mkdir -p out
+          cd dist
+          for folder in */; do
+            name="${folder%/}"
+            7z a "../out/${name}.zip" "$name" > /dev/null
+            tar -czf "../out/${name}.tar.gz" "$name"
+          done
+          ls -l ../out
+
+      # Always uploaded, manual test runs included, so the archives can be downloaded and checked from
+      # the run's page without a release.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thryve-${{ matrix.platform }}
+          path: out/*
+          if-no-files-found: error
+
+      # Only attach to a release that was published, so manual test runs never touch one, even when run
+      # on a tag. The release keeps the notes written on the website; this only adds the archives.
+      - if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          fail_on_unmatched_files: true

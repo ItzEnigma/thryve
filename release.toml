@@ -1,3 +1,10 @@
 shared-version = true
 consolidate-commits = true
 tag-name = "v{{version}}"
+
+# A release is published on GitHub's website, which makes its tag, and main goes to the public repo by
+# hand. So cargo-release only bumps the versions, commits, and publishes to crates.io: it makes no tag,
+# pushes nothing, and runs only on main.
+tag = false
+push = false
+allow-branch = ["main"]

@@ -721,11 +721,11 @@ When enabled via the `visual_graph` configuration option, Thryve automatically t
 
 1. **Call Site Capture**: When a task is sent (`send_task`) or chained (`chain`), the system records the file path and line number of that call. The compiler passes them in (`#[track_caller]`), so they're exact in every build, with or without debug info. A function of yours that wraps `send_task` is the call site for every task it sends, unless you mark it `#[track_caller]` too.
 2. **Fingerprint Generation**: Each call site is assigned a unique fingerprint based on its location
-3. **Graph Building**: The [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) receives notifications and builds a graph where:
+3. **Graph Building**: The [`TopologyHandlerObserver`](crates/thryve_observers/src/topology_handler.rs) receives notifications and builds a graph where:
    - **Nodes** represent call sites where tasks are created
    - **Edges** represent parent-child task relationships
    - **Edge weights** represent how many times a call path was taken
-4. **Visualization**: On shutdown, the graph is exported to `topology/topology_export.ron` in the root folder, and the viewer, `Topology.exe`, is started with that file's path. Put `Topology.exe` next to your program's `.exe`: Thryve looks for it there, never in the root folder, since whoever can write to the root could put their own program there
+4. **Visualization**: On shutdown, the graph is exported to `topology/topology_export.ron` in the root folder, and Topology (`Topology.exe`) is started with that file's path. Get `Topology.exe` from Thryve's [release page](https://github.com/thryveframework/thryve/releases/latest), on its own or next to the C library, and put it next to your program's `.exe`: Thryve looks for it there, never in the root folder, since whoever can write to the root could put their own program there.
 
 ### When Graph Mode Fails
 
@@ -750,17 +750,18 @@ The graph visualization system consists of:
 
 | Component | Description |
 |-----------|-------------|
-| [`TaskCallSite`](thryve_utils/src/graphs/callsite.rs) | Represents a single call site with file path, line number and task name |
-| [`TaskTopology`](thryve_utils/src/graphs/graph.rs) | Maintains the graph structure using petgraph's StableGraph |
-| [`TopologyModifier`](thryve_utils/src/packets/notif_topology.rs) | Notification type for adding nodes and edges |
-| [`TopologyHandlerObserver`](thryve_observers/src/topology_handler.rs) | Observer that maintains the graph and exports it on shutdown |
+| [`TaskCallSite`](crates/thryve_utils/src/graphs/callsite.rs) | Represents a single call site with file path, line number and task name |
+| [`TaskTopology`](crates/thryve_utils/src/graphs/graph.rs) | Maintains the graph structure using petgraph's StableGraph |
+| [`TopologyModifier`](crates/thryve_utils/src/packets/notif_topology.rs) | Notification type for adding nodes and edges |
+| [`TopologyHandlerObserver`](crates/thryve_observers/src/topology_handler.rs) | Observer that maintains the graph and exports it on shutdown |
 
 
 ## Building
 
 ### Prerequisites
 
-- Rust: the latest stable release. The code uses Rust 2024's let chains, so nothing older than 1.88 can build it.
+- Windows (x86_64): Thryve builds on Windows only, for now.
+- Rust: the latest stable release. Nothing older than 1.98 can build it: the code uses `Path::is_empty`, new in 1.98.
 - Cargo
 
 ### Build Commands
@@ -878,8 +879,8 @@ Contributions are welcome! This project uses a **Contributor License Agreement (
 #### 1. Fork and Clone
 
 ```bash
-git clone https://github.com/JoJoAbdellatif/Thryve.git
-cd Thryve
+git clone https://github.com/thryveframework/thryve.git
+cd thryve
 ```
 
 #### 2. Create a Branch

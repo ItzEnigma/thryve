@@ -56,7 +56,7 @@ jobs:
           remote-organization-name: JoJoAbdellatif
           remote-repository-name: Thryve-cla-signatures
           path-to-signatures: "signatures/cla-individual-v1.json"
-          path-to-document: "https://github.com/JoJoAbdellatif/Thryve/blob/main/CLA-INDIVIDUAL.md"
+          path-to-document: "https://github.com/thryveframework/thryve/blob/main/CLA-INDIVIDUAL.md"
           branch: "main"
           allowlist: dependabot[bot],bot*
           custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"

@@ -14,6 +14,11 @@
 [package.metadata.release]
     verify = false
 
+# Thryve builds on Windows only, for now, so docs.rs documents it for Windows.
+[package.metadata.docs.rs]
+    default-target = "x86_64-pc-windows-msvc"
+    targets = ["x86_64-pc-windows-msvc"]
+
 [dependencies]
     thryve_utils = { path = "../thryve_utils" , version = "0.1.0" }
     thryve_run = { path = "../thryve_run" , version = "0.1.0" }
