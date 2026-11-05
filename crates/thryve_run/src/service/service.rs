@@ -160,7 +160,7 @@ impl<'a> Thryve<'a> {
         // Create the context that will be passed to the engine, containing the configuration, channels, and packet handle.
         if config.debugging.is_debugging {
             let ctx = Ctx::new(
-                config,
+                config.clone(),
                 task_rx,
                 notif_rx,
                 status_rx,

@@ -10,8 +10,9 @@
 //! Configuration structures for the Thryve Task Manager application.
 //!
 //! This module defines the configuration hierarchy for the Thryve system,
-//! providing types for service behavior, engine parameters, thread pool
-//! settings, pipe capacities, task management, and debugging options.
+//! providing types for where Thryve keeps its files, service behavior, engine
+//! parameters, thread pool settings, pipe capacities, task management, and
+//! debugging options.
 //!
 //! # Loading Configuration
 //!
@@ -27,6 +28,9 @@
 //! [`Config::load_def_config`] uses.
 //!
 //! ```toml
+//! [init]
+//! root_dir = ""
+//!
 //! [service]
 //! can_stop = true
 //! can_pause = true
@@ -58,9 +62,16 @@
 //! log_tasks = false
 //! ```
 //!
+//! `init.root_dir` names the root folder: the folder that holds each run's logs and, in graph
+//! mode, the task graph. Empty means the program's own folder. Anything else must be an absolute
+//! path to a folder that already exists, such as `D:\ThryveData`. Write a Windows path in single
+//! quotes (`root_dir = 'D:\ThryveData'`); inside double quotes, TOML reads each backslash as the
+//! start of an escape.
+//!
 //! # Configuration Hierarchy
 //!
 //! - [`Config`]: Root configuration structure
+//! - [`InitConfig`]: Where Thryve keeps its files (the root folder)
 //! - [`ServiceConfig`]: Service behavior (pause/stop capabilities)
 //! - [`EngineConfig`]: Engine tick rate and sleep behavior
 //! - [`ThreadConfig`]: Worker thread count
@@ -84,6 +95,7 @@ use crate::errors::{ConfigError, ConfigViolations, RuleError, ThryveError};
 ///
 /// # Fields
 ///
+/// - `init`: Where Thryve keeps its files
 /// - `service`: Service behavior configuration
 /// - `engine`: Engine execution parameters
 /// - `threads`: Thread pool configuration
@@ -106,9 +118,11 @@ use crate::errors::{ConfigError, ConfigViolations, RuleError, ThryveError};
 /// // Or use default configuration
 /// let default_config = Config::load_def_config();
 /// ```
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Where Thryve keeps its files.
+    pub init: InitConfig,
     /// Service behavior configuration.
     pub service: ServiceConfig,
     /// Engine execution parameters.
@@ -130,6 +144,7 @@ impl Default for Config {
     /// default values, suitable for basic operation without external configuration.
     fn default() -> Self {
         Self {
+            init: Default::default(),
             service: Default::default(),
             engine: Default::default(),
             threads: Default::default(),
@@ -170,7 +185,8 @@ impl Config {
     /// - `engine.idle_wait`, `engine.shutdown_grace_period`, `threads.worker_count`,
     ///   `tasks.aging_interval`, and the three `pipes` capacities and per-turn limits must be at
     ///   least 1;
-    /// - `tasks.max_priority` must be 14 or lower.
+    /// - `tasks.max_priority` must be 14 or lower;
+    /// - `init.root_dir` must be empty, or an absolute path to a folder that already exists.
     ///
     /// # Arguments
     ///
@@ -206,7 +222,9 @@ impl Config {
         let mut violations = Vec::new();
 
         // Each value as read, then its limit: at least 1 for each, and below 15 for
-        // `max_priority`.
+        // `max_priority`. The root folder has no limit; it's checked as a path.
+        let init_dir = config.init.root_dir.clone();
+        let init_dir_path_is = Path::new(&init_dir);
         let idle_wait_is = config.engine.idle_wait;
         let shutdown_grace_period_is = config.engine.shutdown_grace_period;
         let worker_count_is = config.threads.worker_count;
@@ -232,6 +250,14 @@ impl Config {
         let aging_interval_should_be: usize = 1;
 
         // Every check runs, so that all the failing values are reported together.
+
+        // The root folder: empty means the program's own folder; anything else must be an
+        // absolute path to a folder that already exists.
+        if !init_dir_path_is.is_empty()
+            && (!init_dir_path_is.is_absolute() || !init_dir_path_is.is_dir())
+        {
+            violations.push(RuleError::InitDir(init_dir));
+        }
 
         // The engine's waits.
         if idle_wait_is < idle_wait_should_be as u64 {
@@ -323,6 +349,40 @@ impl Config {
     }
 }
 
+/// Where Thryve keeps its files.
+///
+/// Thryve keeps each run's logs (`log/<timestamp>/`) and, in graph mode, the task graph
+/// (`topology/topology_export.ron`) under one folder, the root folder. Without one, that's the
+/// program's own folder. A dev can name another, such as `D:\ThryveData`, to keep a service's
+/// files apart from the program. `Topology.exe`, the graph's viewer, stays next to the program
+/// either way.
+///
+/// # Fields
+///
+/// - `root_dir`: The root folder, or empty for the program's own folder
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct InitConfig {
+    /// The root folder: empty for the program's own folder, or an absolute path to a folder
+    /// that already exists. A relative path is refused when the config is loaded: it would
+    /// depend on the working folder, which for a Windows service is System32.
+    ///
+    /// In the file, write a Windows path in single quotes (`root_dir = 'D:\ThryveData'`); inside
+    /// double quotes, TOML reads each backslash as the start of an escape.
+    ///
+    /// Default: `""`
+    pub root_dir: String,
+}
+
+impl Default for InitConfig {
+    /// Provides the default: no root folder, so everything stays in the program's own folder.
+    fn default() -> Self {
+        Self {
+            root_dir: String::from(""),
+        }
+    }
+}
+
 /// Service behavior configuration.
 ///
 /// Controls whether the service can be stopped or paused during runtime.
@@ -333,7 +393,7 @@ impl Config {
 ///
 /// - `can_stop`: Whether the service accepts stop commands
 /// - `can_pause`: Whether the service accepts pause/resume commands
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
     /// Whether the service accepts stop commands.
@@ -367,7 +427,7 @@ impl Default for ServiceConfig {
 ///
 /// - `idle_wait`: Milliseconds an idle engine waits for something to arrive
 /// - `shutdown_grace_period`: Seconds the shutdown waits for running tasks
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EngineConfig {
     /// Milliseconds an idle engine waits for something to arrive.
@@ -424,7 +484,7 @@ impl Default for EngineConfig {
 /// # Fields
 ///
 /// - `worker_count`: Number of worker threads in the pool
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ThreadConfig {
     /// Number of worker threads for task execution.
@@ -459,7 +519,7 @@ impl Default for ThreadConfig {
 /// - `notifs_processed_per_turn`: Most notifications the engine takes per turn
 /// - `res_pipe_capacity`: Buffer size for result channel
 /// - `res_processed_per_turn`: Most results the engine takes per turn
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PipeConfig {
     /// Buffer size for the task channel.
@@ -524,7 +584,7 @@ impl Default for PipeConfig {
 ///
 /// - `max_priority`: Highest valid priority level (0-14)
 /// - `aging_interval`: Seconds before priority boost is applied
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskConfig {
     /// Maximum valid task priority level.
@@ -565,7 +625,7 @@ impl Default for TaskConfig {
 ///
 /// - `is_debugging`: Whether debugging mode is enabled
 /// - `wait_before_execution`: Seconds to wait before starting execution
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DebugConfig {
     /// Whether debugging mode is enabled.

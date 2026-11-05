@@ -45,13 +45,15 @@ static LOG_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Directory data structure for the Thryve system.
 ///
 /// The `DirData` struct encapsulates directory paths and log file handles
-/// for the Thryve system. It manages the executable directory, log directory
-/// path, and a hashmap of log files organized by module type.
+/// for the Thryve system. It holds the root folder, the paths of Thryve's
+/// folders under it, and a hashmap of log files organized by module type.
 ///
 /// # Fields
 ///
-/// - `exe_dir`: Path to the executable directory
-/// - `log_dir_path`: Path to the timestamped log directory
+/// - `exe_dir`: The root folder: the folder `init.root_dir` names, or the executable's
+///   folder when it's empty
+/// - `dir_paths`: The paths of Thryve's folders (this run's log folder, and the topology
+///   folder in graph mode)
 /// - `log_hash_map`: HashMap mapping module types to their log file handles
 ///
 /// # Example
@@ -60,13 +62,14 @@ static LOG_DIR_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// use thryve_utils::cfg::dir_data::DirData;
 ///
 /// // DirData is typically created during initialization
-/// let dir_data = DirData::new(exe_dir, log_dir_path, log_hash_map);
+/// let dir_data = DirData::new(root_dir, log_hash_map);
 /// ```
 #[derive(Clone)]
 pub struct DirData {
-    /// Path to the executable directory.
+    /// The root folder: the folder `init.root_dir` names, or the executable's folder when it's
+    /// empty.
     pub exe_dir: PathBuf,
-    /// Path to the timestamped log directory.
+    /// The paths of Thryve's folders, by name.
     pub dir_paths: HashMap<DirName, PathBuf>,
     /// HashMap mapping module types to their log file handles.
     pub log_hash_map: HashMap<LogFileNamedInput, Arc<File>>,
@@ -98,14 +101,13 @@ impl Default for DirData {
 impl DirData {
     /// Creates a new `DirData` instance with the specified paths and log files.
     ///
-    /// Initializes a new `DirData` with the given executable directory,
-    /// log directory path, and hashmap of log files. Also stores the log
-    /// directory path in the static `LOG_DIR_PATH` for global access.
+    /// Initializes a new `DirData` with the given root folder and hashmap of
+    /// log files. The folders' paths are recorded afterwards with
+    /// [`set_path`](Self::set_path).
     ///
     /// # Arguments
     ///
-    /// * `exe_dir` - Path to the executable directory
-    /// * `log_dir_path` - Path to the timestamped log directory
+    /// * `exe_dir` - The root folder (`init.root_dir`, or the executable's folder when it's empty)
     /// * `log_hash_map` - HashMap mapping module types to their log file handles
     ///
     /// # Returns
@@ -117,7 +119,7 @@ impl DirData {
     /// ```ignore
     /// use thryve_utils::cfg::dir_data::DirData;
     ///
-    /// let dir_data = DirData::new(exe_dir, log_dir_path, log_hash_map);
+    /// let dir_data = DirData::new(root_dir, log_hash_map);
     /// ```
     pub fn new(exe_dir: PathBuf, log_hash_map: HashMap<LogFileNamedInput, Arc<File>>) -> Self {
         Self {

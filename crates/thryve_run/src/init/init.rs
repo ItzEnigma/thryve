@@ -34,6 +34,7 @@ use crossbeam::channel::Sender;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
+    path::PathBuf,
     sync::Arc,
     thread::{self, JoinHandle},
     time::Duration,
@@ -368,7 +369,8 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 /// system to operate. This includes:
 ///
 /// 1. Checking the log-file names in `ctx.logging_file_names`
-/// 2. Creating a timestamped log directory
+/// 2. Creating a timestamped log directory under the root folder (`init.root_dir`, or the
+///    executable's folder when it's empty)
 /// 3. Creating Main.log and Error.log files, and Debug.log in debug mode
 /// 4. Creating additional log files based on configuration
 /// 5. Creating the topology directory, in graph mode
@@ -383,13 +385,14 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 /// Creates the following structure:
 ///
 /// ```text
-/// <exe_dir>/
+/// <root folder>/
 ///   log/
 ///     <timestamp>/
 ///       Main.log
 ///       Error.log
 ///       Debug.log     (only if debug-mode is enabled in the Config)
 ///       <Module>.log  (for each configured module)
+///   topology/         (graph mode only)
 /// ```
 ///
 /// # Log Files Created
@@ -406,7 +409,8 @@ pub fn init_topology_handler(ctx: &Ctx, eng: &mut Engine) -> Result<(), ThryveEr
 /// checked before anything is created.
 ///
 /// Returns a [`StartupError`] if:
-/// - the executable's directory can't be found (`RootFolder`, `NoParentFolder`);
+/// - no root folder is set and the executable's directory can't be found (`RootFolder`,
+///   `NoParentFolder`);
 /// - the log directory can't be created (`LogDirCreation`);
 /// - a log file can't be opened (`LogFileOpen`);
 /// - graph mode is on and the topology directory can't be created (`TopologyDirCreation`).
@@ -444,8 +448,9 @@ pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
         temp_validation_hash_map.insert(log_file_name, name.to_string());
     }
 
-    // This run's log folder, named after the time it started.
-    let log_dir_path = create_dir(DirName::Log)?;
+    // This run's log folder under the root folder, named after the time it started.
+    let root_dir = ctx.config.init.root_dir.clone();
+    let log_dir_path = create_dir(DirName::Log, root_dir.clone())?;
 
     // Create a main log file and an error log file for general logging and
     // error logging respectively.
@@ -516,13 +521,19 @@ pub fn init_directories(ctx: &mut Ctx) -> Result<(), ThryveError> {
         );
     }
 
-    // The folders and files go into the context, with the topology folder in graph mode.
-    let current_exec_dir = get_current_exec_dir()?;
-    let mut dir_data = DirData::new(current_exec_dir, temp_hash_map);
+    // The folders and files go into the context, with the topology folder in graph mode. An
+    // empty root folder means the executable's folder.
+    let current_root_dir = if root_dir.clone().is_empty() {
+        get_current_exec_dir()?
+    } else {
+        PathBuf::from(root_dir)
+    };
+
+    let mut dir_data = DirData::new(current_root_dir, temp_hash_map);
     dir_data.set_path(DirName::Log, log_dir_path);
 
     if ctx.config.debugging.is_debugging && ctx.config.debugging.visual_graph {
-        let topology_dir_path = create_dir(DirName::Topology)?;
+        let topology_dir_path = create_dir(DirName::Topology, ctx.config.init.root_dir.clone())?;
         dir_data.set_path(DirName::Topology, topology_dir_path);
     }
 

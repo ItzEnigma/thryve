@@ -303,7 +303,7 @@ impl PQChild<Task> {
     /// A new `PQChild` instance.
     pub fn new(config: &Config, packet_handle: PacketHandle) -> Self {
         Self {
-            task_config: Arc::new(config.tasks),
+            task_config: Arc::new(config.tasks.clone()),
             main_queue: SkipMap::new(),
             worker_registry: Arc::new(WorkerRegistry::new(config.threads.worker_count)),
             exit_flag: Arc::new(AtomicBool::new(false)),

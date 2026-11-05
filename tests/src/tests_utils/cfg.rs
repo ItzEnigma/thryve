@@ -703,7 +703,7 @@ mod tests_ctx {
         let config = Config::default();
 
         // Act
-        let ctx = Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle);
+        let ctx = Ctx::new(config.clone(), task_rx, notif_rx, status_rx, packet_handle);
 
         // Assert
         assert_eq!(ctx.config.service.can_stop, config.service.can_stop);
@@ -746,7 +746,7 @@ mod tests_cfg {
         let config1 = Config::default();
 
         // Act
-        let config2 = config1;
+        let config2 = config1.clone();
 
         // Assert
         assert_eq!(config1.service.can_stop, config2.service.can_stop);
@@ -773,7 +773,7 @@ mod tests_cfg {
         };
 
         // Act
-        let config2 = config1;
+        let config2 = config1.clone();
 
         // Assert
         assert_eq!(config1.can_stop, config2.can_stop);
@@ -982,6 +982,9 @@ mod tests_cfg {
         let file_path = temp_dir.join("test_config.toml");
 
         let toml_content = r#"
+            [init]
+            root_dir = ""
+
             [service]
             can_stop = true
             can_pause = true

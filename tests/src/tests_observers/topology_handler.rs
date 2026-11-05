@@ -441,7 +441,7 @@ mod tests_topology {
 
     // Tests for visualize_gui
     #[test]
-    fn test_visualize_gui_with_valid_parent_directory() {
+    fn test_visualize_gui_without_a_viewer_next_to_the_program() {
         // Arrange
         let ctx = create_test_ctx();
         let observer = TopologyHandlerObserver::new(&ctx).unwrap();
@@ -449,24 +449,11 @@ mod tests_topology {
         // Downcast to get the TopologyHandlerObserver
         let obs_core = observer.obs_core.as_any();
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
+        let export_file = topo_handler.topology_dir.join("topology_export.ron");
 
-        // Act - should not panic even if Topology.exe doesn't exist
-        // The function will fail to spawn the process but won't panic
-        topo_handler.visualize_gui();
-    }
-
-    #[test]
-    fn test_visualize_gui_with_parent_directory_returning_none() {
-        // Arrange
-        let ctx = create_test_ctx();
-        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
-
-        // Downcast to get the TopologyHandlerObserver
-        let obs_core = observer.obs_core.as_any();
-        let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
-
-        // Act - should not panic
-        topo_handler.visualize_gui();
+        // Act - Topology.exe isn't next to the test program, so nothing is started; the
+        // function only says so on stdout, and doesn't panic
+        topo_handler.visualize_gui(&export_file);
     }
 
     // Tests for handle_entry with AddEdge action
@@ -645,27 +632,5 @@ mod tests_topology {
         let topo_handler = obs_core.downcast_ref::<TopologyHandlerObserver>().unwrap();
         let topology_ref = topo_handler.topology.read().unwrap();
         assert!(topology_ref.contains_node("loop_node"));
-    }
-
-    #[test]
-    fn test_visualize_gui_with_root_topology_dir_has_no_parent() {
-        // Arrange - a root path has no parent, so this exercises the
-        // `topology_dir.parent()` == None branch, which the ctx-based
-        // constructor can never produce on its own (its topology_dir is
-        // always a subdirectory of a temp dir).
-        let mut ctx = create_test_ctx();
-        ctx.meta_data
-            .dir_data
-            .dir_paths
-            .insert(DirName::Topology, PathBuf::from("C:\\"));
-        let observer = TopologyHandlerObserver::new(&ctx).unwrap();
-        let topo_handler = observer
-            .obs_core
-            .as_any()
-            .downcast_ref::<TopologyHandlerObserver>()
-            .unwrap();
-
-        // Act - should not panic despite there being no parent directory
-        topo_handler.visualize_gui();
     }
 }

@@ -205,7 +205,7 @@ impl Engine {
         let (res_tx, res_rx) = bounded(ctx.config.pipes.res_pipe_capacity);
 
         let mut eng = Self {
-            config: ctx.config,
+            config: ctx.config.clone(),
             metrics: ctx.meta_data.metrics.clone(),
             plugin_manager: PluginManager::new(ctx, res_tx),
             obs_manager: ObserverManager::new(ctx),

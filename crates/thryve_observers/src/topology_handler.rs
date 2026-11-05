@@ -54,7 +54,7 @@
 use std::{
     fs::File,
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::{
         Arc, RwLock,
@@ -66,7 +66,7 @@ use std::{
 use ron::ser::PrettyConfig;
 
 use thryve_utils::extras::{
-    dir_paths::DirName,
+    dir_paths::{DirName, get_current_exec_dir},
     jobs::ObsJob,
     log_format::{log_line, write_line, write_stderr},
     named_input::LogFileNamedInput,
@@ -190,7 +190,7 @@ impl ObsLogic for TopologyHandlerObserver {
 
         topology_write.graph.clear();
 
-        self.visualize_gui();
+        self.visualize_gui(&file_path);
     }
 
     impl_as_any!(TopologyHandlerObserver);
@@ -490,45 +490,45 @@ impl TopologyHandlerObserver {
 impl TopologyHandlerObserver {
     /// Launches the GUI viewer for topology visualization.
     ///
-    /// Spawns an external process (`Topology.exe`) that reads
-    /// the exported RON file and displays the topology graph.
+    /// Spawns an external process (`Topology.exe`) that reads the exported RON file and
+    /// displays the topology graph. `Topology.exe` is looked for next to the program, never in
+    /// the root folder, and gets `export_file`'s path as its only argument.
     ///
-    /// Nothing here stops the shutdown: a viewer that can't be started is reported in
-    /// `Error.log`, and a missing `Topology.exe` is only mentioned on stdout.
-    pub fn visualize_gui(&self) {
+    /// Nothing here stops the shutdown: a viewer that can't be started, or a program folder that
+    /// can't be found, is reported in `Error.log`, and a missing `Topology.exe` is only mentioned
+    /// on stdout.
+    ///
+    /// # Arguments
+    ///
+    /// * `export_file` - The file the export just wrote
+    pub fn visualize_gui(&self, export_file: &Path) {
         let mut stdout = io::stdout();
 
-        // `Topology.exe` is looked for in the folder that holds the topology folder.
-        let Some(current_execution_dir) = self.topology_dir.parent() else {
-            let _ = writeln!(stdout, "Failed to get topology directory parent path");
-            return;
-        };
+        // Next to the program, never in the root folder: whoever can write to the root could put
+        // their own program there, and it would run under this program's account.
+        match get_current_exec_dir() {
+            Ok(current_execution_dir) => {
+                let command = current_execution_dir.join("Topology.exe");
 
-        let Some(current_execution_dir) = current_execution_dir.to_str() else {
-            self.report(
-                "the topology folder's path isn't valid UTF-8, so Topology.exe can't be started",
-            );
-            return;
-        };
+                // Started only if it's there.
+                if PathBuf::from(&command).exists() {
+                    // Detached GUI viewer, not meant to block shutdown
+                    #[allow(clippy::zombie_processes)]
+                    let spawned = Command::new(&command).arg(export_file).spawn();
 
-        let command = format!("{current_execution_dir}\\Topology.exe");
-        let _ = writeln!(stdout, "Command: {command}");
-        let _ = stdout.flush();
-
-        // Started only if it's there.
-        if PathBuf::from(&command).exists() {
-            // Detached GUI viewer, not meant to block shutdown
-            #[allow(clippy::zombie_processes)]
-            let spawned = Command::new(&command).spawn();
-
-            match spawned {
-                Ok(_) => {
-                    let _ = writeln!(stdout, "Process spawned and detached!");
+                    match spawned {
+                        Ok(_) => {
+                            let _ = writeln!(stdout, "Process spawned and detached!");
+                        }
+                        Err(e) => self.report(&format!("could not start Topology.exe: {e}")),
+                    }
+                } else {
+                    let _ = writeln!(stdout, "Failed to spawn GUI: path - {}", command.display());
                 }
-                Err(e) => self.report(&format!("could not start Topology.exe: {e}")),
             }
-        } else {
-            let _ = writeln!(stdout, "Failed to spawn GUI");
-        }
+            Err(e) => self.report(&format!(
+                "can't find the program's folder, so Topology.exe can't be started: {e}"
+            )),
+        };
     }
 }

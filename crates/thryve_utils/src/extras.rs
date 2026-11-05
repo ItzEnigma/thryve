@@ -771,7 +771,8 @@ pub mod thread_local {
         WORKER_PARK_IDX.with(Cell::get)
     }
 }
-/// Finding the executable's folder, and creating the folders Thryve keeps next to it.
+/// Finding the executable's folder, and creating the folders Thryve keeps under the root folder:
+/// the folder `init.root_dir` names, or the executable's folder when it's empty.
 pub mod dir_paths {
     use crate::{errors::StartupError, extras::misc::get_current_date_time};
     use std::{
@@ -781,7 +782,7 @@ pub mod dir_paths {
         process::Command,
     };
 
-    /// The folders Thryve creates next to the executable.
+    /// The folders Thryve creates under the root folder.
     #[derive(Clone, PartialEq, Eq, Hash)]
     pub enum DirName {
         /// `log/<timestamp>`: this run's log files. Each run gets a new folder.
@@ -807,19 +808,26 @@ pub mod dir_paths {
         Ok(exe_dir)
     }
 
-    /// Creates a directory based on the given `DirName`.
+    /// Creates one of Thryve's folders under the root folder.
+    ///
+    /// Missing parent folders are created too; an existing folder is used as it is.
     ///
     /// # Arguments
     ///
-    /// * `file_path` - The type of directory to create
+    /// * `file_path` - The folder to create
+    /// * `root_dir` - The root folder (`init.root_dir`): empty for the executable's folder
     ///
     /// # Returns
     ///
     /// * `Ok(PathBuf)` - The created directory path
-    /// * `Err(StartupError)` - Any error from [`get_current_exec_dir`], or
+    /// * `Err(StartupError)` - Any error from [`get_current_exec_dir`] when `root_dir` is empty, or
     ///   `LogDirCreation` / `TopologyDirCreation` if the directory can't be created (the OS error is its source)
-    pub fn create_dir(file_path: DirName) -> Result<PathBuf, StartupError> {
-        let current_root_dir = get_current_exec_dir()?;
+    pub fn create_dir(file_path: DirName, root_dir: String) -> Result<PathBuf, StartupError> {
+        let current_root_dir = if root_dir.is_empty() {
+            get_current_exec_dir()?
+        } else {
+            PathBuf::from(root_dir)
+        };
 
         match file_path {
             DirName::Log => {

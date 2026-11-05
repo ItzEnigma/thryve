@@ -72,7 +72,7 @@ use thryve_utils::{errors::StartupError, extras::jobs::ObsJob};
 ///
 /// # Fields
 ///
-/// - `_currentdir`: The current executable directory (unused, kept for potential future use)
+/// - `_currentdir`: The root folder (unused, kept for potential future use)
 /// - `error_log_file`: `Error.log`, where redirected lines and notes go
 /// - `files`: HashMap mapping log-file names to their log file handles
 ///

@@ -200,7 +200,8 @@ mod settings {
         let path = dir.join("config.toml");
         std::fs::write(
             &path,
-            "[service]\ncan_stop = true\ncan_pause = true\n\n\
+            "[init]\nroot_dir = \"\"\n\n\
+             [service]\ncan_stop = true\ncan_pause = true\n\n\
              [engine]\nidle_wait = 0\nshutdown_grace_period = 10\n\n\
              [threads]\nworker_count = 4\n\n\
              [pipes]\ntask_pipe_capacity = 1024\nnotif_pipe_capacity = 1024\n\

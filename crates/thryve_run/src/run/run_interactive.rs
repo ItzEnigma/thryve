@@ -148,7 +148,7 @@ pub fn summon_requirements(config: Config) -> Ctx {
 
     if config.debugging.is_debugging {
         Ctx::new(
-            config,
+            config.clone(),
             task_rx,
             notif_rx,
             status_rx,

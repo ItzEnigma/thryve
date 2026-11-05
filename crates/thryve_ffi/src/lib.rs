@@ -907,7 +907,7 @@ pub extern "C" fn thryve_ctx_create(config: ThryveConfig) -> ThryveCtx {
         }
 
         let config = unsafe { &*(config as *const Config) };
-        let ctx = inner_summon_requirements(*config);
+        let ctx = inner_summon_requirements(config.clone());
         let boxed = Box::into_raw(Box::new(ctx)) as ThryveCtx;
         if boxed.is_null() {
             return std::ptr::null_mut();
@@ -1480,7 +1480,7 @@ pub extern "C" fn thryve_service_create(config: ThryveConfig) -> ThryveServiceCr
             }
 
             let config = unsafe { &*(config as *const Config) };
-            let (service, ctx) = inner_create_service(*config);
+            let (service, ctx) = inner_create_service(config.clone());
 
             let service_boxed = Box::into_raw(Box::new(service)) as ThryveService;
             let ctx_boxed = Box::into_raw(Box::new(ctx)) as ThryveCtx;

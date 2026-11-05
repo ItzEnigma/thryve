@@ -497,11 +497,13 @@ impl Display for ConfigViolations {
 
 /// One configuration value that would break the engine.
 ///
-/// Each case holds the value found in the file, then the limit it broke. It prints as
-/// `threads.worker_count is 0, must be at least 1`.
+/// Each case holds the value found in the file, then, for a number, the limit it broke. It
+/// prints as `threads.worker_count is 0, must be at least 1`.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RuleError {
+    /// `init.root_dir` is neither empty nor an absolute path to a folder that exists.
+    InitDir(String),
     /// `engine.idle_wait` is below its minimum.
     IdleWait(u64, usize),
     /// `engine.shutdown_grace_period` is below its minimum.
@@ -529,6 +531,12 @@ pub enum RuleError {
 impl Display for RuleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InitDir(is) => {
+                write!(
+                    f,
+                    "init.root_dir is {is}, must be a directory and an absolute path"
+                )
+            }
             Self::IdleWait(is, should_be) => write!(
                 f,
                 "engine.idle_wait is {is:?}, must be at least {should_be:?}"

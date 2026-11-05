@@ -432,7 +432,7 @@ mod tests_extras {
             #[test]
             fn test_create_dir_log_creates_directory() {
                 // Act
-                let log_dir = dir_paths::create_dir(dir_paths::DirName::Log)
+                let log_dir = dir_paths::create_dir(dir_paths::DirName::Log, String::new())
                     .expect("Should be able to create log directory");
 
                 // Assert
@@ -446,8 +446,9 @@ mod tests_extras {
             #[test]
             fn test_create_dir_topology_creates_directory() {
                 // Act
-                let topology_dir = dir_paths::create_dir(dir_paths::DirName::Topology)
-                    .expect("Should be able to create topology directory");
+                let topology_dir =
+                    dir_paths::create_dir(dir_paths::DirName::Topology, String::new())
+                        .expect("Should be able to create topology directory");
 
                 // Assert
                 assert!(topology_dir.is_absolute());

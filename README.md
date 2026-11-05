@@ -359,13 +359,16 @@ C and C++ bindings, built as a library with a generated header. See [`crates/thr
 
 Configuration is loaded from a TOML file with `Config::load_config_from_file`, or the defaults are used with `Config::load_def_config()`.
 
-A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `idle_wait`, `shutdown_grace_period`, `worker_count`, `aging_interval`, and the three pipe capacities and per-turn limits must be at least 1, and `max_priority` must be 14 or lower. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
+A config file must set every key shown below. A missing or unknown key is rejected with its line, and so are values that would break the engine: `idle_wait`, `shutdown_grace_period`, `worker_count`, `aging_interval`, and the three pipe capacities and per-turn limits must be at least 1, and `max_priority` must be 14 or lower. `root_dir` must be empty, or an absolute path to a folder that already exists; write a Windows path in single quotes, as in `root_dir = 'D:\ThryveData'`, since inside double quotes TOML reads each backslash as the start of an escape. All invalid values are reported in one error. Loading never falls back to the defaults on its own; that's the caller's choice.
 
 ### Default Configuration
 
 This complete file holds the defaults:
 
 ```toml
+[init]
+root_dir = ""
+
 [service]
 can_stop = true
 can_pause = true
@@ -401,6 +404,7 @@ log_tasks= false
 
 | Section | Option | Type | Default | Description |
 |---------|--------|------|---------|-------------|
+| `init` | `root_dir` | string | `""` | The root folder, which holds each run's logs and, in graph mode, the task graph. Empty means the program's own folder; anything else must be an absolute path to a folder that already exists, such as `D:\ThryveData` |
 | `service` | `can_stop` | bool | true | Accept stop commands |
 | `service` | `can_pause` | bool | true | Accept pause/resume commands |
 | `engine` | `idle_wait` | u64 | 100 | How long (ms) an idle engine waits for work before it checks its loop's flags (the service's Stop, Pause, Resume) again; anything that arrives wakes it at once |
@@ -721,7 +725,7 @@ When enabled via the `visual_graph` configuration option, Thryve automatically t
    - **Nodes** represent call sites where tasks are created
    - **Edges** represent parent-child task relationships
    - **Edge weights** represent how many times a call path was taken
-4. **Visualization**: On shutdown, the graph is exported to a RON file and a GUI viewer is launched
+4. **Visualization**: On shutdown, the graph is exported to `topology/topology_export.ron` in the root folder, and the viewer, `Topology.exe`, is started with that file's path. Put `Topology.exe` next to your program's `.exe`: Thryve looks for it there, never in the root folder, since whoever can write to the root could put their own program there
 
 ### When Graph Mode Fails
 
@@ -801,7 +805,7 @@ Where `aging_boost` grows by one for every `aging_interval` seconds a task waits
 Log_Creation: 2024-01-15 10:30:45, [ LOGGING ], Event_Type: Log, Message: Hello
 ```
 
-Each run gets a folder named after the time it started, with one file per log:
+Each run gets a folder under `log/` in the root folder (the program's own folder unless `root_dir` names another), named after the time it started, with one file per log:
 ```text
 log/
   2024_01_15_10_30/
