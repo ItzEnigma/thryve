@@ -30,9 +30,12 @@
 //! # Usage
 //!
 //! The packet handle is created by the engine during initialization and
-//! passed to modules. Since it only holds channel senders and a shared
-//! switch, cloning is inexpensive, making it easy to distribute
+//! passed to modules. Since it only holds channel senders and two shared
+//! switches, cloning is inexpensive, making it easy to distribute
 //! throughout the system.
+//!
+//! A context's handle refuses tasks and notifications until the startup has made the engine
+//! (see [`PacketHandle::refuse_sends`]): start Thryve, then send.
 
 use std::panic::Location;
 use std::path::PathBuf;
@@ -61,9 +64,18 @@ use crossbeam::channel::Sender;
 /// # Cloning
 ///
 /// The packet handle implements `Clone` because it only contains channel
-/// senders and the graph-mode switch. Cloning is inexpensive and allows the handle to be easily
-/// distributed throughout the system. Every clone shares the same switch, so when graph mode
-/// turns off, it turns off for all of them.
+/// senders and two switches: graph mode, and whether sends are allowed. Cloning is inexpensive
+/// and allows the handle to be easily distributed throughout the system. Every clone shares the
+/// same switches, so when graph mode turns off, or sends are allowed, it's so for all of them.
+///
+/// # Before the start
+///
+/// A context's handle (from `summon_requirements` or `Thryve::new`) refuses tasks and
+/// notifications until the startup has made the engine, which happens inside `run_interactive`
+/// or a service's run. A send before that fails at once with
+/// [`ThryveError::EngineNotRunning`], and what was sent is dropped. Nothing reads the mailboxes
+/// before then, so a send into a full one would otherwise wait forever. Thryve's own status
+/// messages aren't refused: their mailbox has no limit.
 ///
 /// # Example
 ///
@@ -100,9 +112,32 @@ pub struct PacketHandle {
     /// Whether graph mode is on. Shared by every clone of this handle, so one failure turns
     /// graph mode off everywhere.
     is_graph_visualization_enabled: Arc<AtomicBool>,
+    /// Whether tasks and notifications are accepted. A context's handle refuses them until the
+    /// startup has made the engine (see [`refuse_sends`](Self::refuse_sends)). Shared by every
+    /// clone of this handle.
+    is_sending_allowed: Arc<AtomicBool>,
 }
 
 impl PacketHandle {
+    /// Lets this handle and every clone of it send tasks and notifications again.
+    ///
+    /// `Engine::new` calls it on its context's handle: from then on, the engine is there to read
+    /// the mailboxes, so a send into a full one waits only until the engine's next turn.
+    pub fn allow_sends(&self) {
+        self.is_sending_allowed.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes this handle and every clone of it refuse tasks and notifications, until
+    /// [`allow_sends`](Self::allow_sends).
+    ///
+    /// A refused send returns [`ThryveError::EngineNotRunning`] at once, and what was sent is
+    /// dropped. `summon_requirements` and `Thryve::new` call it on the handle of each context they
+    /// make, so that a send before the startup has made the engine fails instead of waiting
+    /// forever: nothing reads the mailboxes before then. Status messages are never refused.
+    pub fn refuse_sends(&self) {
+        self.is_sending_allowed.store(false, Ordering::SeqCst);
+    }
+
     /// Creates a new packet handle with the specified channel senders.
     ///
     /// Initializes a new `PacketHandle` with the given task, notification
@@ -128,7 +163,9 @@ impl PacketHandle {
     ///
     /// # Returns
     ///
-    /// A new `PacketHandle` configured with the provided senders.
+    /// A new `PacketHandle` configured with the provided senders. It accepts sends at once; the
+    /// startup's contexts make theirs refuse them until the engine exists (see
+    /// [`refuse_sends`](Self::refuse_sends)).
     ///
     /// # Example
     ///
@@ -153,6 +190,7 @@ impl PacketHandle {
             notif_tx,
             status_tx,
             is_graph_visualization_enabled: Arc::new(AtomicBool::new(is_graph_vis_enabled)),
+            is_sending_allowed: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -187,7 +225,8 @@ impl PacketHandle {
     /// # Errors
     ///
     /// Returns [`ThryveError::EngineNotRunning`] ([`EngineNotRunningError::Task`]) when the engine
-    /// is gone: it has stopped, or it failed to start. The task is dropped.
+    /// isn't running: the startup hasn't made it yet (see [`refuse_sends`](Self::refuse_sends)),
+    /// or it's gone: it has stopped, or it failed to start. The task is dropped.
     ///
     /// # Example
     ///
@@ -224,6 +263,13 @@ impl PacketHandle {
     /// caller's.
     #[track_caller]
     fn send_task_inner(&self, mut task: Task, create_callsite: bool) -> Result<(), ThryveError> {
+        // Refused at once before the startup has made the engine: nothing reads the mailbox yet,
+        // so a send into a full one would wait forever.
+        if !self.is_sending_allowed.load(Ordering::SeqCst) {
+            drop(task);
+            return Err(EngineNotRunningError::Task.into());
+        }
+
         if create_callsite {
             self.set_callsite(&mut task);
         }
@@ -251,7 +297,9 @@ impl PacketHandle {
     /// # Errors
     ///
     /// Returns [`ThryveError::EngineNotRunning`] ([`EngineNotRunningError::Notif`]) when the
-    /// engine is gone: it has stopped, or it failed to start. The notification is dropped.
+    /// engine isn't running: the startup hasn't made it yet (see
+    /// [`refuse_sends`](Self::refuse_sends)), or it's gone: it has stopped, or it failed to start.
+    /// The notification is dropped.
     ///
     /// # Example
     ///
@@ -267,6 +315,12 @@ impl PacketHandle {
     /// # Ok::<(), thryve_utils::errors::ThryveError>(())
     /// ```
     pub fn send_notification(&self, notif: Notif) -> Result<(), ThryveError> {
+        // Refused at once before the startup has made the engine, as in `send_task_inner`.
+        if !self.is_sending_allowed.load(Ordering::SeqCst) {
+            drop(notif);
+            return Err(EngineNotRunningError::Notif.into());
+        }
+
         // A send fails only once the engine is gone (its receiving end was dropped). The error
         // holds the notification, so dropping the error drops the notification.
         self.notif_tx.send(notif).map_err(|e| {
@@ -425,7 +479,8 @@ impl PacketHandle {
     /// # Errors
     ///
     /// Returns [`ThryveError::EngineNotRunning`] ([`EngineNotRunningError::Task`]) when the engine
-    /// is gone: it has stopped, or it failed to start. The task is dropped.
+    /// isn't running: the startup hasn't made it yet (see [`refuse_sends`](Self::refuse_sends)),
+    /// or it's gone: it has stopped, or it failed to start. The task is dropped.
     #[track_caller]
     pub fn send_adv_task<T, E>(
         &self,
@@ -475,7 +530,8 @@ impl PacketHandle {
     /// - [`ThryveError::Split`] with [`SplitError::ZeroPieces`] if `number_of_pieces` is 0;
     /// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character.
     ///
-    /// Either way, nothing is sent. [`ThryveError::EngineNotRunning`] if the engine is gone.
+    /// Either way, nothing is sent. [`ThryveError::EngineNotRunning`] if the engine isn't running:
+    /// the startup hasn't made it yet, or it's gone.
     ///
     /// # Example
     ///
@@ -565,7 +621,8 @@ impl PacketHandle {
     ///
     /// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character; nothing
     ///   is sent;
-    /// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+    /// - [`ThryveError::EngineNotRunning`] if the engine isn't running: the startup hasn't made it
+    ///   yet, or it's gone.
     ///
     /// # Example
     ///

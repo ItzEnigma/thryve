@@ -12,8 +12,9 @@
 //! These tests verify the success paths of FFI functions that are not covered
 //! by the existing error handling or lifecycle tests.
 //!
-//! Key pattern: Use thryve_ctx_get_packet_handle to get the engine's packet handle
-//! which already has receivers attached, preventing channel send blocking.
+//! Key pattern: a context's packet handle (thryve_ctx_get_packet_handle) refuses sends until the
+//! engine starts, so the send tests use a handle on mailboxes they read themselves, as the engine
+//! would.
 
 mod tests_ffi_ctx_set_logging_file_names_success {
     use std::ffi::CString;
@@ -603,95 +604,14 @@ mod tests_ffi_service_run_success {
     }
 }
 
-mod tests_ffi_ctx_send_task_success {
-    use std::ffi::CString;
-    use thryve_ffi::{
-        ThryveStatus, ThryveTaskResult, thryve_config_default, thryve_config_free,
-        thryve_ctx_create, thryve_ctx_free, thryve_ctx_get_packet_handle, thryve_ctx_send_task,
-        thryve_packet_handle_free, thryve_task_create, thryve_task_result_new,
-    };
-
-    extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
-        unsafe {
-            *result =
-                thryve_task_result_new(c"Success".as_ptr(), c"Done".as_ptr(), c"Main".as_ptr())
-        };
-    }
-
-    #[test]
-    fn test_ctx_send_task_success() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
-        let task = unsafe {
-            thryve_task_create(
-                CString::new("TestTask").unwrap().as_ptr(),
-                5,
-                Some(dummy_task_job),
-                std::ptr::null_mut(),
-                None,
-            )
-        };
-
-        // Act — send task (this may or may not succeed depending on whether
-        // the engine is running, but the function should return Ok)
-        let status = thryve_ctx_send_task(ctx, task);
-
-        // Cleanup — ctx_send_task takes ownership of task
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert_eq!(status, ThryveStatus::Ok);
-    }
-}
-
-mod tests_ffi_ctx_send_notification_success {
-    use std::ffi::CString;
-    use thryve_ffi::{
-        ThryveStatus, thryve_config_default, thryve_config_free, thryve_ctx_create,
-        thryve_ctx_free, thryve_ctx_get_packet_handle, thryve_ctx_send_notification,
-        thryve_notification_create, thryve_packet_handle_free,
-    };
-
-    #[test]
-    fn test_ctx_send_notification_success() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
-        let notif = unsafe {
-            thryve_notification_create(
-                CString::new("TestNotif").unwrap().as_ptr(),
-                CString::new("TestReceiver").unwrap().as_ptr(),
-                std::ptr::null_mut(),
-            )
-        };
-
-        // Act — send notification (this may or may not succeed depending on whether
-        // the engine is running, but the function should return Ok)
-        let status = thryve_ctx_send_notification(ctx, notif);
-
-        // Cleanup — ctx_send_notification takes ownership of notif
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert_eq!(status, ThryveStatus::Ok);
-    }
-}
-
 mod tests_ffi_packet_handle_send_task_success {
+    use crossbeam::channel::{bounded, unbounded};
     use std::ffi::CString;
     use thryve_ffi::{
-        ThryveStatus, ThryveTaskResult, thryve_config_default, thryve_config_free,
-        thryve_ctx_create, thryve_ctx_free, thryve_ctx_get_packet_handle,
-        thryve_packet_handle_free, thryve_packet_handle_send_task, thryve_task_create,
-        thryve_task_result_new,
+        ThryvePacketHandle, ThryveStatus, ThryveTaskResult, thryve_packet_handle_send_task,
+        thryve_task_create, thryve_task_result_new,
     };
+    use thryve_utils::packets::packet_handle::PacketHandle;
 
     extern "C" fn dummy_task_job(result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {
         unsafe {
@@ -702,10 +622,10 @@ mod tests_ffi_packet_handle_send_task_success {
 
     #[test]
     fn test_packet_handle_send_task_success() {
-        // Arrange - use engine's packet handle which has receivers attached
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
+        // Arrange - a handle on a task mailbox read here, as the engine would read it
+        let (task_tx, task_rx) = bounded(1);
+        let packet_handle = PacketHandle::new(task_tx, bounded(1).0, unbounded().0, false);
+        let pkt = &packet_handle as *const PacketHandle as ThryvePacketHandle;
         let task = unsafe {
             thryve_task_create(
                 CString::new("TestTask").unwrap().as_ptr(),
@@ -719,30 +639,27 @@ mod tests_ffi_packet_handle_send_task_success {
         // Act — send task via packet handle
         let status = thryve_packet_handle_send_task(pkt, task);
 
-        // Cleanup
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
+        // Assert — sent, and waiting in the mailbox
         assert_eq!(status, ThryveStatus::Ok);
+        assert!(task_rx.try_recv().is_ok(), "the task isn't in the mailbox");
     }
 }
 
 mod tests_ffi_packet_handle_send_notification_success {
+    use crossbeam::channel::{bounded, unbounded};
     use std::ffi::CString;
     use thryve_ffi::{
-        ThryveStatus, thryve_config_default, thryve_config_free, thryve_ctx_create,
-        thryve_ctx_free, thryve_ctx_get_packet_handle, thryve_notification_create,
-        thryve_packet_handle_free, thryve_packet_handle_send_notification,
+        ThryvePacketHandle, ThryveStatus, thryve_notification_create,
+        thryve_packet_handle_send_notification,
     };
+    use thryve_utils::packets::packet_handle::PacketHandle;
 
     #[test]
     fn test_packet_handle_send_notification_success() {
-        // Arrange - use engine's packet handle which has receivers attached
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-        let pkt = thryve_ctx_get_packet_handle(ctx);
+        // Arrange - a handle on a notification mailbox read here, as the engine would read it
+        let (notif_tx, notif_rx) = bounded(1);
+        let packet_handle = PacketHandle::new(bounded(1).0, notif_tx, unbounded().0, false);
+        let pkt = &packet_handle as *const PacketHandle as ThryvePacketHandle;
         let notif = unsafe {
             thryve_notification_create(
                 CString::new("TestNotif").unwrap().as_ptr(),
@@ -754,13 +671,12 @@ mod tests_ffi_packet_handle_send_notification_success {
         // Act — send notification via packet handle
         let status = thryve_packet_handle_send_notification(pkt, notif);
 
-        // Cleanup
-        thryve_packet_handle_free(pkt);
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
+        // Assert — sent, and waiting in the mailbox
         assert_eq!(status, ThryveStatus::Ok);
+        assert!(
+            notif_rx.try_recv().is_ok(),
+            "the notification isn't in the mailbox"
+        );
     }
 }
 

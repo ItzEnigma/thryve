@@ -126,7 +126,10 @@ fn engine_loop(mut eng: Engine) {
 /// - The provided configuration
 /// - A bounded receiver for tasks
 /// - A bounded receiver for notifications
-/// - A [`PacketHandle`] with the corresponding transmitters
+/// - A [`PacketHandle`] with the corresponding transmitters. It refuses tasks and notifications
+///   until the startup has made the engine (in [`run_interactive`]): start Thryve, then send.
+///   Before that, nothing would read the mailboxes, and a send into a full one would wait forever
+///   (see [`PacketHandle::refuse_sends`]).
 ///
 /// # Panics
 ///
@@ -136,10 +139,16 @@ fn engine_loop(mut eng: Engine) {
 ///
 /// ```no_run
 /// use thryve_utils::cfg::config::Config;
-/// use thryve_run::run::run_interactive::summon_requirements;
+/// use thryve_run::run::run_interactive::{run_interactive, summon_requirements};
 ///
-/// let config = Config::default();
-/// let ctx = summon_requirements(config);
+/// let ctx = summon_requirements(Config::default());
+/// // Keep a packet handle: the context goes to the engine.
+/// let packet_handle = ctx.packet_handle();
+/// let handle = run_interactive(ctx)?;
+/// // Started, so sends go through now.
+/// # let _ = packet_handle;
+/// # let _ = handle.join();
+/// # Ok::<(), thryve_utils::errors::ThryveError>(())
 /// ```
 pub fn summon_requirements(config: Config) -> Ctx {
     let (task_tx, task_rx) = bounded(config.pipes.task_pipe_capacity);
@@ -147,20 +156,14 @@ pub fn summon_requirements(config: Config) -> Ctx {
     let (status_tx, status_rx) = unbounded();
 
     if config.debugging.is_debugging {
-        Ctx::new(
-            config.clone(),
-            task_rx,
-            notif_rx,
-            status_rx,
-            PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph),
-        )
+        let packet_handle =
+            PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph);
+        packet_handle.refuse_sends();
+        Ctx::new(config.clone(), task_rx, notif_rx, status_rx, packet_handle)
     } else {
-        Ctx::new(
-            config,
-            task_rx,
-            notif_rx,
-            status_rx,
-            PacketHandle::new(task_tx, notif_tx, status_tx, false),
-        )
+        let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+        packet_handle.refuse_sends();
+
+        Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
     }
 }

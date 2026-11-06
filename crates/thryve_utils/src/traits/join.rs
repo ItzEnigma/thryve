@@ -65,7 +65,8 @@ where
     /// - [`ThryveError::Join`] if there are no handles;
     /// - [`ThryveError::Naming`] if `task_name` is empty or contains a control character. The handles
     ///   are then released, as if they had been dropped;
-    /// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+    /// - [`ThryveError::EngineNotRunning`] if the engine isn't running: the startup hasn't made it
+    ///   yet, or it's gone.
     ///
     /// # Example
     ///

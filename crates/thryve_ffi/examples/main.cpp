@@ -305,40 +305,42 @@ int main() {
         }
     }
 
-    // 7. Create a task
-    ThryveTask task = thryve_task_create(
-        "MyTask",             // name
-        0,                    // priority
-        my_task_job,          // job callback
-        nullptr,              // user data, passed to the job
-        nullptr               // frees the user data (NULL: nothing to free)
-    );
-
-    if (!task) {
-        std::cerr << "Failed to create task: " << thryve_last_error() << std::endl;
-    } else {
-        std::cout << "Task created" << std::endl;
-
-        // Send the task to the context. thryve_ctx_send_task takes ownership of
-        // task — do NOT call thryve_task_free on it afterward, that would be a
-        // double-free.
-        status = thryve_ctx_send_task(ctx, task);
-        if (status != ThryveStatus_Ok) {
-            std::cerr << "Failed to send task: " << thryve_last_error() << std::endl;
-        } else {
-            std::cout << "Task sent to context" << std::endl;
-        }
-    }
-
-    // 8. Start the engine (interactive mode). This consumes ctx — after this
+    // 7. Start the engine (interactive mode). This consumes ctx — after this
     // call, ctx is no longer valid and must never be freed or otherwise used.
     // packet_handle remains our only way to feed the now-running engine.
     std::cout << "\nStarting interactive engine..." << std::endl;
-    std::cout << "Press Enter to stop..." << std::endl;
 
     ThryveRunHandle handle = thryve_run_interactive_start(ctx);
     if (handle) {
+        // 8. Send a task. Sends work only once the engine is started: before
+        // thryve_run_interactive_start, packet_handle refuses them with
+        // ThryveStatus_InvalidState.
+        ThryveTask task = thryve_task_create(
+            "MyTask",             // name
+            0,                    // priority
+            my_task_job,          // job callback
+            nullptr,              // user data, passed to the job
+            nullptr               // frees the user data (NULL: nothing to free)
+        );
+
+        if (!task) {
+            std::cerr << "Failed to create task: " << thryve_last_error() << std::endl;
+        } else {
+            std::cout << "Task created" << std::endl;
+
+            // thryve_packet_handle_send_task takes ownership of task, even when
+            // it fails — do NOT call thryve_task_free on it afterward, that
+            // would be a double-free.
+            status = thryve_packet_handle_send_task(packet_handle, task);
+            if (status != ThryveStatus_Ok) {
+                std::cerr << "Failed to send task: " << thryve_last_error() << std::endl;
+            } else {
+                std::cout << "Task sent to the engine" << std::endl;
+            }
+        }
+
         // Wait for user input to stop
+        std::cout << "Press Enter to stop..." << std::endl;
         std::cin.get();
 
         // Submit a shutdown task so the engine actually finalizes and exits

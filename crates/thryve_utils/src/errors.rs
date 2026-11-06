@@ -63,8 +63,9 @@ pub enum ThryveError {
     #[error("failed naming check")]
     Naming(#[from] NamingError),
 
-    /// A task or notification was sent after the engine was gone, and was dropped.
-    /// [`EngineNotRunningError`] says which of the two it was.
+    /// A task or notification was sent while the engine wasn't running (before the startup had
+    /// made it, or after it was gone), and was dropped. [`EngineNotRunningError`] says which of the
+    /// two it was.
     #[error("engine is not running")]
     EngineNotRunning(#[from] EngineNotRunningError),
 
@@ -285,12 +286,14 @@ pub enum ConfigError {
     },
 }
 
-/// What was dropped because the engine was gone when it was sent.
+/// What was dropped because the engine wasn't running when it was sent: the startup hadn't made
+/// it yet, or it was gone.
 ///
 /// [`PacketHandle::send_task`](crate::packets::packet_handle::PacketHandle::send_task) and
 /// [`send_notification`](crate::packets::packet_handle::PacketHandle::send_notification) return
-/// it inside [`ThryveError::EngineNotRunning`]. The engine never restarts, so the task or
-/// notification isn't handed back.
+/// it inside [`ThryveError::EngineNotRunning`]. The task or notification isn't handed back: a send
+/// before the start is a mistake to fix in the program (start Thryve, then send), and an engine
+/// that's gone never restarts.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum EngineNotRunningError {

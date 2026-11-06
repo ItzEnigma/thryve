@@ -447,6 +447,8 @@ log_tasks= false
 
 ### Creating and Sending a Task
 
+Start Thryve, then send. The context's packet handle refuses tasks and notifications until `run_interactive` (or a service's run) has made the engine: before that, nothing would read them. Keep a clone of the handle (`ctx.packet_handle()`) before you hand the context over, or send from a plugin's tasks, which only run once the engine has started.
+
 ```rust
 use thryve::utils::packets::task::Task;
 use thryve::utils::packets::packet_handle::PacketHandle;
@@ -459,7 +461,7 @@ fn send_calculation(handle: &PacketHandle) -> Result<(), ThryveError> {
         TaskResult::new("Success", format!("Result: {}", result), "Main")
     })?;
 
-    // Fails only once the engine is gone; the task is then dropped.
+    // Fails if the engine isn't running (not started yet, or gone); the task is then dropped.
     handle.send_task(task)
 }
 ```

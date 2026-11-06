@@ -118,7 +118,10 @@ impl<'a> Thryve<'a> {
     ///
     /// A tuple containing:
     /// - A new [`Thryve`] service instance configured with the specified capabilities
-    /// - A [`Ctx`] instance with initialized communication channels
+    /// - A [`Ctx`] instance with initialized communication channels. Its packet handle refuses
+    ///   tasks and notifications until [`run_service`](Self::run_service) has made the engine
+    ///   (see [`PacketHandle::refuse_sends`]); send from the plugins' init tasks, or from other
+    ///   threads once the service runs
     ///
     /// # Service Capabilities
     ///
@@ -158,29 +161,21 @@ impl<'a> Thryve<'a> {
         }
 
         // Create the context that will be passed to the engine, containing the configuration, channels, and packet handle.
-        if config.debugging.is_debugging {
-            let ctx = Ctx::new(
-                config.clone(),
-                task_rx,
-                notif_rx,
-                status_rx,
-                PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph),
-            );
+        let ctx = if config.debugging.is_debugging {
+            let packet_handle =
+                PacketHandle::new(task_tx, notif_tx, status_tx, config.debugging.visual_graph);
+            packet_handle.refuse_sends();
 
-            // Return the service instance and the context.
-            (svc, ctx)
+            Ctx::new(config.clone(), task_rx, notif_rx, status_rx, packet_handle)
         } else {
-            let ctx = Ctx::new(
-                config,
-                task_rx,
-                notif_rx,
-                status_rx,
-                PacketHandle::new(task_tx, notif_tx, status_tx, false),
-            );
+            let packet_handle = PacketHandle::new(task_tx, notif_tx, status_tx, false);
+            packet_handle.refuse_sends();
 
-            // Return the service instance and the context.
-            (svc, ctx)
-        }
+            Ctx::new(config, task_rx, notif_rx, status_rx, packet_handle)
+        };
+
+        // Return the service instance and the context.
+        (svc, ctx)
     }
 
     /// Runs the Thryve service and manages its execution lifecycle.

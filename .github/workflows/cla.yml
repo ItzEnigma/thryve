@@ -2,6 +2,9 @@ name: "CLA Assistant"
 
 # Automates signing of CLA-INDIVIDUAL.md on first pull request.
 #
+# It runs only in the public repo (thryveframework/thryve), the one that takes outside contributions.
+# The private dev repo has nothing to sign, and no token for the signatures repo.
+#
 # CLA-ENTITY.md is intentionally NOT wired up here — companies wanting to
 # contribute under their own name should reach out via thryve-framework.com
 # to arrange signing it directly, per CONTRIBUTING.md.
@@ -41,6 +44,7 @@ permissions:
 
 jobs:
   CLAAssistant:
+    if: github.repository == 'thryveframework/thryve'
     runs-on: ubuntu-latest
     steps:
       - name: "CLA Assistant"
@@ -58,5 +62,7 @@ jobs:
           path-to-signatures: "signatures/cla-individual-v1.json"
           path-to-document: "https://github.com/thryveframework/thryve/blob/main/CLA-INDIVIDUAL.md"
           branch: "main"
-          allowlist: dependabot[bot],bot*
+          # Who never gets asked to sign: the copyright holder (a CLA grants them rights, so they don't
+          # sign one with themselves), and bots.
+          allowlist: JoJoAbdellatif,dependabot[bot],bot*
           custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"

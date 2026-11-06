@@ -328,41 +328,43 @@ int main(void) {
         }
     }
 
-    // 7. Create a task
-    ThryveTask task = thryve_task_create(
-        "MyTask",             // name
-        0,                    // priority
-        my_task_job,          // job callback
-        NULL,                 // user data, passed to the job
-        NULL                  // frees the user data (NULL: nothing to free)
-    );
-
-    if (!task) {
-        fprintf(stderr, "Failed to create task: %s\n", thryve_last_error());
-    } else {
-        printf("Task created\n");
-
-        // Send the task to the context. thryve_ctx_send_task takes ownership of
-        // task — do NOT call thryve_task_free on it afterward, that would be a
-        // double-free.
-        status = thryve_ctx_send_task(ctx, task);
-        if (status != ThryveStatus_Ok) {
-            fprintf(stderr, "Failed to send task: %s\n", thryve_last_error());
-        } else {
-            printf("Task sent to context\n");
-        }
-    }
-
-    // 8. Start the engine (interactive mode). This consumes ctx — after this
+    // 7. Start the engine (interactive mode). This consumes ctx — after this
     // call, ctx is no longer valid and must never be freed or otherwise used
     // (not even on the error path below). packet_handle remains our only way
     // to feed the now-running engine.
     printf("\nStarting interactive engine...\n");
-    printf("Press Enter to stop...\n");
 
     ThryveRunHandle handle = thryve_run_interactive_start(ctx);
     if (handle) {
+        // 8. Send a task. Sends work only once the engine is started: before
+        // thryve_run_interactive_start, packet_handle refuses them with
+        // ThryveStatus_InvalidState.
+        ThryveTask task = thryve_task_create(
+            "MyTask",             // name
+            0,                    // priority
+            my_task_job,          // job callback
+            NULL,                 // user data, passed to the job
+            NULL                  // frees the user data (NULL: nothing to free)
+        );
+
+        if (!task) {
+            fprintf(stderr, "Failed to create task: %s\n", thryve_last_error());
+        } else {
+            printf("Task created\n");
+
+            // thryve_packet_handle_send_task takes ownership of task, even when
+            // it fails — do NOT call thryve_task_free on it afterward, that
+            // would be a double-free.
+            status = thryve_packet_handle_send_task(packet_handle, task);
+            if (status != ThryveStatus_Ok) {
+                fprintf(stderr, "Failed to send task: %s\n", thryve_last_error());
+            } else {
+                printf("Task sent to the engine\n");
+            }
+        }
+
         // Wait for user input to stop
+        printf("Press Enter to stop...\n");
         getchar();
 
         // Submit a shutdown task so the engine actually finalizes and exits

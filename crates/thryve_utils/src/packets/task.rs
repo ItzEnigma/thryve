@@ -957,7 +957,8 @@ where
     /// # Errors
     ///
     /// [`ThryveError::Naming`] if `task_name` is empty or contains a control character, and
-    /// [`ThryveError::EngineNotRunning`] if the engine is gone.
+    /// [`ThryveError::EngineNotRunning`] if the engine isn't running: the startup hasn't made it
+    /// yet, or it's gone.
     ///
     /// # Example
     ///
@@ -1395,7 +1396,8 @@ where
     ///
     /// - [`FanoutError::MonitorsZeroInputs`] if no follower was declared. Nothing is sent, and the
     ///   task's result is released, as a dropped handle releases it.
-    /// - [`ThryveError::EngineNotRunning`] if the engine is gone.
+    /// - [`ThryveError::EngineNotRunning`] if the engine isn't running: the startup hasn't made it
+    ///   yet, or it's gone.
     pub fn send_fanout(mut self) -> Result<(), ThryveError> {
         if self.followers.is_empty() {
             return Err(FanoutError::MonitorsZeroInputs {

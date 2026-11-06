@@ -531,15 +531,17 @@ When passing data to Rust functions, ownership may be transferred. Follow these 
 
 5. **PacketHandle**: Get it from `thryve_ctx_get_packet_handle(ctx)` — the engine's real, connected handle. It is **cloned** inside the Rust side, so the foreign language can continue to use its copy after passing to plugin/observer creation.
 
-6. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, `thryve_packet_handle_send_notification` and `thryve_packet_handle_send_adv_task` all **take ownership** of the task/notification passed in. **Do not** free it afterward. This holds even when the send fails: with a NULL context or handle, or once the engine is gone, they fail and drop what was passed in.
+6. **Sending tasks/notifications**: `thryve_packet_handle_send_task`, `thryve_packet_handle_send_notification` and `thryve_packet_handle_send_adv_task` all **take ownership** of the task/notification passed in. **Do not** free it afterward. This holds even when the send fails: with a NULL handle, before the engine is started, or once it's gone, they fail and drop what was passed in.
 
-7. **Core pointers stay yours**: the `*_core_ptr` given to a plugin, an observer or a notification is never freed by Thryve. It's handed back to your clean-up callback, and to `thryve_observer_core` or `thryve_notification_core`.
+7. **Start, then send**: a context's packet handle refuses tasks and notifications (`InvalidState`) until `thryve_run_interactive_start` or `thryve_service_run` has started the engine. Take the handle with `thryve_ctx_get_packet_handle` before the start (the start uses up `ctx`), and send after it, as the example above does. Sending from inside a job or a plugin's entry point always works: those run once the engine has started.
 
-8. **User data, values and chunks**: given to Thryve with a plain task or a typed one, they're freed by Thryve, once, with the free function given with them; typed tasks' handles are used up by every call that takes them. See [Who Owns What](#who-owns-what).
+8. **Core pointers stay yours**: the `*_core_ptr` given to a plugin, an observer or a notification is never freed by Thryve. It's handed back to your clean-up callback, and to `thryve_observer_core` or `thryve_notification_core`.
 
-9. **`thryve_ctx_create` vs `thryve_service_create`**: `thryve_ctx_create(config)` is for **interactive mode** only. Service mode doesn't use it — `thryve_service_create(config)` already returns its own matching `ctx` bundled together with the service (see [`ThryveServiceCreateResult`](#types)).
+9. **User data, values and chunks**: given to Thryve with a plain task or a typed one, they're freed by Thryve, once, with the free function given with them; typed tasks' handles are used up by every call that takes them. See [Who Owns What](#who-owns-what).
 
-10. **`thryve_run_interactive_start`**: consumes `ctx` unconditionally. After calling it, `ctx` must never be freed or otherwise used again.
+10. **`thryve_ctx_create` vs `thryve_service_create`**: `thryve_ctx_create(config)` is for **interactive mode** only. Service mode doesn't use it — `thryve_service_create(config)` already returns its own matching `ctx` bundled together with the service (see [`ThryveServiceCreateResult`](#types)).
+
+11. **`thryve_run_interactive_start`**: consumes `ctx` unconditionally. After calling it, `ctx` must never be freed or otherwise used again.
 
 ### Ownership Transfer Diagram
 
@@ -675,8 +677,8 @@ The `thryve_ffi` directory includes build files for the two examples, which also
 |----------|-------------|
 | `thryve_packet_handle_free(handle)` | Frees a PacketHandle instance. Safe to call with NULL. |
 | `thryve_packet_handle_clone(handle)` | Clones a PacketHandle. Returns a new `ThryvePacketHandle`. |
-| `thryve_packet_handle_send_task(handle, task)` | Sends a task through the handle. **Takes ownership of `task`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the task is dropped). |
-| `thryve_packet_handle_send_notification(handle, notif)` | Sends a notification through the handle. **Takes ownership of `notif`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the notification is dropped). |
+| `thryve_packet_handle_send_task(handle, task)` | Sends a task through the handle. **Takes ownership of `task`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running: not started yet, or gone (the task is dropped). |
+| `thryve_packet_handle_send_notification(handle, notif)` | Sends a notification through the handle. **Takes ownership of `notif`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running: not started yet, or gone (the notification is dropped). |
 
 ### Ctx Wrappers
 
@@ -684,12 +686,10 @@ The `thryve_ffi` directory includes build files for the two examples, which also
 |----------|-------------|
 | `thryve_ctx_create(config)` | Creates a context from a configuration (interactive mode only — service mode gets its ctx from `thryve_service_create`). Returns `ThryveCtx` or NULL. |
 | `thryve_ctx_free(ctx)` | Frees a context instance. Safe to call with NULL. Do not call on a `ctx` already consumed by `thryve_run_interactive_start`/`thryve_service_run`. |
-| `thryve_ctx_get_packet_handle(ctx)` | Returns the engine's real, connected `ThryvePacketHandle` for this ctx — the only correct way to obtain one. |
+| `thryve_ctx_get_packet_handle(ctx)` | Returns the engine's real, connected `ThryvePacketHandle` for this ctx — the only correct way to obtain one. It refuses sends until the engine is started, so take it before the start and send after. |
 | `thryve_ctx_add_plugin(ctx, plugin)` | Moves a plugin into the context. Returns `ThryveStatus`. |
 | `thryve_ctx_add_observer(ctx, observer)` | Moves an observer into the context. Returns `ThryveStatus`. |
 | `thryve_ctx_set_logging_file_names(ctx, file_names, count)` | Sets logging file names. `file_names` is an array of null-terminated C strings. |
-| `thryve_ctx_send_task(ctx, task)` | Sends a task to the engine. **Takes ownership of `task`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the task is dropped). |
-| `thryve_ctx_send_notification(ctx, notif)` | Sends a notification to the engine. **Takes ownership of `notif`.** Returns `ThryveStatus`: `InvalidState` if the engine isn't running (the notification is dropped). |
 
 ### Task Wrappers
 

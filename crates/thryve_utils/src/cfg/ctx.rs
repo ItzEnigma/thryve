@@ -209,7 +209,9 @@ impl Ctx {
     ///
     /// # Returns
     ///
-    /// A clone of the internal packet handle.
+    /// A clone of the internal packet handle. The startup's contexts (`summon_requirements`,
+    /// `Thryve::new`) make it refuse sends until the engine exists: keep a clone, start Thryve,
+    /// then send (see [`PacketHandle::refuse_sends`]).
     ///
     /// # Example
     ///

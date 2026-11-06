@@ -157,8 +157,6 @@ ThryveStatus thryve_ctx_set_logging_file_names(ThryveCtx ctx,
                                                const char *const *file_names,
                                                int32_t count);
 
-ThryveStatus thryve_ctx_send_task(ThryveCtx ctx, ThryveTask task);
-
 ThryvePacketHandle thryve_ctx_get_packet_handle(ThryveCtx ctx);
 
 ThryveStatus thryve_packet_handle_send_task(ThryvePacketHandle handle, ThryveTask task);
@@ -210,8 +208,6 @@ ThryveNotif thryve_notification_create(const char *notif_type,
 void thryve_notification_free(ThryveNotif notif);
 
 void *thryve_notification_core(ThryveNotif notif);
-
-ThryveStatus thryve_ctx_send_notification(ThryveCtx ctx, ThryveNotif notif);
 
 ThryveOutcome thryve_outcome_value(void *value, ThryveFreeFn free_value);
 

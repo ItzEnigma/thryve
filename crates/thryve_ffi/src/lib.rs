@@ -1079,43 +1079,15 @@ pub unsafe extern "C" fn thryve_ctx_set_logging_file_names(
 
 /// Turns the result of sending a task or notification into a status for C.
 ///
-/// A send fails only once the engine is gone (it stopped, or its context was freed without
-/// starting it), which is `InvalidState`, and records why. The task or notification is dropped
-/// either way.
+/// A send fails when the engine isn't running: before the start (a context's handle refuses
+/// sends until `thryve_run_interactive_start` or `thryve_service_run` has made the engine), or
+/// once it's gone (it stopped, or its context was freed without starting it). That's
+/// `InvalidState`, and it records why. The task or notification is dropped either way.
 fn send_result_status(result: Result<(), ThryveError>) -> ThryveStatus {
     match result {
         Ok(()) => ThryveStatus::Ok,
         Err(error) => fail(status_of(&error), get_err_oneline(&error)),
     }
-}
-
-/// Sends a task to the engine via the context's packet handle.
-///
-/// # Arguments
-///
-/// * `ctx` - The opaque pointer to the Ctx instance
-/// * `task` - The opaque pointer to the Task instance. It is consumed, even when the send fails.
-///
-/// # Returns
-///
-/// * `ThryveStatus::Ok` if the task was sent successfully
-/// * `ThryveStatus::NullArg` if ctx or task is NULL; a task is dropped
-/// * `ThryveStatus::InvalidState` if the engine isn't running; the task is dropped
-#[cfg_attr(not(test), unsafe(no_mangle))]
-pub extern "C" fn thryve_ctx_send_task(ctx: ThryveCtx, task: ThryveTask) -> ThryveStatus {
-    ffi_guard(ThryveStatus::OperationFail, || {
-        if task.is_null() {
-            return fail(ThryveStatus::NullArg, "task is NULL");
-        }
-        // Taken first, so that it's dropped whatever happens next.
-        let task = unsafe { Box::from_raw(task as *mut Task) };
-        if ctx.is_null() {
-            return fail(ThryveStatus::NullArg, "ctx is NULL");
-        }
-
-        let ctx = unsafe { &*(ctx as *const Ctx) };
-        send_result_status(ctx.packet_handle().send_task(*task))
-    })
 }
 
 /// Returns a clone of the PacketHandle from the context.
@@ -1133,19 +1105,23 @@ pub extern "C" fn thryve_ctx_send_task(ctx: ThryveCtx, task: ThryveTask) -> Thry
 /// A clone of the PacketHandle (an opaque pointer that should be freed with
 /// `thryve_packet_handle_free`), or NULL if ctx is NULL.
 ///
+/// The handle refuses tasks and notifications (`InvalidState`) until the engine is started, by
+/// `thryve_run_interactive_start` or `thryve_service_run`. Take it before the start, since the
+/// start uses up `ctx`, and send after.
+///
 /// # Example
 ///
 /// ```c
 /// ThryveCtx ctx = thryve_ctx_create(config);
 /// ThryvePacketHandle pkt = thryve_ctx_get_packet_handle(ctx);
-/// if (pkt != NULL) {
-///     // Use pkt to send tasks directly to the engine
-///     thryve_ctx_send_task(ctx, task);
-///     // or
+/// ThryveRunHandle run = thryve_run_interactive_start(ctx);  // uses up ctx
+/// if (pkt != NULL && run != NULL) {
+///     // Started, so the engine takes what pkt sends.
 ///     thryve_packet_handle_send_task(pkt, task);
-///     thryve_packet_handle_free(pkt);
 /// }
-/// thryve_ctx_free(ctx);
+/// // ... send a task whose result type is "Fin" to stop the engine, then:
+/// thryve_run_interactive_free(run);
+/// thryve_packet_handle_free(pkt);
 /// ```
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_ctx_get_packet_handle(ctx: ThryveCtx) -> ThryvePacketHandle {
@@ -1181,7 +1157,8 @@ pub extern "C" fn thryve_ctx_get_packet_handle(ctx: ThryveCtx) -> ThryvePacketHa
 ///
 /// * `ThryveStatus::Ok` if the task was sent successfully
 /// * `ThryveStatus::NullArg` if handle or task is NULL; a task is dropped
-/// * `ThryveStatus::InvalidState` if the engine isn't running; the task is dropped
+/// * `ThryveStatus::InvalidState` if the engine isn't running: not started yet (a context's
+///   handle refuses sends until then), or gone; the task is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_packet_handle_send_task(
     handle: ThryvePacketHandle,
@@ -1214,7 +1191,8 @@ pub extern "C" fn thryve_packet_handle_send_task(
 ///
 /// * `ThryveStatus::Ok` if the notification was sent successfully
 /// * `ThryveStatus::NullArg` if handle or notif is NULL; a notification is dropped
-/// * `ThryveStatus::InvalidState` if the engine isn't running; the notification is dropped
+/// * `ThryveStatus::InvalidState` if the engine isn't running: not started yet (a context's
+///   handle refuses sends until then), or gone; the notification is dropped
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn thryve_packet_handle_send_notification(
     handle: ThryvePacketHandle,
@@ -2089,35 +2067,6 @@ pub extern "C" fn thryve_notification_core(notif: ThryveNotif) -> *mut c_void {
             .as_any()
             .downcast_ref::<NotificationLogicAdapter>()
             .map_or(std::ptr::null_mut(), |adapter| adapter.core_ptr)
-    })
-}
-
-/// Sends a notification to the engine via the context's packet handle.
-///
-/// # Arguments
-///
-/// * `ctx` - The opaque pointer to the Ctx instance
-/// * `notif` - The opaque pointer to the Notif instance. It is consumed, even when the send fails.
-///
-/// # Returns
-///
-/// * `ThryveStatus::Ok` if the notification was sent successfully
-/// * `ThryveStatus::NullArg` if ctx or notif is NULL; a notification is dropped
-/// * `ThryveStatus::InvalidState` if the engine isn't running; the notification is dropped
-#[cfg_attr(not(test), unsafe(no_mangle))]
-pub extern "C" fn thryve_ctx_send_notification(ctx: ThryveCtx, notif: ThryveNotif) -> ThryveStatus {
-    ffi_guard(ThryveStatus::OperationFail, || {
-        if notif.is_null() {
-            return fail(ThryveStatus::NullArg, "notif is NULL");
-        }
-        // Taken first, so that it's dropped whatever happens next.
-        let notif = unsafe { Box::from_raw(notif as *mut Notif) };
-        if ctx.is_null() {
-            return fail(ThryveStatus::NullArg, "ctx is NULL");
-        }
-
-        let ctx = unsafe { &*(ctx as *const Ctx) };
-        send_result_status(ctx.packet_handle().send_notification(*notif))
     })
 }
 

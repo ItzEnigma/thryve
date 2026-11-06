@@ -462,9 +462,11 @@ ThryveTask task = thryve_task_create(
 );
 
 if (task) {
-    // Send the task to the context. thryve_ctx_send_task takes ownership of
-    // task — do NOT call thryve_task_free on it afterward, that's a double-free.
-    thryve_ctx_send_task(ctx, task);
+    // Send it through the packet handle, once the engine is started: before
+    // thryve_run_interactive_start (or thryve_service_run), the handle refuses it
+    // with ThryveStatus_InvalidState. The send takes ownership of task, even when
+    // it fails — do NOT call thryve_task_free on it afterward, that's a double-free.
+    thryve_packet_handle_send_task(packet_handle, task);
 }
 ```
 
@@ -479,12 +481,12 @@ ThryveNotif notif = thryve_notification_create(
 );
 
 if (notif) {
-    // Send the notification to the context. thryve_ctx_send_notification takes
-    // ownership of notif — do NOT call thryve_notification_free on it afterward,
-    // that's a double-free.
-    ThryveStatus status = thryve_ctx_send_notification(ctx, notif);
+    // Send it through the packet handle, once the engine is started (the handle
+    // refuses sends before that). The send takes ownership of notif — do NOT call
+    // thryve_notification_free on it afterward, that's a double-free.
+    ThryveStatus status = thryve_packet_handle_send_notification(packet_handle, notif);
     if (status != ThryveStatus_Ok) {
-        std::cerr << "Failed to send notification: " << (int)status << std::endl;
+        std::cerr << "Failed to send notification: " << thryve_last_error() << std::endl;
     }
 }
 ```
@@ -818,7 +820,7 @@ int main() {
 
 4. **PacketHandle**: Get it from `thryve_ctx_get_packet_handle(ctx)` — this is the engine's real, connected handle. (There is no standalone `thryve_packet_handle_create` — it doesn't exist, and a disconnected packet handle wouldn't reach the engine anyway.) It is cloned inside the Rust side when passed to plugin/observer creation, so you can continue to use your copy afterward.
 
-5. **Sending tasks/notifications**: `thryve_ctx_send_task`, `thryve_ctx_send_notification`, `thryve_packet_handle_send_task`, and `thryve_packet_handle_send_notification` all **take ownership** of the task/notification you pass in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward — that's a double-free. This holds even when the send fails: once the engine is gone, they return `ThryveStatus_InvalidState` and drop what you passed in.
+5. **Sending tasks/notifications**: `thryve_packet_handle_send_task` and `thryve_packet_handle_send_notification` **take ownership** of the task/notification you pass in. **Do not** call `thryve_task_free`/`thryve_notification_free` on it afterward — that's a double-free. This holds even when the send fails: before the engine is started (by `thryve_run_interactive_start` or `thryve_service_run`), and once it's gone, they return `ThryveStatus_InvalidState` and drop what you passed in. So start the engine first, then send.
 
 6. **`thryve_ctx_create` vs `thryve_service_create`**: `thryve_ctx_create(config)` is for **interactive mode** — it's the only way to get a bare `ctx` to populate before starting the engine. **Service mode doesn't use it** — `thryve_service_create(config)` already returns its own matching `ctx` bundled together with the service.
 

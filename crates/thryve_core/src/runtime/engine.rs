@@ -188,6 +188,11 @@ impl Engine {
     /// once it has the engine (after the debug wait, when there is one). An engine that never
     /// starts, after a failed setup, is finalized without any plugin task having run.
     ///
+    /// It also lets the context's packet handle send: until now it refused tasks and
+    /// notifications, since nothing would read the mailboxes (see
+    /// [`PacketHandle::refuse_sends`](thryve_utils::packets::packet_handle::PacketHandle::refuse_sends)).
+    /// A send into a full mailbox now waits only until the engine's next turn.
+    ///
     /// # Arguments
     ///
     /// * `ctx` - The application context containing configuration
@@ -220,6 +225,9 @@ impl Engine {
             exit_flag: false,
             pause_flag: false,
         };
+
+        // The engine is there to read the mailboxes now, so the context's handle may send.
+        ctx.packet_handle().allow_sends();
 
         eng.pause(true);
         eng

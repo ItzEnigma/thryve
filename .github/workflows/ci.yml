@@ -40,3 +40,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --tests -- --nocapture --test-threads=1
+
+  msrv:
+    name: Minimum Rust version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Keep this equal to `rust-version` in Cargo.toml: the oldest Rust that Thryve promises to build with.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets

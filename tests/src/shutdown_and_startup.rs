@@ -34,7 +34,9 @@
 //! - finalize runs once: a second call returns at once and writes nothing;
 //! - the real startup: with every mailbox holding one item, a startup with several plugins, pauses
 //!   and resumes, and a `Fin` never hang; no plugin code runs before the engine starts; the
-//!   service's loop ends after an in-band `Fin`, and on `Stop`;
+//!   service's loop ends after an in-band `Fin`, and on `Stop`; a send before the startup has made
+//!   the engine is refused at once, even past a full mailbox, and one after it goes through and
+//!   runs;
 //! - the workers: `resume` wakes the workers a pause parked, a task chained after the workers went
 //!   idle still runs, and a shutdown during a pause doesn't wait for them (a failed startup is one
 //!   too, since the engine stays paused until it starts; `graceful_failures` checks that it leaves no
@@ -68,7 +70,7 @@ use thryve_utils::cfg::config::Config;
 use thryve_utils::cfg::ctx::Ctx;
 use thryve_utils::cfg::dir_data::DirData;
 use thryve_utils::cfg::meta_data::MetaData;
-use thryve_utils::errors::{FinalizationError, ThryveError, get_err};
+use thryve_utils::errors::{EngineNotRunningError, FinalizationError, ThryveError, get_err};
 use thryve_utils::extras::dir_paths::DirName;
 use thryve_utils::extras::jobs::ObsJob;
 use thryve_utils::extras::named_input::LogFileNamedInput;
@@ -1167,6 +1169,88 @@ mod real_startup {
         ran_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the init task never ran");
+
+        // Its `Fin` ends the run.
+        let (done_tx, done_rx) = bounded(1);
+        std::thread::spawn(move || {
+            let _ = handle.join();
+            let _ = done_tx.send(());
+        });
+        assert!(
+            done_rx.recv_timeout(Duration::from_secs(20)).is_ok(),
+            "the shutdown hung"
+        );
+    }
+
+    #[test]
+    fn a_send_before_the_start_is_refused_at_once_and_one_after_it_runs() {
+        // Mailboxes that hold one: before the start, the second send used to wait forever.
+        let mut config = Config::default();
+        config.pipes.task_pipe_capacity = 1;
+        config.pipes.notif_pipe_capacity = 1;
+        let ctx = summon_requirements(config);
+        let packet_handle = ctx.packet_handle();
+
+        // Three tasks and three log lines, sent on a thread of their own, so that a send that
+        // waits fails this test instead of hanging the run.
+        let sender = packet_handle.clone();
+        let (done_tx, done_rx) = bounded(1);
+        std::thread::spawn(move || {
+            let tasks: Vec<_> = (0..3)
+                .map(|_| sender.send_task(idle_task("Early")))
+                .collect();
+            let lines: Vec<_> = (0..3)
+                .map(|i| sender.send_notification(Log::log(format!("early {i}"), "Main")))
+                .collect();
+            let _ = done_tx.send((tasks, lines));
+        });
+        let (tasks, lines) = done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a send before the start waited");
+
+        // Each is refused, the task as a task and the log line as a notification.
+        for outcome in &tasks {
+            assert!(
+                matches!(
+                    outcome,
+                    Err(ThryveError::EngineNotRunning(EngineNotRunningError::Task))
+                ),
+                "{outcome:?}"
+            );
+        }
+        for outcome in &lines {
+            assert!(
+                matches!(
+                    outcome,
+                    Err(ThryveError::EngineNotRunning(EngineNotRunningError::Notif))
+                ),
+                "{outcome:?}"
+            );
+        }
+
+        // Once the startup has made the engine, a send goes through, even before the engine's
+        // loop starts: Late waits in the mailbox, and runs once the loop does.
+        let previous_hook = std::panic::take_hook();
+        let prepared = EngineInitialization::prepare(ctx, interactive_loop);
+        std::panic::set_hook(previous_hook);
+        let prepared = prepared.expect("the startup failed");
+
+        let (ran_tx, ran_rx) = bounded::<()>(1);
+        let late = Task::new("Late", 0, move || {
+            let _ = ran_tx.send(());
+            TaskResult::fin()
+        })
+        .unwrap();
+        packet_handle
+            .send_task(late)
+            .expect("a send after the startup made the engine was refused");
+
+        let handle = prepared
+            .complete_and_run()
+            .expect("the engine didn't start");
+        ran_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the task sent after the startup never ran");
 
         // Its `Fin` ends the run.
         let (done_tx, done_rx) = bounded(1);

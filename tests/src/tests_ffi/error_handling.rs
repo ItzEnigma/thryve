@@ -141,7 +141,7 @@ mod tests_ctx_errors {
     use thryve_ffi::{
         ThryveStatus, thryve_config_default, thryve_config_free, thryve_ctx_add_observer,
         thryve_ctx_add_plugin, thryve_ctx_create, thryve_ctx_free, thryve_ctx_get_packet_handle,
-        thryve_ctx_send_notification, thryve_ctx_send_task, thryve_ctx_set_logging_file_names,
+        thryve_ctx_set_logging_file_names,
     };
 
     #[test]
@@ -321,40 +321,6 @@ mod tests_ctx_errors {
     }
 
     #[test]
-    fn test_ctx_send_task_with_null_ctx_returns_null_arg() {
-        // Act
-        let status = thryve_ctx_send_task(std::ptr::null_mut(), std::ptr::null_mut());
-
-        // Assert
-        assert_eq!(
-            status,
-            ThryveStatus::NullArg,
-            "Should return NullArg for null ctx"
-        );
-    }
-
-    #[test]
-    fn test_ctx_send_task_with_null_task_returns_null_arg() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-
-        // Act
-        let status = thryve_ctx_send_task(ctx, std::ptr::null_mut());
-
-        // Cleanup
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert_eq!(
-            status,
-            ThryveStatus::NullArg,
-            "Should return NullArg for null task"
-        );
-    }
-
-    #[test]
     fn test_ctx_get_packet_handle_with_null_returns_null() {
         // Act
         let handle = thryve_ctx_get_packet_handle(std::ptr::null_mut());
@@ -363,19 +329,6 @@ mod tests_ctx_errors {
         assert!(
             handle.is_null(),
             "thryve_ctx_get_packet_handle should return NULL for null ctx"
-        );
-    }
-
-    #[test]
-    fn test_ctx_send_notification_with_null_ctx_returns_null_arg() {
-        // Act
-        let status = thryve_ctx_send_notification(std::ptr::null_mut(), std::ptr::null_mut());
-
-        // Assert
-        assert_eq!(
-            status,
-            ThryveStatus::NullArg,
-            "Should return NullArg for null ctx"
         );
     }
 }
@@ -684,47 +637,6 @@ mod tests_service_errors {
     }
 }
 
-mod tests_notification_send_errors {
-    use thryve_ffi::{
-        ThryveStatus, thryve_config_default, thryve_config_free, thryve_ctx_create,
-        thryve_ctx_free, thryve_ctx_send_notification,
-    };
-
-    #[test]
-    fn test_ctx_send_notification_with_null_ctx_returns_null_arg() {
-        // Act
-        let status = thryve_ctx_send_notification(std::ptr::null_mut(), std::ptr::null_mut());
-
-        // Assert
-        assert_eq!(
-            status,
-            ThryveStatus::NullArg,
-            "Should return NullArg for null ctx"
-        );
-    }
-
-    #[test]
-    fn test_ctx_send_notification_with_null_notif_returns_null_arg() {
-        // Arrange
-        let config = thryve_config_default();
-        let ctx = thryve_ctx_create(config);
-
-        // Act
-        let status = thryve_ctx_send_notification(ctx, std::ptr::null_mut());
-
-        // Cleanup
-        thryve_ctx_free(ctx);
-        thryve_config_free(config);
-
-        // Assert
-        assert_eq!(
-            status,
-            ThryveStatus::NullArg,
-            "Should return NullArg for null notif"
-        );
-    }
-}
-
 mod tests_packet_handle_send_errors {
     use thryve_ffi::{
         ThryveStatus, thryve_config_default, thryve_config_free, thryve_ctx_create,
@@ -985,8 +897,9 @@ mod tests_plugin_clean_up_failure {
     }
 }
 
-/// A send given a NULL context or handle still takes its task or notification, as it does once the
-/// engine is gone, and every create refuses a name that isn't UTF-8, saying which argument.
+/// A send given a NULL handle still takes its task or notification, as it does once the engine is
+/// gone, and so does a send before the start, which a context's handle refuses. Every create
+/// refuses a name that isn't UTF-8, saying which argument.
 mod sends_and_names {
     use std::ffi::{CStr, c_void};
     use std::sync::Arc;
@@ -994,9 +907,11 @@ mod sends_and_names {
 
     use thryve_ffi::{
         ThryveNotif, ThryveObserver, ThryvePacketHandle, ThryveStatus, ThryveTask,
-        ThryveTaskResult, thryve_ctx_send_notification, thryve_ctx_send_task, thryve_last_error,
-        thryve_notification_create, thryve_observer_create, thryve_packet_handle_send_notification,
-        thryve_packet_handle_send_task, thryve_plugin_create, thryve_task_create,
+        ThryveTaskResult, thryve_config_default, thryve_config_free, thryve_ctx_create,
+        thryve_ctx_free, thryve_ctx_get_packet_handle, thryve_last_error,
+        thryve_notification_create, thryve_observer_create, thryve_packet_handle_free,
+        thryve_packet_handle_send_notification, thryve_packet_handle_send_task,
+        thryve_plugin_create, thryve_task_create,
     };
     use thryve_utils::bases::notif::Notif;
     use thryve_utils::packets::packet_handle::PacketHandle;
@@ -1047,34 +962,75 @@ mod sends_and_names {
     }
 
     #[test]
-    fn a_send_given_a_null_context_or_handle_still_drops_the_task() {
+    fn a_send_given_a_null_handle_still_drops_the_task() {
         let dropped = Arc::new(AtomicUsize::new(0));
-
-        let status = thryve_ctx_send_task(std::ptr::null_mut(), counted_task(&dropped));
-        assert_eq!(status, ThryveStatus::NullArg);
-        assert_eq!(last_error(), "ctx is NULL");
 
         let status = thryve_packet_handle_send_task(std::ptr::null_mut(), counted_task(&dropped));
         assert_eq!(status, ThryveStatus::NullArg);
         assert_eq!(last_error(), "handle is NULL");
 
-        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
     }
 
     #[test]
-    fn a_send_given_a_null_context_or_handle_still_drops_the_notification() {
+    fn a_send_given_a_null_handle_still_drops_the_notification() {
         let dropped = Arc::new(AtomicUsize::new(0));
-
-        let status = thryve_ctx_send_notification(std::ptr::null_mut(), counted_notif(&dropped));
-        assert_eq!(status, ThryveStatus::NullArg);
-        assert_eq!(last_error(), "ctx is NULL");
 
         let status =
             thryve_packet_handle_send_notification(std::ptr::null_mut(), counted_notif(&dropped));
         assert_eq!(status, ThryveStatus::NullArg);
         assert_eq!(last_error(), "handle is NULL");
 
-        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    }
+
+    /// A context's packet handle, before anything has started the engine.
+    fn handle_before_the_start() -> (ThryvePacketHandle, impl FnOnce()) {
+        let config = thryve_config_default();
+        let ctx = thryve_ctx_create(config);
+        let packet_handle = thryve_ctx_get_packet_handle(ctx);
+        assert!(!packet_handle.is_null());
+
+        let free = move || {
+            thryve_packet_handle_free(packet_handle);
+            thryve_ctx_free(ctx);
+            thryve_config_free(config);
+        };
+        (packet_handle, free)
+    }
+
+    #[test]
+    fn a_send_before_the_start_is_refused_and_still_drops_the_task() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let (packet_handle, free) = handle_before_the_start();
+
+        let status = thryve_packet_handle_send_task(packet_handle, counted_task(&dropped));
+        assert_eq!(status, ThryveStatus::InvalidState);
+        assert!(
+            last_error().contains("engine is not running"),
+            "{}",
+            last_error()
+        );
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+
+        free();
+    }
+
+    #[test]
+    fn a_send_before_the_start_is_refused_and_still_drops_the_notification() {
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let (packet_handle, free) = handle_before_the_start();
+
+        let status = thryve_packet_handle_send_notification(packet_handle, counted_notif(&dropped));
+        assert_eq!(status, ThryveStatus::InvalidState);
+        assert!(
+            last_error().contains("engine is not running"),
+            "{}",
+            last_error()
+        );
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+
+        free();
     }
 
     extern "C" fn empty_job(_result: *mut ThryveTaskResult, _user_data: *mut std::ffi::c_void) {}
