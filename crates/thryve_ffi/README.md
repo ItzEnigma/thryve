@@ -52,7 +52,7 @@ The FFI layer handles:
 
 ## Quick Start
 
-The library comes prebuilt for Windows on Thryve's [release page](https://github.com/thryveframework/thryve/releases/latest): `thryve_ffi-<version>-windows-x86_64` has the headers and the library, and `thryve-<version>-windows-x86_64` adds `Topology.exe` next to the DLL. Each comes as .zip and .tar.gz. To build it yourself, see [Building](#building).
+The library comes prebuilt for Windows on Thryve's [release page](https://github.com/thryveframework/thryve/releases/latest): `thryve_ffi-<version>-windows-x86_64` has the headers and the library, and `thryve-<version>-windows-x86_64` adds `Topology.exe` next to the DLL. Each comes as .zip and .tar.gz. To build it yourself, see [Building](#building). What changed in each release is in the [changelog](https://github.com/thryveframework/thryve/blob/main/CHANGELOG.md).
 
 Here's a minimal C example showing how to use the FFI layer. Note that a `PacketHandle` (obtained from `ctx`) is required for plugin creation:
 

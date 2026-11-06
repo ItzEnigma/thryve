@@ -10,7 +10,7 @@ This is the main entry point crate for using Thryve from Rust — it re-exports 
 cargo add thryve
 ```
 
-Thryve builds on Windows only, for now.
+Thryve builds on Windows only, for now. What changed in each release is in the [changelog](https://github.com/thryveframework/thryve/blob/main/CHANGELOG.md).
 
 ## Table of Contents
 

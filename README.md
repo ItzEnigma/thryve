@@ -2,6 +2,8 @@
 
 A high-performance, extensible task management and execution framework written in Rust. Thryve provides a robust architecture for managing concurrent task execution, event-driven notifications, and modular plugin-based extensions.
 
+What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -10,8 +12,11 @@ A high-performance, extensible task management and execution framework written i
 - [Modules](#modules)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Graph Visualization](#graph-visualization-debug-feature)
 - [Building](#building)
+- [Log Output Format](#log-output-format)
 - [License](#license)
+- [Contributing](#contributing)
 
 ## Overview
 
@@ -732,7 +737,7 @@ When enabled via the `visual_graph` configuration option, Thryve automatically t
 Graph mode is a debugging aid, so a failure in it never stops the engine:
 
 - If the graph would be wrong from some point on, graph mode turns off until the program restarts, with a warning in `Error.log`. That happens when an edge points to a node that isn't in the graph, or the graph's lock was poisoned. The graph recorded so far is still exported. It ends with a *failure node* that says why, linked from the node where the failure happened.
-- Smaller problems are handled on the spot and noted in `Error.log`: outside a cargo workspace, file paths stay absolute; a failed export or viewer launch is reported, and the shutdown goes on.
+- Smaller problems are handled on the spot and noted in `Error.log`: outside a cargo workspace, file paths stay absolute; a failed export, or a failed start of Topology, is reported, and the shutdown goes on.
 
 ### Enabling Graph Visualization
 
@@ -870,7 +875,7 @@ Contributions are welcome! This project uses a **Contributor License Agreement (
 
 ### Before You Contribute
 
-1. **Read the CLA**: By submitting a pull request, you agree to the Contributor License Agreement
+1. **Read the CLA**: [`CLA-INDIVIDUAL.md`](CLA-INDIVIDUAL.md). Your first pull request asks you to sign it (see [below](#cla-contributor-license-agreement))
 2. **Understand the architecture**: Review the [Architecture](#architecture) section
 3. **Check existing issues**: See if your feature/bug is already discussed
 
@@ -913,14 +918,14 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for where tests go.
 - Provide a clear description of changes
 - Reference related issues
 - Ensure CI passes
-- Wait for CLA verification (automated)
+- Sign the CLA when the bot asks (only on your first pull request)
 - Address review feedback
 
 ### CLA (Contributor License Agreement)
 
-By contributing to Thryve, you agree to:
+The first time you open a pull request, a bot asks you to sign the [CLA](CLA-INDIVIDUAL.md) with a comment. Signing once covers all your contributions; [`CONTRIBUTING.md`](CONTRIBUTING.md#cla-contributor-license-agreement) has the steps, and what to do if your employer owns your work. By signing it, you:
 
-1. **Grant License**: You grant the project maintainers a perpetual, worldwide, non-exclusive, royalty-free license to use, modify, and distribute your contribution
+1. **Grant License**: You grant Youssef Mostafa Abdellatif, who maintains Thryve, a perpetual, worldwide, non-exclusive, royalty-free license to use, modify, and distribute your contribution
 2. **Ownership Representation**: Your contributions are your original work or you have permission to contribute them
 3. **Patents**: You grant patent rights for your contributions
 
