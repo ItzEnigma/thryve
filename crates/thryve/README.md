@@ -45,7 +45,7 @@ Thryve is designed around three main pillars:
 
 ## Architecture
 
-![Architecture](https://raw.githubusercontent.com/thryveframework/thryve/main/md_images/Architecture.png)
+![Architecture](../../md_images/Architecture.png)
 
 ### Data Flow
 
