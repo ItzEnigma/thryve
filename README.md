@@ -40,15 +40,16 @@ Thryve is designed around three main pillars:
 
 ## Architecture
 
-![Architecture](./md_images/Architecture.png)
+![Architecture](https://raw.githubusercontent.com/thryveframework/thryve/main/md_images/Architecture.png)
 
 ### Data Flow
 
-1. **Tasks** enter through the task channel and are queued by priority
-2. **Worker threads** execute tasks from the priority queue, and skip the ones that were cancelled
-3. **Results** are sent back to the engine for processing; a typed task's result goes on to its follow-up, into its join, or to a fan-out group's followers
-4. **Notifications** flow through the observer system for logging and monitoring
-5. **Status messages**, Thryve's own, travel on a fourth channel that never makes a sender wait: status lines for the logger, the releases of dropped task handles, cancels, and fan-out groups' data
+1. **Sending**: your program, plugins and observers send tasks and notifications through a `PacketHandle`, which refuses them until the engine exists: start Thryve, then send
+2. **Mailboxes**: everything lands in one of four mailboxes that only the engine reads, in this order each turn: status messages, tasks, notifications and results. Status messages are Thryve's own (status lines for the logger, the releases of dropped task handles, cancels, and fan-out groups' data), and their mailbox never makes a sender wait
+3. **Tasks** are queued by priority, with aging, for the worker threads; a typed task's follow-up, join or fan-out follower waits in the engine's wait tables until its inputs arrive
+4. **Worker threads** run the tasks, skip the ones that were cancelled, and report each result to the engine, which passes a typed task's result on to its follow-up, into its join, or to a fan-out group's followers
+5. **Notifications** go to the observers: a sorter thread routes each to its observer's queue, and each observer runs on a thread of its own
+6. **Shutdown**: a `Fin` task ends the run; in graph mode, the topology handler then exports the graph and opens it in Topology
 
 ## Core Concepts
 
