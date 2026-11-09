@@ -113,6 +113,13 @@ exceptions = [
     # MPL-2.0's copyleft terms don't attach to distributed output. Confirmed
     # acceptable 2026-08-10.
     { allow = ["MPL-2.0"], crate = "cbindgen" },
+    # Thryve's own crates, allowed by name, so a third-party crate under the AGPL still fails the check.
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve" },
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve_core" },
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve_utils" },
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve_observers" },
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve_run" },
+    { allow = ["AGPL-3.0-or-later"], crate = "thryve_ffi" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
@@ -134,10 +141,9 @@ exceptions = [
 #]
 
 [licenses.private]
-# All thryve_* workspace crates have publish = false — they're our own code,
-# not third-party dependencies, so their AGPL-3.0-or-later license (the
-# project's own intended license) shouldn't be checked against the allow
-# list below, which exists to vet what we're pulling in from outside.
+# Crates with publish = false aren't checked: in this workspace, only
+# thryve_tests. The published crates are checked, and allowed
+# AGPL-3.0-or-later by name in `exceptions` above.
 ignore = true
 # One or more private registries that you might publish crates to, if a crate
 # is only published to private registries, and ignore is true, the crate will

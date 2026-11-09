@@ -29,4 +29,5 @@
     serde.workspace = true
 
 [dev-dependencies]
-    image = "0.25"
+    # PNG is the only format the tests use; the other formats pull in crates that are no longer maintained.
+    image = { version = "0.25", default-features = false, features = ["png"] }
