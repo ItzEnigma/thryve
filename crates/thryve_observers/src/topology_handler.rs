@@ -12,7 +12,7 @@
 //! This module provides the [`TopologyHandlerObserver`] struct, which is an
 //! observer that receives topology modification notifications and maintains
 //! a graph of task relationships. When the engine shuts down, it exports
-//! the graph to a RON file and launches a GUI viewer.
+//! the graph to a RON file and opens it in Topology.
 //!
 //! # Architecture
 //!
@@ -21,7 +21,7 @@
 //! 1. Receives `TopologyModifier` notifications from the engine
 //! 2. Updates an internal `TaskTopology` graph with new nodes and edges
 //! 3. On cleanup, exports the graph to a RON file
-//! 4. Launches an external GUI viewer to visualize the topology
+//! 4. Opens the export in Topology (`Topology.exe`)
 //!
 //! # Failures
 //!
@@ -33,7 +33,7 @@
 //!   [`TopologyNode::failure`]), and it's still exported.
 //! - Other failures are handled on the spot and reported in `Error.log`: a notification that
 //!   isn't a topology modifier is dropped; without a workspace root, file paths stay absolute;
-//!   a failed export or viewer launch is reported, and the shutdown goes on.
+//!   a failed export, or a failed start of Topology, is reported, and the shutdown goes on.
 //!
 //! # Usage
 //!
@@ -83,11 +83,11 @@ use thryve_utils::{
 };
 use thryve_utils::{cfg::ctx::Ctx, errors::StartupError};
 
-/// Observer that maintains and visualizes the task topology graph.
+/// Observer that maintains the task topology graph, for Topology to show.
 ///
 /// The `TopologyHandlerObserver` receives notifications about task creation
 /// points and maintains a graph representing the call hierarchy. On shutdown,
-/// it exports the graph to a RON file and launches a GUI viewer.
+/// it exports the graph to a RON file and opens it in Topology.
 ///
 /// # Fields
 ///
@@ -126,7 +126,7 @@ impl ObsLogic for TopologyHandlerObserver {
     /// 1. Processes any remaining notifications in the queue
     /// 2. Exports the topology graph to a RON file
     /// 3. Clears the graph
-    /// 4. Launches the GUI viewer
+    /// 4. Opens the export in Topology
     ///
     /// The graph is exported even if graph mode turned off: what was recorded before the failure
     /// is the useful part, and the failure node shows where it ended. A failed export is
@@ -488,15 +488,15 @@ impl TopologyHandlerObserver {
 }
 
 impl TopologyHandlerObserver {
-    /// Launches the GUI viewer for topology visualization.
+    /// Opens the exported graph in Topology.
     ///
     /// Spawns an external process (`Topology.exe`) that reads the exported RON file and
     /// displays the topology graph. `Topology.exe` is looked for next to the program, never in
     /// the root folder, and gets `export_file`'s path as its only argument.
     ///
-    /// Nothing here stops the shutdown: a viewer that can't be started, or a program folder that
-    /// can't be found, is reported in `Error.log`, and a missing `Topology.exe` is only mentioned
-    /// on stdout.
+    /// Nothing here stops the shutdown: if Topology can't be started, or the program folder
+    /// can't be found, that's reported in `Error.log`; a missing `Topology.exe` is only
+    /// mentioned on stdout.
     ///
     /// # Arguments
     ///
@@ -512,7 +512,7 @@ impl TopologyHandlerObserver {
 
                 // Started only if it's there.
                 if PathBuf::from(&command).exists() {
-                    // Detached GUI viewer, not meant to block shutdown
+                    // Topology runs detached, so it never blocks the shutdown
                     #[allow(clippy::zombie_processes)]
                     let spawned = Command::new(&command).arg(export_file).spawn();
 

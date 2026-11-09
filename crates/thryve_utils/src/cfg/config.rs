@@ -354,7 +354,7 @@ impl Config {
 /// Thryve keeps each run's logs (`log/<timestamp>/`) and, in graph mode, the task graph
 /// (`topology/topology_export.ron`) under one folder, the root folder. Without one, that's the
 /// program's own folder. A dev can name another, such as `D:\ThryveData`, to keep a service's
-/// files apart from the program. `Topology.exe`, the graph's viewer, stays next to the program
+/// files apart from the program. `Topology.exe`, which shows the graph, stays next to the program
 /// either way.
 ///
 /// # Fields

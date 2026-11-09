@@ -69,8 +69,8 @@ use crate::graphs::callsite::TaskCallSite;
 ///
 /// When graph mode fails, the topology handler adds one last node, made by
 /// [`TopologyNode::failure`]. It carries the reason in `failure`, and an edge leads to it from the
-/// node where the failure happened, when that's known. Nothing is recorded after it, so a
-/// viewer can show where the graph ends and why. Normal nodes don't have the field in the
+/// node where the failure happened, when that's known. Nothing is recorded after it, so
+/// Topology can show where the graph ends and why. Normal nodes don't have the field in the
 /// exported file, so exports without a failure look exactly as before.
 ///
 /// # Example
