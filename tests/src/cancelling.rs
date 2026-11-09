@@ -512,11 +512,15 @@ mod handles {
         let (mut engine, packet_handle) = started_engine(&dir, 10, 1, 1);
         let (ran_tx, ran_rx) = unbounded();
 
-        // Hash runs and forwards to Fix, which then waits in the engine's task mailbox.
+        // Hash forwards to Fix, which then waits in the engine's task mailbox. Hash sends Fix only
+        // once `go` lets it, after the read that took Hash in: a read takes in every task already
+        // sent, so it could take in Fix too.
+        let (go_tx, go_rx) = unbounded();
         let fix = telling_row("Fix", 2, &ran_tx);
-        let hash = forwarding("Hash", &packet_handle, fix);
+        let hash = forwarding_on_go("Hash", &packet_handle, fix, go_rx);
         let hash = packet_handle.send_adv_task(hash).unwrap();
         until(&mut engine, Engine::check_tasks, "Hash");
+        go_tx.send(()).unwrap();
         until(&mut engine, Engine::check_results, "Hash's forward");
 
         // Hash will never run again, so the id that goes in is Fix's, at the end of the link.

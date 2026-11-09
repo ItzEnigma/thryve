@@ -644,6 +644,21 @@ mod the_engine_s_group {
         until(engine, Engine::check_tasks, "the followers");
     }
 
+    /// Reads tasks and results, never the status mailbox, until the wait table holds `entries`.
+    /// A task that forwards sends the next task while it runs, so one read of the task mailbox
+    /// can take in both, or only the first: how many reads it takes depends on the worker.
+    fn until_the_wait_table_holds(engine: &mut Engine, entries: usize, what: &str) {
+        until(
+            engine,
+            |engine| {
+                engine.check_tasks();
+                engine.check_results();
+                engine.wait_table_len() == entries
+            },
+            what,
+        );
+    }
+
     /// What `count` followers told, sorted.
     fn told(ran: &Receiver<String>, count: usize) -> Vec<String> {
         let mut told: Vec<String> = (0..count)
@@ -793,9 +808,8 @@ mod the_engine_s_group {
         let load = packet_handle
             .send_adv_task(forwarding("LoadImg", &packet_handle, decode))
             .unwrap();
-        until(&mut engine, Engine::check_tasks, "LoadImg");
-        until(&mut engine, Engine::check_results, "LoadImg's forward");
-        until(&mut engine, Engine::check_tasks, "Decode");
+        // Decode is taken in with LoadImg or after it, at the latest with the followers.
+        until_the_wait_table_holds(&mut engine, 1, "LoadImg's link");
 
         // The group takes the link's place in LoadImg's slot, and a note waits in Decode's.
         let followers = send_three_followers(load, &ran_tx);
@@ -823,10 +837,7 @@ mod the_engine_s_group {
         let load = packet_handle
             .send_adv_task(forwarding("LoadImg", &packet_handle, decoding("Decode")))
             .unwrap();
-        until(&mut engine, Engine::check_tasks, "LoadImg");
-        until(&mut engine, Engine::check_results, "LoadImg's forward");
-        until(&mut engine, Engine::check_tasks, "Decode");
-        until(&mut engine, Engine::check_results, "Decode's result");
+        until_the_wait_table_holds(&mut engine, 2, "LoadImg's link, and Decode's result kept,");
 
         // The group's data follows the link to Decode's kept result: the converter runs on it,
         // and no note is left behind.
@@ -881,11 +892,8 @@ mod the_engine_s_group {
         let load = packet_handle
             .send_adv_task(forwarding("LoadImg", &packet_handle, decode))
             .unwrap();
-        until(&mut engine, Engine::check_tasks, "LoadImg");
-        until(&mut engine, Engine::check_results, "LoadImg's forward");
-        until(&mut engine, Engine::check_tasks, "Decode");
-        until(&mut engine, Engine::check_results, "Decode's forward");
-        until(&mut engine, Engine::check_tasks, "Upload");
+        // Upload is taken in on the way, or at the latest with the followers.
+        until_the_wait_table_holds(&mut engine, 2, "the two links");
 
         // The group's data removes both links as it passes them, and leaves the note at Upload.
         let followers = send_three_followers(load, &ran_tx);
@@ -914,9 +922,8 @@ mod the_engine_s_group {
         let load = packet_handle
             .send_adv_task(forwarding("LoadImg", &packet_handle, decode))
             .unwrap();
-        until(&mut engine, Engine::check_tasks, "LoadImg");
-        until(&mut engine, Engine::check_results, "LoadImg's forward");
-        until(&mut engine, Engine::check_tasks, "Decode");
+        // Decode is taken in with LoadImg or after it, at the latest with the followers.
+        until_the_wait_table_holds(&mut engine, 1, "LoadImg's link");
 
         // The note waits at Decode.
         let followers = send_three_followers(load, &ran_tx);
